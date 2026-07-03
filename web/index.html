@@ -1,0 +1,21 @@
+<!-- Esqueleto del dashboard. Las vistas reales (agentes, conversaciones,
+     estrellas, errores) se arman en la Fase 4, contra la API de la Fase 3. -->
+<main class="dashboard">
+  <header>
+    <h1>Whaticket — Calidad de atencion</h1>
+    <p class="note">Las calificaciones por estrellas son una <strong>estimacion</strong>
+      inferida de las conversaciones, no un dato de la plataforma.</p>
+  </header>
+
+  <section class="filters">
+    <!-- Dashboard UNICO: un solo filtro cambia las consultas (no un tablero por cuenta) -->
+    <label>Cuenta <select id="f-account"><option value="">Todas</option></select></label>
+    <label>Segmento <select id="f-segment"><option value="">Todos</option></select></label>
+    <label>Canal <select id="f-channel"><option value="">Todos</option></select></label>
+    <label>Agente <select id="f-agent"><option value="">Todos</option></select></label>
+  </section>
+
+  <section id="content">
+    <p>Pendiente (Fase 4).</p>
+  </section>
+</main>

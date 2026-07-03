@@ -1,0 +1,41 @@
+# Compose SOLO para desarrollo local. En EasyPanel esto son App services
+# apuntando a los mismos Dockerfiles contra la BD interna compartida.
+#
+# La 'db' local es la COPIA (snapshot) restaurada del dump de EasyPanel;
+# es descartable, no la fuente de verdad.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: whaticket
+      POSTGRES_PASSWORD: whaticket
+      POSTGRES_DB: whaticket
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U whaticket"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://whaticket:whaticket@db:5432/whaticket
+      # host.docker.internal -> Ollama del host (dev y EasyPanel prod)
+      OLLAMA_URL: http://host.docker.internal:11434
+      OLLAMA_MODEL: qwen3.5:4b
+      API_PORT: "8080"
+      LOG_LEVEL: INFO
+    ports:
+      - "8080:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  pgdata:
