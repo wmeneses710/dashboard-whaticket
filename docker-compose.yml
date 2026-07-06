@@ -32,6 +32,11 @@ services:
       OLLAMA_MODEL: qwen3.5:4b
       API_PORT: "8080"
       LOG_LEVEL: INFO
+      # Worker de scoring en el mismo contenedor (ver src/worker.py).
+      SCORING_ENABLED: "false"        # poner "true" para que scoree solo
+      SCORING_ACCOUNTS: "sistemas,datos"
+      SCORING_BATCH_SIZE: "20"
+      SCORING_POLL_SECONDS: "60"
     ports:
       - "8080:8080"
     extra_hosts:

@@ -19,3 +19,4 @@ venv/
 # Datos locales
 pgdata/
 output/
+.atl/
