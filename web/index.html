@@ -44,7 +44,7 @@
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); line-height:1.5; -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
-  .wrap { max-width:1200px; margin:0 auto; padding:34px 24px 100px; }
+  .wrap { max-width:1600px; margin:0 auto; padding:34px 24px 100px; }
   .num { font-variant-numeric: tabular-nums; } .mono { font-family:var(--mono); }
 
   /* Header */
@@ -63,6 +63,9 @@
   .toggle:disabled { opacity:.5; cursor:default; }
   #refreshBtn.has-new { border-color:var(--accent); color:var(--accent); }
   .newbadge { display:inline-flex; align-items:center; margin-left:7px; padding:1px 7px; border-radius:999px; background:var(--accent); color:#fff; font-size:10.5px; font-weight:700; line-height:1.5; }
+  /* Una regla de autor le gana al [hidden]{display:none} del UA stylesheet, así
+     que el atributo `hidden` no oculta por sí solo: hay que forzarlo acá. */
+  .newbadge[hidden] { display:none; }
   .snapshot { font-size:12px; color:var(--muted); margin:16px 0 22px; }
   .snapshot b { color:var(--ink); font-weight:640; }
 
@@ -70,9 +73,14 @@
   .filters { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:22px; }
   .filters > div { display:flex; flex-direction:column; gap:5px; }
   .filters label { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); font-weight:600; }
-  select, input[type=search] { font-family:inherit; font-size:13px; color:var(--ink); background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 11px; cursor:pointer; transition:border-color .12s; }
-  select:hover, input[type=search]:hover { border-color:var(--faint); }
-  select:focus-visible, input[type=search]:focus-visible { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+  select, input[type=search], input[type=datetime-local] { font-family:inherit; font-size:13px; color:var(--ink); background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 11px; cursor:pointer; transition:border-color .12s; }
+  select:hover, input[type=search]:hover, input[type=datetime-local]:hover { border-color:var(--faint); }
+  select:focus-visible, input[type=search]:focus-visible, input[type=datetime-local]:focus-visible { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
+  input[type=datetime-local] { color-scheme:light dark; }
+  /* Rango de fechas: fondo compartido que agrupa 'Desde' y 'Hasta' como un par,
+     dejándolas como dos campos separados (cada uno con su etiqueta). */
+  .filters .dr-group { display:flex; flex-direction:row; gap:10px; align-items:flex-end; background:var(--surface-2); border:1px solid var(--border); border-radius:11px; padding:7px 10px; }
+  .dr-group > div { display:flex; flex-direction:column; gap:4px; }
   input[type=search] { width:100%; cursor:text; }
   .filters .search { flex:1; min-width:190px; }
   .btn-reset { border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px 13px; font-size:12.5px; cursor:pointer; font-family:inherit; transition:border-color .12s,color .12s; }
@@ -94,8 +102,12 @@
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
 
   /* Distribution — horizontal magnitude bars, 4px rounded data-end from a left baseline */
-  .distrow { display:grid; grid-template-columns:104px 1fr 34px; align-items:center; gap:12px; margin-bottom:11px; font-size:12.5px; }
+  .distrow { display:grid; grid-template-columns:104px 1fr 34px; align-items:center; gap:12px; margin:0 -8px 5px; padding:3px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
   .distrow:last-child { margin-bottom:0; }
+  .distrow:not(.static):hover { background:var(--surface-2); }
+  .distrow.active { background:var(--accent-soft); }
+  .distrow.dim { opacity:.42; }
+  .distrow.static { cursor:default; }
   .distrow .lbl { display:flex; align-items:center; gap:8px; color:var(--ink); }
   .swatch { width:11px; height:11px; border-radius:3px; flex:none; }
   .track { height:14px; background:var(--surface-2); border-radius:7px; overflow:hidden; }
@@ -131,7 +143,9 @@
   .tk-right { display:flex; align-items:center; gap:16px; }
   .tk-avg { text-align:right; } .tk-avg .big { font-size:19px; font-weight:720; letter-spacing:-.02em; } .tk-avg .cap { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--faint); margin-top:1px; }
   .chev { color:var(--faint); transition:transform .16s; font-size:11px; } .tk.open .chev { transform:rotate(90deg); }
-  .tk-body { display:none; border-top:1px solid var(--border); padding:7px 9px 10px; background:var(--surface-2); } .tk.open .tk-body { display:block; }
+  /* Cuerpo con scroll propio: un cliente con muchas visitas (p.ej. 27) no debe
+     empujar toda la página; se acota y scrollea dentro. Cards chicas ni lo notan. */
+  .tk-body { display:none; border-top:1px solid var(--border); padding:7px 9px 10px; background:var(--surface-2); max-height:340px; overflow-y:auto; } .tk.open .tk-body { display:block; }
   .conv { display:grid; grid-template-columns:104px 1fr auto auto; gap:12px; align-items:center; padding:10px 11px; border-radius:9px; cursor:pointer; transition:background .1s; }
   .conv:hover { background:var(--surface); }
   .conv .when { font-size:11px; color:var(--faint); white-space:nowrap; }
@@ -192,6 +206,7 @@
     <div><label for="fCanal">Canal</label><select id="fCanal"></select></div>
     <div><label for="fOp">Operador</label><select id="fOp"></select></div>
     <div><label for="fSort">Orden</label><select id="fSort"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
+    <div class="dr-group"><div><label for="fFrom">Desde</label><input id="fFrom" type="datetime-local"></div><div><label for="fTo">Hasta</label><input id="fTo" type="datetime-local"></div></div>
     <div class="search"><label for="fSearch">Buscar</label><input id="fSearch" type="search" placeholder="cliente u operador…" autocomplete="off"></div>
     <button class="btn-reset" id="fReset" type="button">Limpiar filtros</button>
   </div>
@@ -233,19 +248,30 @@ const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
 
 let DATA = [];
-let state = { account:null, estado:"all", canal:"all", op:"all", sort:"new", search:"", page:1, openKeys:new Set(), opsExpanded:false };
+let state = { account:null, estado:"all", canal:"all", op:"all", sort:"new", search:"", from:"", to:"", rating:"all", page:1, openKeys:new Set(), opsExpanded:false };
 const TOP_OPS = 8;
 
+// Bucket de una fila según su estrella (une human y bot: 'optima' y 'excelente'
+// caen ambas en el bucket de 5★). Es la misma clave que usa la distribución.
+const bucketOf = r => { const s=RATINGS[r.rating_label]?.s; return s?ORDER[5-s]:null; };
 function ratingColor(l){ const r=RATINGS[l]; return r? cvar(r.c):cvar("--faint"); }
 function starColor(a){ const l=a>=4.5?"excelente":a>=3.5?"buena":a>=2.5?"aceptable":a>=1.5?"deficiente":"mala"; return cvar(RATINGS[l].c); }
 function chip(r){ if(r.eval_status!=="evaluated") return `<span class="chip skip">sin evaluar</span>`;
   const c=ratingColor(r.rating_label); return `<span class="chip" style="background:color-mix(in srgb, ${c} 15%, transparent);color:${c}"><span class="st">${r.stars}★</span>${r.rating_label}</span>`; }
-function population(){ const q=state.search.trim().toLowerCase(); return DATA.filter(r=>{
+// Filtros base (todo menos calificación): los comparte la distribución para
+// seguir mostrando TODAS las barras aunque haya un rating seleccionado.
+function matchBase(r){ const q=state.search.trim().toLowerCase();
+  const from=state.from?new Date(state.from).getTime():null;
+  const to=state.to?new Date(state.to).getTime():null;
   if(state.estado!=="all" && r.eval_status!==state.estado) return false;
   if(state.canal!=="all" && r.channel!==state.canal) return false;
   if(state.op!=="all" && opName(r)!==state.op) return false;
+  if(from!=null || to!=null){ const t=new Date(r.conversation_created_at).getTime();
+    if(from!=null && t<from) return false; if(to!=null && t>to) return false; }
   if(q && ![r.customer_name,r.customer_number,opName(r)].some(v=>String(v||"").toLowerCase().includes(q))) return false;
-  return true; }); }
+  return true; }
+function population(){ return DATA.filter(r=> matchBase(r) && (state.rating==="all"||bucketOf(r)===state.rating)); }
+function populationForDist(){ return DATA.filter(matchBase); }
 
 function renderSnap(){ const ev=DATA.filter(r=>r.eval_status==="evaluated").length;
   $("#snap").innerHTML=`En vivo desde la BD · cuenta <b>${esc(state.account)}</b> · <b>${DATA.length}</b> conversaciones (${ev} evaluadas), <b>${new Set(DATA.map(r=>r.customer_name).filter(Boolean)).size}</b> clientes.`; }
@@ -262,9 +288,16 @@ function renderKpis(){ const pop=population(), ev=pop.filter(r=>r.eval_status===
   const ops=new Set(ev.map(r=>r.user_name||r.user_id).filter(Boolean)).size;
   const tiles=[{k:"Conversaciones",v:pop.length,foot:`${ev.length} evaluadas`},{k:"Estrella promedio",v:avg.toFixed(2),u:"★",foot:"solo evaluadas"},{k:"Cobertura",v:cov,u:"%",foot:`${pop.length-ev.length} sin evaluar`},{k:"Operadores",v:ops,foot:"con atención evaluada"}];
   $("#kpis").innerHTML=tiles.map(t=>`<div class="tile"><div class="k">${t.k}</div><div class="v">${t.v}${t.u?`<small>${t.u}</small>`:""}</div><div class="foot">${t.foot}</div></div>`).join(""); }
-function renderDist(){ const ev=population().filter(r=>r.eval_status==="evaluated"); const counts={}; ORDER.forEach(l=>counts[l]=0);
+function renderDist(){ const ev=populationForDist().filter(r=>r.eval_status==="evaluated"); const counts={}; ORDER.forEach(l=>counts[l]=0);
   ev.forEach(r=>{ const n=RATINGS[r.rating_label]?.s; if(n) counts[ORDER[5-n]]++; }); const max=Math.max(1,...Object.values(counts));
-  $("#dist").innerHTML=ORDER.map(l=>{const c=cvar(RATINGS[l].c),n=counts[l]; return `<div class="distrow"><span class="lbl"><span class="swatch" style="background:${c}"></span>${l} <span style="color:var(--faint)">${RATINGS[l].s}★</span></span><span class="track"><span class="fill" style="width:${Math.round(100*n/max)}%;background:${c}"></span></span><span class="n num">${n}</span></div>`;}).join(""); }
+  const sel=state.rating;
+  $("#dist").innerHTML=ORDER.map(l=>{const c=cvar(RATINGS[l].c),n=counts[l];
+    const active=sel===l, dim=sel!=="all"&&!active, clickable=n>0;
+    const cls=`distrow${active?" active":""}${dim?" dim":""}${clickable?"":" static"}`;
+    const attrs=clickable?` data-rating="${l}" role="button" tabindex="0" aria-pressed="${active}"`:"";
+    return `<div class="${cls}"${attrs}><span class="lbl"><span class="swatch" style="background:${c}"></span>${l} <span style="color:var(--faint)">${RATINGS[l].s}★</span></span><span class="track"><span class="fill" style="width:${Math.round(100*n/max)}%;background:${c}"></span></span><span class="n num">${n}</span></div>`;}).join("");
+  document.querySelectorAll('#dist .distrow[data-rating]').forEach(row=>{ const toggle=()=>{ const l=row.dataset.rating; state.rating=state.rating===l?"all":l; state.page=1; renderAll(); };
+    row.addEventListener("click",toggle); row.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}}); }); }
 function renderOps(){ const ev=population().filter(r=>r.eval_status==="evaluated" && (r.user_name||r.user_id));
   const by={}; ev.forEach(r=>{const k=opName(r); (by[k]=by[k]||[]).push(r);});
   // Orden por VOLUMEN (más activos): con 44 operadores, rankear por promedio pone
@@ -332,20 +365,21 @@ function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); 
 // interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
 function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!btn) return;
   if(n>0){ b.textContent="+"+n; b.hidden=false; btn.classList.add("has-new"); }
-  else { b.hidden=true; btn.classList.remove("has-new"); } }
+  else { b.textContent=""; b.hidden=true; btn.classList.remove("has-new"); } }
 async function checkNew(){ if(!state.account) return;
-  try { const accts=await fetchJSON("/api/accounts"); const a=accts.find(x=>x.account===state.account);
+  try { const accts=await fetchJSON("/api/accounts"); renderAcctSwitch(accts);
+    const a=accts.find(x=>x.account===state.account);
     if(a) setNewBadge(Math.max(0, a.count-DATA.length)); } catch(e){} }
 async function refresh(){ const btn=$("#refreshBtn"); if(btn) btn.disabled=true;
   // Preserva filtros, orden, búsqueda, página y cards abiertas (no es load()).
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); } catch(e){}
-  if(btn) btn.disabled=false; setNewBadge(0); renderAll(); }
+  if(btn) btn.disabled=false; renderAll(); await checkNew(); }
 async function load(){
   $("#snap").textContent="Cargando cuenta "+state.account+"…";
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); }
   catch(e){ $("#snap").textContent="Error cargando datos."; DATA=[]; }
-  state.canal="all"; state.op="all"; state.search=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
-  if($("#fSearch")) $("#fSearch").value=""; renderAll();
+  state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
+  if($("#fSearch")) $("#fSearch").value=""; if($("#fFrom")) $("#fFrom").value=""; if($("#fTo")) $("#fTo").value=""; renderAll();
 }
 function renderAcctSwitch(accts){
   $("#acct").innerHTML=accts.map(a=>`<button type="button" data-a="${esc(a.account)}" aria-pressed="${a.account===state.account}">${esc(a.account)} <span style="opacity:.6" class="num">${a.count}</span></button>`).join("");
@@ -356,9 +390,11 @@ async function init(){
   $("#fCanal").onchange=e=>{state.canal=e.target.value;state.page=1;renderAll();};
   $("#fOp").onchange=e=>{state.op=e.target.value;state.page=1;renderAll();};
   $("#fSort").onchange=e=>{state.sort=e.target.value;state.page=1;renderTickets();};
+  $("#fFrom").onchange=e=>{state.from=e.target.value;state.page=1;renderAll();};
+  $("#fTo").onchange=e=>{state.to=e.target.value;state.page=1;renderAll();};
   $("#fSearch").oninput=e=>{state.search=e.target.value;state.page=1;renderAll();};
-  $("#fReset").onclick=()=>{ Object.assign(state,{estado:"all",canal:"all",op:"all",sort:"new",search:"",page:1});
-    $("#fEstado").value="all"; $("#fSort").value="new"; $("#fSearch").value=""; renderAll(); };
+  $("#fReset").onclick=()=>{ Object.assign(state,{estado:"all",canal:"all",op:"all",sort:"new",search:"",from:"",to:"",rating:"all",page:1});
+    $("#fEstado").value="all"; $("#fSort").value="new"; $("#fSearch").value=""; $("#fFrom").value=""; $("#fTo").value=""; renderAll(); };
   $("#refreshBtn").onclick=refresh;
   setInterval(checkNew, 60000);
   $("#mClose").onclick=closeModal;
