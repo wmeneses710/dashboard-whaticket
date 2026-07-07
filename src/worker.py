@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 
 from src.context import fetch_messages, fetch_thread_context
+from src.deposits import deposit_candidate_count
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
@@ -45,6 +46,7 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
         msgs = fetch_messages(cur, conv["id"])
         ctx = fetch_thread_context(cur, conv["ticket_id"], conv["id"])
     stats = message_stats(msgs)
+    deposit_count = deposit_candidate_count(msgs)  # gate determinista (independiente del eval_status)
     operator_id = primary_operator(msgs)
     op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
     rubric = decide_rubric(
@@ -64,7 +66,7 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
     record = build_score_record(
         conversation=conv, stats=stats, rubric=rubric,
         eval_status=eval_status, skip_reason=skip_reason, score=score,
-        operator_id=operator_id, operator_name=op_name,
+        operator_id=operator_id, operator_name=op_name, deposit_count=deposit_count,
     )
     with conn.cursor() as cur:
         upsert_score(cur, record)

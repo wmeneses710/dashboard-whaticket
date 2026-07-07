@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
 
     -- --- Resultado de NEGOCIO (separado de la estrella) ---
     resultado               text,               -- recarga_confirmada|... (NO entra en stars)
+    deposit_count           integer,            -- comprobantes de recarga detectados (VECES, no monto); NULL si no scoreado
 
     -- --- La estrella (ESTIMACION) ---
     -- Traduccion DETERMINISTICA de rating_label (tabla que controlamos), NO salida del LLM.
@@ -77,6 +78,9 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
     ),
     CONSTRAINT chk_stars_range CHECK (stars IS NULL OR (stars >= 1 AND stars <= 5))
 );
+
+-- Idempotente para BD ya creada (el CREATE ... IF NOT EXISTS no agrega columnas).
+ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS deposit_count integer;
 
 CREATE INDEX IF NOT EXISTS idx_scores_account_segment ON conversation_scores (account, segment);
 CREATE INDEX IF NOT EXISTS idx_scores_user            ON conversation_scores (user_id);

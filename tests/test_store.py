@@ -57,6 +57,23 @@ def test_registro_evaluado_lleva_estrella_y_segmento():
     assert r["is_estimate"] is True
 
 
+def test_registro_lleva_deposit_count():
+    r = build_score_record(
+        conversation=CONV, stats=message_stats(MSGS), rubric="human",
+        eval_status="evaluated", skip_reason=None, score=None,
+        operator_id="op-1", deposit_count=2,
+    )
+    assert r["deposit_count"] == 2
+
+
+def test_deposit_count_por_defecto_cero():
+    r = build_score_record(
+        conversation=CONV, stats=message_stats(MSGS), rubric="human",
+        eval_status="skipped", skip_reason="no_customer_reply", score=None,
+    )
+    assert r["deposit_count"] == 0
+
+
 def test_registro_salteado_no_lleva_estrella():
     r = build_score_record(
         conversation={**CONV, "user_id": None}, stats=message_stats(MSGS),

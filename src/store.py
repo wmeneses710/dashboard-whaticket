@@ -32,7 +32,7 @@ _COLUMNS = (
     "message_count", "agent_message_count", "bot_message_count",
     "contact_message_count", "was_unassigned",
     "dimensions", "llm_model", "rating_label", "rating_rationale",
-    "stars", "stars_breakdown", "is_estimate", "scoring_version",
+    "stars", "stars_breakdown", "deposit_count", "is_estimate", "scoring_version",
 )
 
 
@@ -46,6 +46,7 @@ def build_score_record(
     score: ScoreResult | None,
     operator_id=None,
     operator_name: str | None = None,
+    deposit_count: int = 0,
     scoring_version: str = SCORING_VERSION,
 ) -> dict[str, Any]:
     """Arma el dict de columnas para conversation_scores.
@@ -84,6 +85,7 @@ def build_score_record(
         "rating_rationale": None,
         "stars": None,
         "stars_breakdown": None,
+        "deposit_count": deposit_count,
         "is_estimate": True,
         "scoring_version": scoring_version,
     }

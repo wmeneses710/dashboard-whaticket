@@ -87,7 +87,7 @@
   .btn-reset:hover { color:var(--ink); border-color:var(--accent); }
 
   /* KPI stat tiles */
-  .kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:24px; }
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:14px; margin-bottom:24px; }
   @media (max-width:760px){ .kpis{ grid-template-columns:repeat(2,1fr);} }
   .tile { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:17px 18px; box-shadow:var(--shadow); }
   .tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
@@ -286,7 +286,8 @@ function renderFilters(){
 function renderKpis(){ const pop=population(), ev=pop.filter(r=>r.eval_status==="evaluated");
   const avg=ev.length? ev.reduce((a,r)=>a+Number(r.stars),0)/ev.length:0, cov=pop.length?Math.round(100*ev.length/pop.length):0;
   const ops=new Set(ev.map(r=>r.user_name||r.user_id).filter(Boolean)).size;
-  const tiles=[{k:"Conversaciones",v:pop.length,foot:`${ev.length} evaluadas`},{k:"Estrella promedio",v:avg.toFixed(2),u:"★",foot:"solo evaluadas"},{k:"Cobertura",v:cov,u:"%",foot:`${pop.length-ev.length} sin evaluar`},{k:"Operadores",v:ops,foot:"con atención evaluada"}];
+  const dep=pop.reduce((a,r)=>a+(Number(r.deposit_count)||0),0), depConv=pop.filter(r=>Number(r.deposit_count)>0).length;
+  const tiles=[{k:"Conversaciones",v:pop.length,foot:`${ev.length} evaluadas`},{k:"Estrella promedio",v:avg.toFixed(2),u:"★",foot:"solo evaluadas"},{k:"Depósitos",v:dep,foot:`${depConv} conversaciones`},{k:"Cobertura",v:cov,u:"%",foot:`${pop.length-ev.length} sin evaluar`},{k:"Operadores",v:ops,foot:"con atención evaluada"}];
   $("#kpis").innerHTML=tiles.map(t=>`<div class="tile"><div class="k">${t.k}</div><div class="v">${t.v}${t.u?`<small>${t.u}</small>`:""}</div><div class="foot">${t.foot}</div></div>`).join(""); }
 function renderDist(){ const ev=populationForDist().filter(r=>r.eval_status==="evaluated"); const counts={}; ORDER.forEach(l=>counts[l]=0);
   ev.forEach(r=>{ const n=RATINGS[r.rating_label]?.s; if(n) counts[ORDER[5-n]]++; }); const max=Math.max(1,...Object.values(counts));
