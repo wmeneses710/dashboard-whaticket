@@ -29,8 +29,12 @@ from src.scorer import score_conversation
 from scripts.rebuild_flow import normalize_db, reconstruct
 
 _TICKETS_SQL = """
-SELECT DISTINCT ticket_id FROM conversation_scores
- WHERE account = %(account)s AND rating_label = %(label)s AND ticket_id IS NOT NULL
+SELECT ticket_id FROM conversation_scores
+ WHERE account = %(account)s AND ticket_id IS NOT NULL
+ GROUP BY ticket_id
+HAVING count(*) FILTER (WHERE rating_label = %(label)s) >= 1
+   AND count(*) > 1
+ ORDER BY count(*) DESC
  LIMIT %(n)s
 """
 _OLD_SQL = """
@@ -45,6 +49,16 @@ SELECT m.from_me, m.is_note, m.body, m.sent_from, m.user_id, m.media_type, m.cre
  WHERE c.ticket_id = %(tid)s
  ORDER BY m.created_at
 """
+
+
+def _dedupe_raw(msgs: list[dict]) -> list[dict]:
+    """Colapsa mensajes idénticos consecutivos (openers del anuncio repetidos)."""
+    out: list[dict] = []
+    for m in msgs:
+        if out and out[-1].get("from_me") == m.get("from_me") and out[-1].get("body") == m.get("body"):
+            continue
+        out.append(m)
+    return out
 
 
 def _first_client(ep: dict) -> str:
@@ -91,9 +105,9 @@ def main() -> None:
             print(f"  NUEVO (per-episodio): {len(episodes)} episodios "
                   f"({len(scoreables)} scoreables, {len(episodes)-len(scoreables)} skip)")
 
-            new_stars = []
+            # --- Variante 2: por EPISODIO (una nota por sesión de asignación) ---
+            ep_stars = []
             for i, ep in enumerate(scoreables, 1):
-                # contexto = las otras visitas del ticket (digest liviano)
                 ctx = "\n".join(f"- otra visita, cliente: {_first_client(o)}"
                                 for o in scoreables if o is not ep)
                 stats = message_stats(ep["raw"])
@@ -102,14 +116,30 @@ def main() -> None:
                 try:
                     res = score_conversation(rubric=rubric, target_messages=ep["raw"],
                                              thread_context=ctx, llm=llm)
-                    new_stars.append(res.stars)
+                    ep_stars.append(res.stars)
                     print(f"    ep{i} [{rubric}] -> {res.stars}★ {res.rating_label}"
                           f"  · cli:'{_first_client(ep)}'")
-                    print(f"        {(res.rating_rationale or '')[:150]}")
                 except Exception as e:  # noqa: BLE001
                     print(f"    ep{i} ERROR: {type(e).__name__}: {e}")
-            new_avg = sum(new_stars) / len(new_stars) if new_stars else None
-            print(f"  >> prom NUEVO={new_avg}  (viejo={old_avg})\n")
+            ep_avg = sum(ep_stars) / len(ep_stars) if ep_stars else None
+
+            # --- Variante 3: HILO ENTERO (todo el ticket como UNA experiencia) ---
+            whole = _dedupe_raw([m for ep in scoreables for m in ep["raw"]])
+            whole_star = None
+            if whole:
+                st = message_stats(whole)
+                rub = decide_rubric(agent_message_count=st.agent_message_count,
+                                    bot_message_count=st.bot_message_count)
+                try:
+                    res = score_conversation(rubric=rub, target_messages=whole,
+                                             thread_context="", llm=llm)
+                    whole_star = res.stars
+                    print(f"    HILO [{rub}] -> {res.stars}★ {res.rating_label}")
+                    print(f"        {(res.rating_rationale or '')[:170]}")
+                except Exception as e:  # noqa: BLE001
+                    print(f"    HILO ERROR: {type(e).__name__}: {e}")
+
+            print(f"  >> VIEJO(visita)={old_avg}  ·  EPISODIO={ep_avg}  ·  HILO={whole_star}\n")
 
 
 if __name__ == "__main__":
