@@ -85,6 +85,18 @@ def _transcript(msgs: list[dict]) -> list[dict]:
     return out
 
 
+DEFAULT_WINDOW_MONTHS = 12
+
+# Ventana móvil: solo los últimos N meses, anclada al MES MÁS RECIENTE de la cuenta
+# (no a now(): el dataset puede quedar pausado/histórico). Mantiene los cuadros
+# legibles y el top-N reflejando a los operadores actuales, no a los de hace años.
+# %(months_back)s = N-1 (el mes más reciente + los N-1 previos = N meses).
+_MONTH_WINDOW = """
+   AND c.created_at >= (SELECT date_trunc('month', max(created_at))
+                          FROM conversations WHERE account = %(account)s)
+                        - make_interval(months => %(months_back)s)"""
+
+
 # --- §10: carga mensual por operador (segmento jugador). Operador = el user_id
 # con más mensajes de negocio en la conversación (conversations.user_id suele ser
 # NULL). Se acota a las colas jugador y se agrupa por (mes, operador).
@@ -105,7 +117,7 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
   FROM conversations c
   JOIN conv_op co ON co.conversation_id = c.id
   LEFT JOIN users u ON u.id = co.user_id
- WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND c.queue_id = ANY(%(qids)s)
+ WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND c.queue_id = ANY(%(qids)s)""" + _MONTH_WINDOW + """
  GROUP BY 1, 2
 """
 
@@ -134,12 +146,13 @@ def _build_load_series(rows, top_n: int) -> dict:
     return {"months": months, "series": series}
 
 
-def load_by_operator(cur, account: str, top_n: int = 7) -> dict:
-    """Carga mensual por operador (jugadores), top-N + 'Otros'."""
+def load_by_operator(cur, account: str, top_n: int = 7,
+                     window_months: int = DEFAULT_WINDOW_MONTHS) -> dict:
+    """Carga mensual por operador (jugadores), top-N + 'Otros', últimos N meses."""
     qids = _jugador_queue_ids(cur, account)
     if not qids:
         return {"months": [], "series": []}
-    cur.execute(_LOAD_SQL, {"account": account, "qids": qids})
+    cur.execute(_LOAD_SQL, {"account": account, "qids": qids, "months_back": window_months - 1})
     return _build_load_series(cur.fetchall(), top_n)
 
 
@@ -173,7 +186,7 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
   LEFT JOIN users u ON u.id = co.user_id
   JOIN tickets t ON t.id = c.ticket_id
  WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s)
-   AND t.channel = 'WHATSAPP' AND c.created_at IS NOT NULL
+   AND t.channel = 'WHATSAPP' AND c.created_at IS NOT NULL""" + _MONTH_WINDOW + """
  GROUP BY 1, 2
 """
 
@@ -206,14 +219,16 @@ def _build_pct_series(rows, top_n: int, min_conv: int = 8) -> dict:
     return {"months": months, "series": series}
 
 
-def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8) -> dict:
-    """§2: % depósito en WhatsApp por operador (jugadores), top-N + 'Otros'."""
+def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8,
+                            window_months: int = DEFAULT_WINDOW_MONTHS) -> dict:
+    """§2: % depósito en WhatsApp por operador (jugadores), top-N + 'Otros', últimos N meses."""
     from src.deposits import RECHARGE_PATTERN
 
     qids = _jugador_queue_ids(cur, account)
     if not qids:
         return {"months": [], "series": []}
-    cur.execute(_DEP_PCT_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids})
+    cur.execute(_DEP_PCT_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
+                               "months_back": window_months - 1})
     return _build_pct_series(cur.fetchall(), top_n, min_conv)
 
 
@@ -233,7 +248,7 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
        count(*) FILTER (WHERE c.is_new_contact) AS nuevos
   FROM conversations c
   LEFT JOIN per_conv pc ON pc.conversation_id = c.id
- WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s) AND c.created_at IS NOT NULL
+ WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s) AND c.created_at IS NOT NULL""" + _MONTH_WINDOW + """
  GROUP BY 1
 """
 
@@ -247,14 +262,16 @@ def _build_new_vs_deposit(rows) -> dict:
     return {"months": months, "nuevos": nuevos, "pct": pct}
 
 
-def new_vs_deposit_by_month(cur, account: str) -> dict:
-    """§9: nuevos jugadores y % depósito por mes (segmento jugador)."""
+def new_vs_deposit_by_month(cur, account: str,
+                            window_months: int = DEFAULT_WINDOW_MONTHS) -> dict:
+    """§9: nuevos jugadores y % depósito por mes (segmento jugador), últimos N meses."""
     from src.deposits import RECHARGE_PATTERN
 
     qids = _jugador_queue_ids(cur, account)
     if not qids:
         return {"months": [], "nuevos": [], "pct": []}
-    cur.execute(_NEW_VS_DEP_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids})
+    cur.execute(_NEW_VS_DEP_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
+                                  "months_back": window_months - 1})
     return _build_new_vs_deposit(cur.fetchall())
 
 

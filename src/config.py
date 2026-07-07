@@ -18,6 +18,8 @@ class Config:
     scoring_accounts: tuple[str, ...]
     scoring_batch_size: int
     scoring_poll_seconds: int
+    # Ventana móvil de los cuadros: cuántos meses (los más recientes) se muestran.
+    charts_window_months: int
 
 
 def _bool(value: str | None) -> bool:
@@ -45,4 +47,5 @@ def load_config() -> Config:
         scoring_accounts=_csv(os.environ.get("SCORING_ACCOUNTS"), ("sistemas", "datos")),
         scoring_batch_size=int(os.environ.get("SCORING_BATCH_SIZE", "20")),
         scoring_poll_seconds=int(os.environ.get("SCORING_POLL_SECONDS", "60")),
+        charts_window_months=int(os.environ.get("CHARTS_WINDOW_MONTHS", "12")),
     )

@@ -451,30 +451,39 @@ async function checkNew(){ if(!state.account) return;
 async function refresh(){ const btn=$("#refreshBtn"); if(btn) btn.disabled=true;
   // Preserva filtros, orden, búsqueda, página y cards abiertas (no es load()).
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); } catch(e){}
-  if(btn) btn.disabled=false; renderAll(); await checkNew(); }
+  if(btn) btn.disabled=false; renderAll(); await checkNew();
+  loadCharts(state.account);   // cuadros en segundo plano; el TTL evita re-escanear si están frescos
+}
 // Cuadros: las agregaciones full-scale son pesadas. NO se esperan en load() (eso
 // congelaba el cambio de cuenta); se traen aparte, se cachean por cuenta, y se
 // pintan al llegar. El guard account===state.account evita que una respuesta
 // vieja pise una cuenta ya cambiada.
-const chartsCache={};
+const chartsCache={};              // account -> {data, ts}
+const CHARTS_TTL_MS=10*60*1000;    // 10 min: son agregados MENSUALES, cambian lento;
+                                   // no re-escaneamos en cada Actualizar (query cara).
+let chartsInFlight=null;           // guarda anti doble-fetch simultáneo (Actualizar repetido)
 function setChartsStatus(kind, msg){   // kind: "" | "loading" | "error"
   const el=$("#chartsStatus"); if(!el) return;
   el.className="charts-status"+(kind?" show "+kind+"-state":"");
   el.innerHTML = kind==="loading" ? `<span class="spin"></span>${esc(msg)}` : (kind==="error"?esc(msg):"");
 }
 async function loadCharts(account){
-  if(!chartsCache[account]){
+  const c=chartsCache[account];
+  const fresh = c && (Date.now()-c.ts < CHARTS_TTL_MS);   // TTL: cache vigente
+  if(!fresh && chartsInFlight!==account){
+    chartsInFlight=account;
     setChartsStatus("loading","Cargando cuadros…");
-    try { chartsCache[account]=await fetchJSON("/api/charts?account="+encodeURIComponent(account)); }
+    try { chartsCache[account]={data:await fetchJSON("/api/charts?account="+encodeURIComponent(account)), ts:Date.now()}; }
     catch(e){ if(account===state.account) setChartsStatus("error","No se pudieron cargar los cuadros. Probá con Actualizar."); return; }
+    finally { chartsInFlight=null; }
   }
-  if(account===state.account){ CHARTS=chartsCache[account]; setChartsStatus("",""); renderCharts(); }
+  if(chartsCache[account] && account===state.account){ CHARTS=chartsCache[account].data; setChartsStatus("",""); renderCharts(); }
 }
 async function load(){
   $("#snap").textContent="Cargando cuenta "+state.account+"…";
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); }
   catch(e){ $("#snap").textContent="Error cargando datos."; DATA=[]; }
-  CHARTS = chartsCache[state.account] || null;   // instantáneo si ya se cargó antes
+  CHARTS = (chartsCache[state.account] && chartsCache[state.account].data) || null;   // instantáneo si ya se cargó antes
   state.segment="all"; state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
   if($("#fSearch")) $("#fSearch").value=""; if($("#fFrom")) $("#fFrom").value=""; if($("#fTo")) $("#fTo").value="";
   renderAll();                 // pinta scores YA (no espera los cuadros)

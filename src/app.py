@@ -122,11 +122,13 @@ def charts(account: str = Query(..., description="datos | sistemas")) -> dict:
     """Agregados FULL-SCALE para los cuadros del análisis (deterministas, sobre el
     segmento jugador; no dependen del scoring LLM): carga por operador, % depósito
     en WhatsApp por operador y nuevos jugadores vs % depósito por mes."""
+    win = cfg.charts_window_months
     with _conn() as c, c.cursor() as cur:
         return {
-            "load_by_operator": queries.load_by_operator(cur, account),
-            "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account),
-            "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account),
+            "load_by_operator": queries.load_by_operator(cur, account, window_months=win),
+            "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account, window_months=win),
+            "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account, window_months=win),
+            "window_months": win,
         }
 
 
