@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from src.queries import (
     _build_load_series,
+    _build_new_vs_deposit,
     _build_pct_series,
     conversation_detail,
     deposits_by_month,
@@ -125,6 +126,14 @@ def test_build_pct_series_otros_agrega_conv_y_dep_del_resto():
     assert [s["op"] for s in out["series"]] == ["A", "Otros"]
     otros = next(s for s in out["series"] if s["op"] == "Otros")
     assert otros["data"] == [50.0]           # (1+9)/(10+10) = 50%
+
+
+def test_build_new_vs_deposit_ordena_y_calcula_pct():
+    rows = [("2026-02", 50, 10, 30), ("2026-01", 100, 42, 57)]
+    out = _build_new_vs_deposit(rows)
+    assert out["months"] == ["2026-01", "2026-02"]        # ordenado por mes
+    assert out["nuevos"] == [57, 30]
+    assert out["pct"] == [42.0, 20.0]                      # 42/100 y 10/50
 
 
 def test_conversation_detail_coacciona_decimal_a_numero():

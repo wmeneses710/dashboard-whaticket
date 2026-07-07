@@ -102,6 +102,7 @@
   .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .charts{ grid-template-columns:1fr;} }
   .charts .card { margin:0; }
+  .nvd-lbl { font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.05em; margin:2px 0 4px; font-weight:600; }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
   .chart-wrap { position:relative; height:260px; }
@@ -225,6 +226,10 @@
     <div class="card"><h2>Depósitos por mes <small>· conversaciones con depósito · toda la cuenta (8 meses)</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depChart"></canvas></div></div>
     <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
     <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
+    <div class="card"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores · dos paneles (sin doble-eje)</small></h2>
+      <div class="nvd-lbl">Nuevos jugadores / mes</div><div style="position:relative;height:120px"><canvas id="nvdBars"></canvas></div>
+      <div class="nvd-lbl" style="margin-top:8px">% depósito / mes</div><div style="position:relative;height:140px"><canvas id="nvdLine"></canvas></div>
+    </div>
   </div>
   <div class="card"><h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2><div id="tickets"></div></div>
 </div>
@@ -428,7 +433,24 @@ function renderLoadChart(){ const el=$("#loadChart"); if(!el) return;
 function renderDepPctChart(){ const el=$("#depPctChart"); if(!el) return;
   if(depPctChartInst) depPctChartInst.destroy();
   depPctChartInst=multiLine(el, (CHARTS&&CHARTS.deposit_pct_by_operator)||{}, {pct:true}); }
-function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderDepChart(); renderLoadChart(); renderDepPctChart(); renderSnap(); }
+// §9 Nuevos jugadores vs % depósito — DOS paneles que comparten el eje mes (no
+// doble-eje): barras arriba (nuevos), línea abajo (% depósito).
+let nvdBarInst=null, nvdLineInst=null;
+function renderNewVsDep(){ const elB=$("#nvdBars"), elL=$("#nvdLine"); if(!elB||!elL||!window.Chart) return;
+  const d=(CHARTS&&CHARTS.new_vs_deposit_by_month)||{months:[],nuevos:[],pct:[]};
+  const pal=seriesColors(), grid=cvar("--border"), ink=cvar("--muted");
+  if(nvdBarInst) nvdBarInst.destroy(); if(nvdLineInst) nvdLineInst.destroy();
+  nvdBarInst=new Chart(elB,{ type:"bar", data:{ labels:d.months, datasets:[{ label:"Nuevos", data:d.nuevos, backgroundColor:pal[0], borderRadius:4, maxBarThickness:46 }] },
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ${c.parsed.y} nuevos` } } },
+      scales:{ x:{ grid:{display:false}, ticks:{display:false} }, y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0} } } } });
+  nvdLineInst=new Chart(elL,{ type:"line", data:{ labels:d.months, datasets:[{ label:"% depósito", data:d.pct, borderColor:pal[1], backgroundColor:pal[1], borderWidth:2, tension:.25, pointRadius:2, pointHoverRadius:5 }] },
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ${c.parsed.y}% depósito` } } },
+      scales:{ x:{ grid:{display:false}, ticks:{color:ink} }, y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, callback:v=>v+"%" } } } } });
+}
+function renderCharts(){ renderDepChart(); renderLoadChart(); renderDepPctChart(); renderNewVsDep(); }
+function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderCharts(); renderSnap(); }
 // Aviso de datos nuevos (no auto-refresca: el usuario decide cuándo, para no
 // interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
 function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!btn) return;
@@ -442,13 +464,27 @@ async function refresh(){ const btn=$("#refreshBtn"); if(btn) btn.disabled=true;
   // Preserva filtros, orden, búsqueda, página y cards abiertas (no es load()).
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); } catch(e){}
   if(btn) btn.disabled=false; renderAll(); await checkNew(); }
+// Cuadros: las agregaciones full-scale son pesadas. NO se esperan en load() (eso
+// congelaba el cambio de cuenta); se traen aparte, se cachean por cuenta, y se
+// pintan al llegar. El guard account===state.account evita que una respuesta
+// vieja pise una cuenta ya cambiada.
+const chartsCache={};
+async function loadCharts(account){
+  if(!chartsCache[account]){
+    try { chartsCache[account]=await fetchJSON("/api/charts?account="+encodeURIComponent(account)); }
+    catch(e){ return; }
+  }
+  if(account===state.account){ CHARTS=chartsCache[account]; renderCharts(); }
+}
 async function load(){
   $("#snap").textContent="Cargando cuenta "+state.account+"…";
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); }
   catch(e){ $("#snap").textContent="Error cargando datos."; DATA=[]; }
-  try { CHARTS=await fetchJSON("/api/charts?account="+encodeURIComponent(state.account)); } catch(e){ CHARTS=null; }
+  CHARTS = chartsCache[state.account] || null;   // instantáneo si ya se cargó antes
   state.segment="all"; state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
-  if($("#fSearch")) $("#fSearch").value=""; if($("#fFrom")) $("#fFrom").value=""; if($("#fTo")) $("#fTo").value=""; renderAll();
+  if($("#fSearch")) $("#fSearch").value=""; if($("#fFrom")) $("#fFrom").value=""; if($("#fTo")) $("#fTo").value="";
+  renderAll();                 // pinta scores YA (no espera los cuadros)
+  loadCharts(state.account);   // cuadros en segundo plano
 }
 function renderAcctSwitch(accts){
   $("#acct").innerHTML=accts.map(a=>`<button type="button" data-a="${esc(a.account)}" aria-pressed="${a.account===state.account}">${esc(a.account)} <span style="opacity:.6" class="num">${a.count}</span></button>`).join("");

@@ -74,6 +74,7 @@ def charts(account: str = Query(..., description="datos | sistemas")) -> dict:
             "deposits_by_month": queries.deposits_by_month(cur, account),
             "load_by_operator": queries.load_by_operator(cur, account),
             "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account),
+            "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account),
         }
 
 

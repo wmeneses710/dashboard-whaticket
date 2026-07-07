@@ -260,6 +260,47 @@ def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8
     return _build_pct_series(cur.fetchall(), top_n, min_conv)
 
 
+# --- §9: nuevos jugadores vs % depósito por mes (jugador, agregado). Dos medidas
+# de escala distinta -> el front las muestra en DOS paneles (no doble-eje).
+_NEW_VS_DEP_SQL = """
+WITH per_conv AS (
+  SELECT conversation_id,
+         bool_or((body ~* %(re)s) AND NOT is_note) AS has_ctx,
+         count(*) FILTER (WHERE from_me = false AND NOT is_note
+                          AND lower(coalesce(media_type, '')) LIKE '%%image%%') AS img
+    FROM messages WHERE account = %(account)s GROUP BY conversation_id
+)
+SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
+       count(*) AS conv,
+       count(*) FILTER (WHERE pc.has_ctx AND pc.img > 0) AS con_dep,
+       count(*) FILTER (WHERE c.is_new_contact) AS nuevos
+  FROM conversations c
+  LEFT JOIN per_conv pc ON pc.conversation_id = c.id
+ WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s) AND c.created_at IS NOT NULL
+ GROUP BY 1
+"""
+
+
+def _build_new_vs_deposit(rows) -> dict:
+    """{months, nuevos[], pct[]} desde filas (mes, conv, con_dep, nuevos). Puro."""
+    rows = sorted(rows, key=lambda r: r[0])
+    months = [r[0] for r in rows]
+    nuevos = [int(r[3]) for r in rows]
+    pct = [round(100.0 * int(r[2]) / int(r[1]), 1) if int(r[1]) else 0.0 for r in rows]
+    return {"months": months, "nuevos": nuevos, "pct": pct}
+
+
+def new_vs_deposit_by_month(cur, account: str) -> dict:
+    """§9: nuevos jugadores y % depósito por mes (segmento jugador)."""
+    from src.deposits import RECHARGE_PATTERN
+
+    qids = _jugador_queue_ids(cur, account)
+    if not qids:
+        return {"months": [], "nuevos": [], "pct": []}
+    cur.execute(_NEW_VS_DEP_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids})
+    return _build_new_vs_deposit(cur.fetchall())
+
+
 def conversation_detail(cur, conversation_id: str) -> dict | None:
     """Una conversacion con su analisis completo + transcript reconstruido."""
     cur.execute(_DETAIL_SQL, {"cid": conversation_id})
