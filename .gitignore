@@ -20,3 +20,5 @@ venv/
 pgdata/
 output/
 .atl/
+
+docs/latex/
