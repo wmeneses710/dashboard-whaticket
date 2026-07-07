@@ -195,3 +195,67 @@ un cuelgue real y sus causas en el commit `dc8f822`. Estado actual y recomendaci
 
 Falta (para el Ollama compartido, ver §5): `OLLAMA_TOKEN`, `USE_OPENAI`, y el soporte en
 `src/llm.py`.
+
+### Cómo se cargan las variables (no hay `.env`)
+El código **no usa `dotenv`**: `config.py` lee directo de `os.environ` con defaults. Por eso
+**no existe ni hace falta un `.env`**. Las variables llegan del entorno del proceso:
+- **Local:** `docker-compose.yml`, bloque `environment:`.
+- **Prod (EasyPanel):** el panel de variables de entorno del contenedor.
+
+`.env.example` es solo plantilla documentada. Los **secretos** (ej. `OLLAMA_TOKEN`) van por
+el panel de EasyPanel, nunca al repo.
+
+---
+
+## 8. Flujo de despliegue y arranque (BD de prod SIN scores, solo ETL)
+
+**T=0 · Arranque del contenedor (`lifespan`):**
+1. `ensure_indexes()` (thread) crea `idx_messages_account_conv` con `CONCURRENTLY IF NOT
+   EXISTS` sobre `messages` de prod. Primera vez: lo construye (tarda según el tamaño de
+   `messages`, **sin bloquear** al ETL). Log: `índice asegurado: idx_messages_account_conv`.
+2. Si `SCORING_ENABLED=true`, arranca el worker en otro thread.
+3. La API responde de inmediato.
+
+**T=0 · Qué se ve:** `/api/accounts` lee de `conversation_scores` (tabla del dashboard). En
+prod está **vacía** → el selector viene vacío y el front muestra **"No hay datos scoreados
+todavía."**. Como los cuadros se piden recién al elegir cuenta, **el dashboard arranca en
+blanco**.
+
+**El worker llena `conversation_scores` de a poco:** toma conversaciones **resueltas y no
+scoreadas**, **más nuevas primero**, de a `SCORING_BATCH_SIZE` (20) por cuenta; LLM →
+estrella determinista → `upsert`; idempotente (`NOT EXISTS`); cuando no hay pendientes,
+duerme `SCORING_POLL_SECONDS`. Apenas entra la **primera** conversación scoreada, la cuenta
+aparece y el dashboard cobra vida.
+
+**Detalle a favor:** los 3 cuadros son **full-scale sobre datos del ETL** — no dependen de
+cuánto scoreaste. Apenas hay ≥1 cuenta con score, **los cuadros muestran los datos
+completos de una**. Lo que crece de a poco es la lista de scores (tickets/KPIs/distribución).
+
+**Prerrequisitos — sin esto el dashboard queda en blanco permanente:**
+1. `SCORING_ENABLED=true` (si no, el worker nunca corre → `conversation_scores` vacía).
+2. `DATABASE_URL` → Postgres del ETL de prod (NO la `db` del compose, que está vacía).
+3. Ollama accesible **con auth**. ⚠️ Si es el compartido con token, `src/llm.py` **hoy no
+   manda el token** → el pre-flight falla, cada score da error, la tabla nunca se llena.
+   Ese soporte hay que agregarlo ANTES (ver §5).
+
+---
+
+## 9. Concurrencia con el ETL: ¿es un problema?
+
+La BD la escribe el ETL 24/7, el dashboard escribe scores y las queries de cuadros leen
+fuerte. Análisis:
+
+1. **Locks — NO es problema.** MVCC: los `SELECT` del dashboard no bloquean los `INSERT` del
+   ETL ni al revés. `conversation_scores` es tabla propia (solo la escribe el worker) → sin
+   conflicto de escritura con el ETL.
+2. **I/O — competencia, hoy acotada.** Las queries de cuadros compiten por disco con las
+   escrituras del ETL. Bajo control con índice + `statement_timeout` + TTL. A escala continua,
+   el riesgo es escanear un `messages` creciente en cada request → **rollups** (§6) lo elimina.
+3. **⚠️ Problema latente REAL — el worker mantiene una transacción abierta durante el LLM.**
+   En `score_and_store` (`src/worker.py`), los `SELECT` de lectura abren transacción (psycopg
+   no es autocommit) y queda **`idle in transaction` los ~7-120s que dura la llamada al LLM**,
+   hasta el `commit`. En una BD escrita 24/7, una transacción vieja abierta **frena al
+   autovacuum** (no limpia tuplas muertas más nuevas que ese snapshot) → **bloat** y
+   degradación con el tiempo. **Fix recomendado:** conexión del worker en `autocommit=True`
+   (o commitear las lecturas antes de llamar al LLM). Cambio chico, hygiene grande en una BD
+   ocupada.
