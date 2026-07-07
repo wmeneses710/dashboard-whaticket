@@ -1,8 +1,18 @@
-"""Configuracion desde variables de entorno (ver .env.example)."""
+"""Configuracion desde variables de entorno (ver .env.example).
+
+Carga un archivo `.env` si existe (dotenv) y despues lee de os.environ. Las
+variables ya presentes en el entorno (p. ej. las que inyecta EasyPanel en el
+panel de despliegue) TIENEN PRECEDENCIA: load_dotenv no las pisa. Asi, `.env`
+sirve para local y el panel manda en prod.
+"""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+
+from dotenv import load_dotenv
+
+load_dotenv()  # no-op si no hay .env; no sobreescribe variables ya definidas
 
 
 @dataclass(frozen=True)
