@@ -7,7 +7,6 @@ from src.queries import (
     _build_new_vs_deposit,
     _build_pct_series,
     conversation_detail,
-    deposits_by_month,
     scored_rows,
 )
 
@@ -77,21 +76,6 @@ def test_scored_rows_incluye_contact_id_para_agrupar_por_cliente():
     scored_rows(cur, "datos")
     query, _ = cur.executed[0]
     assert "AS contact_id" in query
-
-
-def test_deposits_by_month_scopea_por_cuenta_y_pasa_patron():
-    cur = _FakeCursor([])
-    deposits_by_month(cur, "sistemas")
-    query, params = cur.executed[0]
-    assert params["account"] == "sistemas"
-    assert "recarg" in params["re"]           # patron de recarga compartido con deposits.py
-
-
-def test_deposits_by_month_mapea_y_calcula_pct_sin_div_por_cero():
-    cur = _FakeCursor([("2026-06", 100, 42, 50), ("2026-05", 0, 0, 0)])
-    out = deposits_by_month(cur, "sistemas")
-    assert out[0] == {"month": "2026-06", "conv": 100, "con_deposito": 42, "veces": 50, "pct": 42.0}
-    assert out[1]["pct"] == 0.0               # mes sin conversaciones -> 0, no ZeroDivisionError
 
 
 def test_build_load_series_top_n_y_otros_alineado_a_meses():

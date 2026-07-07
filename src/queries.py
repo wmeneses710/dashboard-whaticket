@@ -85,49 +85,6 @@ def _transcript(msgs: list[dict]) -> list[dict]:
     return out
 
 
-# --- Agregación FULL-SCALE para los cuadros (determinista, NO usa el scoring LLM).
-# Un depósito = el cliente manda comprobante (imagen) en una conversación con
-# contexto de recarga; misma lógica que src.deposits pero agregada en SQL sobre
-# TODAS las conversaciones de la cuenta (los 8 meses), no solo lo scoreado.
-_DEPOSITS_BY_MONTH_SQL = """
-WITH per_conv AS (
-  SELECT m.conversation_id,
-         bool_or((m.body ~* %(re)s) AND NOT m.is_note) AS has_ctx,
-         count(*) FILTER (WHERE m.from_me=false AND m.is_note=false
-                          AND lower(coalesce(m.media_type,'')) LIKE '%%image%%') AS img_cli
-    FROM messages m
-   WHERE m.account = %(account)s
-   GROUP BY m.conversation_id
-)
-SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
-       count(*) AS conv,
-       count(*) FILTER (WHERE pc.has_ctx AND pc.img_cli > 0) AS con_deposito,
-       coalesce(sum(CASE WHEN pc.has_ctx THEN pc.img_cli ELSE 0 END), 0) AS veces
-  FROM conversations c
-  JOIN per_conv pc ON pc.conversation_id = c.id
- WHERE c.account = %(account)s AND c.created_at IS NOT NULL
- GROUP BY 1 ORDER BY 1
-"""
-
-
-def deposits_by_month(cur, account: str) -> list[dict]:
-    """Depósitos por mes de una cuenta (full-scale). Devuelve conv, con_deposito,
-    veces y el % de conversaciones con depósito."""
-    from src.deposits import RECHARGE_PATTERN
-
-    cur.execute(_DEPOSITS_BY_MONTH_SQL, {"re": RECHARGE_PATTERN, "account": account})
-    out = []
-    for mes, conv, con_dep, veces in cur.fetchall():
-        conv = int(conv or 0)
-        con_dep = int(con_dep or 0)
-        out.append({
-            "month": mes, "conv": conv, "con_deposito": con_dep,
-            "veces": int(veces or 0),
-            "pct": round(100.0 * con_dep / conv, 1) if conv else 0.0,
-        })
-    return out
-
-
 # --- §10: carga mensual por operador (segmento jugador). Operador = el user_id
 # con más mensajes de negocio en la conversación (conversations.user_id suele ser
 # NULL). Se acota a las colas jugador y se agrupa por (mes, operador).
@@ -199,7 +156,7 @@ conv_op AS (
   SELECT DISTINCT ON (conversation_id) conversation_id, user_id
     FROM msg_op ORDER BY conversation_id, n DESC
 ),
-conv_dep AS (
+conv_dep AS MATERIALIZED (
   SELECT conversation_id,
          bool_or((body ~* %(re)s) AND NOT is_note) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note
@@ -263,7 +220,7 @@ def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8
 # --- §9: nuevos jugadores vs % depósito por mes (jugador, agregado). Dos medidas
 # de escala distinta -> el front las muestra en DOS paneles (no doble-eje).
 _NEW_VS_DEP_SQL = """
-WITH per_conv AS (
+WITH per_conv AS MATERIALIZED (
   SELECT conversation_id,
          bool_or((body ~* %(re)s) AND NOT is_note) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note

@@ -102,6 +102,7 @@
   .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .charts{ grid-template-columns:1fr;} }
   .charts .card { margin:0; }
+  .charts .card.span-2 { grid-column:1 / -1; }
   .nvd-lbl { font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.05em; margin:2px 0 4px; font-weight:600; }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
@@ -193,6 +194,12 @@
   .metagrid .m { font-size:11.5px; } .metagrid .m span { color:var(--faint); } .metagrid .m b { font-weight:640; }
   .est { font-size:10.5px; color:var(--faint); margin-top:16px; font-style:italic; }
   .loading { color:var(--faint); text-align:center; padding:60px 12px; font-size:13px; }
+  .charts-status { font-size:12px; margin-bottom:10px; display:none; }
+  .charts-status.show { display:block; }
+  .charts-status.loading-state { color:var(--faint); }
+  .charts-status.error-state { color:#c0392b; }
+  .charts-status .spin { display:inline-block; width:11px; height:11px; margin-right:7px; vertical-align:-1px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -222,14 +229,14 @@
     <div class="card"><h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2><div id="dist"></div></div>
     <div class="card"><h2>Operadores <small>· los más activos primero</small></h2><div id="ops"></div></div>
   </div>
+  <div id="chartsStatus" class="charts-status" aria-live="polite"></div>
   <div class="charts">
-    <div class="card"><h2>Depósitos por mes <small>· conversaciones con depósito · toda la cuenta (8 meses)</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depChart"></canvas></div></div>
-    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
-    <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
-    <div class="card"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores · dos paneles (sin doble-eje)</small></h2>
+    <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores · dos paneles (sin doble-eje)</small></h2>
       <div class="nvd-lbl">Nuevos jugadores / mes</div><div style="position:relative;height:120px"><canvas id="nvdBars"></canvas></div>
       <div class="nvd-lbl" style="margin-top:8px">% depósito / mes</div><div style="position:relative;height:140px"><canvas id="nvdLine"></canvas></div>
     </div>
+    <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
+    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
   </div>
   <div class="card"><h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2><div id="tickets"></div></div>
 </div>
@@ -389,25 +396,6 @@ async function openModal(id){
   box.innerHTML=`<div style="margin-bottom:12px">${chip(r)}</div><div class="why">${esc(r.rating_rationale)}</div><div class="dims">${dh}</div>${eh}${metaGrid(r)}<div class="est">★ estimada por LLM (rúbrica ${esc(r.rubric)}) — no es un dato de la plataforma.</div>`;
 }
 function closeModal(){ $("#backdrop").classList.remove("show"); }
-// Depósitos por mes (comprobantes) — 1 serie, sin doble-eje. Full-scale: usa el
-// agregado determinista del endpoint (los 8 meses), NO el subconjunto scoreado.
-// Se re-crea en cada render para tomar los colores del tema.
-let depChartInst=null;
-function renderDepChart(){ const el=$("#depChart"); if(!el || !window.Chart) return;
-  const rows=(CHARTS && CHARTS.deposits_by_month) || [];
-  // Ploteo conversaciones-con-depósito (robusto). 'veces' (conteo crudo de
-  // imágenes) tiene picos de ruido (nov) que taparían el resto; va en el tooltip.
-  const months=rows.map(r=>r.month), data=rows.map(r=>r.con_deposito);
-  const accent=cvar("--accent"), grid=cvar("--border"), ink=cvar("--muted");
-  if(depChartInst) depChartInst.destroy();
-  depChartInst=new Chart(el,{ type:"bar",
-    data:{ labels:months, datasets:[{ label:"Depósitos", data, backgroundColor:accent, borderRadius:4, maxBarThickness:46 }] },
-    options:{ responsive:true, maintainAspectRatio:false, animation:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>{ const r=rows[c.dataIndex];
-        return ` ${r.veces} depósitos · ${r.con_deposito} conv · ${r.pct}%`; } } } },
-      scales:{ x:{ grid:{display:false}, ticks:{color:ink} },
-               y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0} } } } });
-}
 // Multi-línea por operador (jugadores) — top-N + Otros. Full-scale desde el
 // endpoint (no depende de los filtros de calidad). Leyenda (identidad, no
 // color-solo) + hover multi-serie; paleta validada; se re-crea con el tema.
@@ -449,7 +437,7 @@ function renderNewVsDep(){ const elB=$("#nvdBars"), elL=$("#nvdLine"); if(!elB||
       plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ${c.parsed.y}% depósito` } } },
       scales:{ x:{ grid:{display:false}, ticks:{color:ink} }, y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, callback:v=>v+"%" } } } } });
 }
-function renderCharts(){ renderDepChart(); renderLoadChart(); renderDepPctChart(); renderNewVsDep(); }
+function renderCharts(){ renderNewVsDep(); renderDepPctChart(); renderLoadChart(); }
 function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderCharts(); renderSnap(); }
 // Aviso de datos nuevos (no auto-refresca: el usuario decide cuándo, para no
 // interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
@@ -469,12 +457,18 @@ async function refresh(){ const btn=$("#refreshBtn"); if(btn) btn.disabled=true;
 // pintan al llegar. El guard account===state.account evita que una respuesta
 // vieja pise una cuenta ya cambiada.
 const chartsCache={};
+function setChartsStatus(kind, msg){   // kind: "" | "loading" | "error"
+  const el=$("#chartsStatus"); if(!el) return;
+  el.className="charts-status"+(kind?" show "+kind+"-state":"");
+  el.innerHTML = kind==="loading" ? `<span class="spin"></span>${esc(msg)}` : (kind==="error"?esc(msg):"");
+}
 async function loadCharts(account){
   if(!chartsCache[account]){
+    setChartsStatus("loading","Cargando cuadros…");
     try { chartsCache[account]=await fetchJSON("/api/charts?account="+encodeURIComponent(account)); }
-    catch(e){ return; }
+    catch(e){ if(account===state.account) setChartsStatus("error","No se pudieron cargar los cuadros. Probá con Actualizar."); return; }
   }
-  if(account===state.account){ CHARTS=chartsCache[account]; renderCharts(); }
+  if(account===state.account){ CHARTS=chartsCache[account]; setChartsStatus("",""); renderCharts(); }
 }
 async function load(){
   $("#snap").textContent="Cargando cuenta "+state.account+"…";
