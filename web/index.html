@@ -413,7 +413,7 @@ function multiLine(el, d, { pct = false } = {}) {
       plugins:{ legend:{ position:"bottom", labels:{ color:ink, boxWidth:10, boxHeight:10, usePointStyle:true, font:{size:11} } },
                 tooltip: pct?{ callbacks:{ label:c=>` ${c.dataset.label}: ${c.parsed.y==null?"—":c.parsed.y+"%"}` } }:{} },
       scales:{ x:{ grid:{display:false}, ticks:{color:ink} },
-               y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0, callback: pct?(v=>v+"%"):undefined } } } });
+               y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0, callback: pct?(v=>v+"%"):undefined } } } } });
 }
 let loadChartInst=null, depPctChartInst=null;
 function renderLoadChart(){ const el=$("#loadChart"); if(!el) return;
