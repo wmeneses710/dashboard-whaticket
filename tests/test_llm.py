@@ -148,3 +148,31 @@ def test_check_model_ollama_caido_no_levanta():
     ok, msg = llm.check_model()               # no debe propagar: devuelve (False, msg)
     assert ok is False
     assert "ollama" in msg.lower()
+
+
+def _client_capturando_headers(captured):
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("authorization")
+        return httpx.Response(200, json={"message": {"content": "{}"}})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_con_token_manda_authorization_bearer():
+    captured = {}
+    llm = OllamaClient(
+        "https://ollama-proxy", "qwen3:14b", token="secreto123",
+        client=_client_capturando_headers(captured),
+    )
+    llm.chat_json("s", "u")
+    assert captured["auth"] == "Bearer secreto123"   # auth para el Ollama detras de proxy
+
+
+def test_sin_token_no_manda_authorization():
+    captured = {}
+    llm = OllamaClient(
+        "http://ollama:11434", "qwen3.5:4b",
+        client=_client_capturando_headers(captured),
+    )
+    llm.chat_json("s", "u")
+    assert captured["auth"] is None                  # Ollama local sin auth: como antes

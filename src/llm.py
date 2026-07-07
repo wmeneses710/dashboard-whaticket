@@ -57,6 +57,7 @@ class OllamaClient:
         self,
         base_url: str,
         model: str,
+        token: str | None = None,
         timeout: float = 180.0,
         client: httpx.Client | None = None,
         num_ctx: int = 16384,
@@ -70,6 +71,9 @@ class OllamaClient:
         self.num_predict = num_predict
         self.fallback_num_predict = fallback_num_predict
         self._client = client  # inyectable para tests (httpx.MockTransport)
+        # Auth para un Ollama detras de proxy (p. ej. el compartido via Cloudflare).
+        # Sin token, headers vacio y se comporta como antes (Ollama local sin auth).
+        self._headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def _chat(self, system, user, *, response_format, num_predict, think) -> str:
         payload = {
@@ -90,9 +94,9 @@ class OllamaClient:
             payload["think"] = think
         url = f"{self.base_url}/api/chat"
         if self._client is not None:
-            resp = self._client.post(url, json=payload)
+            resp = self._client.post(url, json=payload, headers=self._headers)
         else:
-            resp = httpx.post(url, json=payload, timeout=self.timeout)
+            resp = httpx.post(url, json=payload, headers=self._headers, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()["message"].get("content") or ""
 
@@ -100,9 +104,9 @@ class OllamaClient:
         """Nombres de los modelos presentes en Ollama (GET /api/tags)."""
         url = f"{self.base_url}/api/tags"
         if self._client is not None:
-            resp = self._client.get(url)
+            resp = self._client.get(url, headers=self._headers)
         else:
-            resp = httpx.get(url, timeout=self.timeout)
+            resp = httpx.get(url, headers=self._headers, timeout=self.timeout)
         resp.raise_for_status()
         return [m.get("name", "") for m in resp.json().get("models", [])]
 

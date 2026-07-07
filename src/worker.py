@@ -95,7 +95,7 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
     import psycopg
 
-    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, timeout=180.0)
+    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
     log(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
     ok, msg = llm.check_model()  # pre-flight: no aborta, pero avisa fuerte si falta el modelo
     log(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")

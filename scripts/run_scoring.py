@@ -52,7 +52,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config()
-    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, timeout=180.0)
+    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
     extra = ("AND NOT EXISTS (SELECT 1 FROM conversation_scores s "
              "WHERE s.conversation_id = c.id)") if args.skip_scored else ""
     sql = (DIVERSE_SQL if args.diverse else BATCH_SQL).format(extra=extra)

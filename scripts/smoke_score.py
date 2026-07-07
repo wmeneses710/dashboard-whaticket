@@ -38,7 +38,7 @@ def main() -> None:
     args = ap.parse_args()
 
     cfg = load_config()
-    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, timeout=180.0)
+    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
     print(f"Ollama={cfg.ollama_url} modelo={cfg.ollama_model}\n")
 
     with psycopg.connect(cfg.database_url, connect_timeout=8) as conn, conn.cursor() as cur:

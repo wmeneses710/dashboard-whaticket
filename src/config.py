@@ -20,6 +20,7 @@ class Config:
     database_url: str
     ollama_url: str
     ollama_model: str
+    ollama_token: str  # auth para un Ollama detras de proxy (Cloudflare); "" = sin auth
     api_host: str
     api_port: int
     log_level: str
@@ -50,6 +51,7 @@ def load_config() -> Config:
         ),
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "qwen3.5:4b"),
+        ollama_token=os.environ.get("OLLAMA_TOKEN", ""),
         api_host=os.environ.get("API_HOST", "0.0.0.0"),
         api_port=int(os.environ.get("API_PORT", "8080")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
