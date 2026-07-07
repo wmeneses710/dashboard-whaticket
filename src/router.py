@@ -32,18 +32,26 @@ def decide_eligibility(
     real_message_count: int,
     customer_message_count: int,
     business_message_count: int,
+    customer_text_count: int | None = None,
 ) -> tuple[str, str | None]:
     """Devuelve (eval_status, skip_reason).
 
     `business_message_count` = mensajes del negocio (humano + bot, from_me).
-    Orden: sin contenido real -> sin cliente -> sin respuesta del negocio ->
-    tamaño anomalo -> evaluable. Sin respuesta del negocio no hay accion que
-    evaluar (p. ej. una visita con solo un "Gracias" del cliente).
+    `customer_text_count` = mensajes del cliente con TEXTO legible (opcional por
+    compatibilidad). Orden: sin contenido real -> sin cliente -> cliente solo
+    media -> sin respuesta del negocio -> tamaño anomalo -> evaluable.
+
+    Sin respuesta del negocio no hay accion que evaluar (p. ej. una visita con
+    solo un "Gracias" del cliente). Y si el cliente SOLO mando imagenes/audio
+    (customer_text_count == 0), el LLM no puede leer su intencion: evaluar seria
+    adivinar un fracaso, asi que se saltea.
     """
     if real_message_count == 0:
         return "skipped", "internal_notes_only"
     if customer_message_count == 0:
         return "skipped", "no_customer_reply"
+    if customer_text_count is not None and customer_text_count == 0:
+        return "skipped", "customer_media_only"
     if business_message_count == 0:
         return "skipped", "no_agent_reply"
     if real_message_count > ANOMALOUS_MESSAGE_MAX:

@@ -44,19 +44,25 @@ class MessageStats:
     agent_message_count: int    # negocio humano (from_me, no bot), sin notas
     bot_message_count: int      # negocio bot (sent_from=CHATBOT), sin notas
     contact_message_count: int  # cliente (from_me=False), sin notas
+    # cliente con TEXTO legible (body no vacio). Si es 0 pero contact_message_count>0,
+    # el cliente solo mando media -> el LLM no puede leerlo (ver router).
+    contact_text_message_count: int
 
 
 def message_stats(messages: list[dict]) -> MessageStats:
     """Cuenta mensajes reales separando cliente / humano / bot (por sent_from)."""
     real = [m for m in messages if not m.get("is_note")]
     business = [m for m in real if m.get("from_me")]
+    contact = [m for m in real if not m.get("from_me")]
     bot = sum(1 for m in business if _is_bot(m))
     agent = len(business) - bot
+    contact_text = sum(1 for m in contact if (m.get("body") or "").strip())
     return MessageStats(
         message_count=len(real),
         agent_message_count=agent,
         bot_message_count=bot,
-        contact_message_count=len(real) - len(business),
+        contact_message_count=len(contact),
+        contact_text_message_count=contact_text,
     )
 
 

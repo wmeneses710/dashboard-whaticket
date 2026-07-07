@@ -57,6 +57,7 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
         real_message_count=stats.message_count,
         customer_message_count=stats.contact_message_count,
         business_message_count=stats.agent_message_count + stats.bot_message_count,
+        customer_text_count=stats.contact_text_message_count,
     )
     score = None
     if eval_status == "evaluated":

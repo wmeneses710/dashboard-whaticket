@@ -39,6 +39,18 @@ CONTEXTO para entender continuidad; no las califiques.
 - Ignora las notas internas; el cliente no las ve (ya vienen excluidas del texto).
 - Juzga la resolucion A NIVEL DE ESTA VISITA: se atendio el motivo y se lo hizo \
 avanzar? No penalices porque el caso completo del ticket siga abierto.
+- Dar un PASO ACCIONABLE concreto (mandar el formulario/link, pedir los datos, \
+indicar el proceso, ofrecer crear la cuenta) CUENTA como hacer avanzar el motivo, \
+aunque el caso no cierre en esta visita.
+- ABANDONO DEL CLIENTE: si el agente dio una respuesta accionable y el cliente NO \
+respondio o se fue, la falta de cierre es del lado del cliente, NO una falla del \
+agente. No lo bajes de nota por el silencio del cliente.
+- MEDIA ILEGIBLE: los mensajes marcados "[media/sin texto]" son imagenes/audios que \
+NO podes ver. No infieras que "no hubo interaccion" ni que el agente fallo por no \
+poder leerlas: evalua SOLO el texto legible; si no hay texto suficiente del cliente, \
+NO inventes un fracaso.
+- TONO: cordial pero informal o con plantilla NO es "cortante". Cortante = seco, sin \
+saludo ni cortesia. Juzga el tono por lo escrito, no por su brevedad.
 - Si la conversacion es un fragmento (p. ej. el cliente solo agradece), \
 interpretalo a la luz del contexto del ticket.
 - Regla de techo: si la dimension dominante ({dominante}) falla, la etiqueta no \
