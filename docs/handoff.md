@@ -202,8 +202,46 @@ El código **no usa `dotenv`**: `config.py` lee directo de `os.environ` con defa
 - **Local:** `docker-compose.yml`, bloque `environment:`.
 - **Prod (EasyPanel):** el panel de variables de entorno del contenedor.
 
-`.env.example` es solo plantilla documentada. Los **secretos** (ej. `OLLAMA_TOKEN`) van por
-el panel de EasyPanel, nunca al repo.
+Los **secretos** (ej. `OLLAMA_TOKEN`) van por el panel de EasyPanel, nunca al repo.
+
+### Bloque completo para copiar (a EasyPanel o a un `.env` local)
+
+```dotenv
+# Base de datos (Postgres del ETL). EN PROD apuntar al ETL, no a la 'db' del compose.
+DATABASE_URL=postgresql://usuario:password@host:5432/whaticket
+
+# Ollama (motor del scoring de calidad)
+OLLAMA_URL=http://host.docker.internal:11434
+OLLAMA_MODEL=qwen3.5:4b
+# Ollama compartido (vía Cloudflare, con token). PENDIENTE: src/llm.py no envía el token
+# ni lee USE_OPENAI todavía (ver §5); hasta ese cambio, apuntar acá NO funciona.
+#OLLAMA_URL=https://ollama-internal.zgames.store
+#OLLAMA_MODEL=qwen3:14b
+#OLLAMA_TOKEN=            # pegar SOLO en el panel de EasyPanel, nunca en el repo
+#USE_OPENAI=false
+
+# Worker de scoring. EN PROD "true": si queda "false", conversation_scores nunca se
+# llena y el dashboard arranca EN BLANCO ("No hay datos scoreados todavía").
+SCORING_ENABLED=false
+SCORING_ACCOUNTS=sistemas,datos
+SCORING_BATCH_SIZE=20
+SCORING_POLL_SECONDS=60
+
+# Cuadros: meses (más recientes) que se muestran.
+CHARTS_WINDOW_MONTHS=12
+
+# API
+API_HOST=0.0.0.0
+API_PORT=8080
+LOG_LEVEL=INFO
+```
+
+> `OLLAMA_TOKEN` y `USE_OPENAI` todavía no los lee el código (`config.py`) — van a servir
+> recién cuando se agregue el soporte de token en `src/llm.py` (§5). Se listan acá para que
+> queden previstos al configurar EasyPanel.
+
+> ⚠️ No puedo escribir archivos `.env*` (bloqueados por permisos de seguridad del entorno).
+> Por eso esta plantilla vive acá y no en un `.env`/`.env.example`.
 
 ---
 
