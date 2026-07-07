@@ -98,6 +98,10 @@
   /* Cards */
   .cols { display:grid; grid-template-columns:1.05fr 1fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
+  /* Cuadros de análisis en grilla 2-up para aprovechar el ancho */
+  .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
+  @media (max-width:900px){ .charts{ grid-template-columns:1fr;} }
+  .charts .card { margin:0; }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
   .chart-wrap { position:relative; height:260px; }
@@ -217,9 +221,11 @@
     <div class="card"><h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2><div id="dist"></div></div>
     <div class="card"><h2>Operadores <small>· los más activos primero</small></h2><div id="ops"></div></div>
   </div>
-  <div class="card" style="margin-bottom:16px"><h2>Depósitos por mes <small>· conversaciones con depósito · toda la cuenta (8 meses)</small></h2><div class="chart-wrap"><canvas id="depChart"></canvas></div></div>
-  <div class="card" style="margin-bottom:16px"><h2>Carga mensual por operador <small>· conversaciones de jugadores · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
-  <div class="card" style="margin-bottom:16px"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
+  <div class="charts">
+    <div class="card"><h2>Depósitos por mes <small>· conversaciones con depósito · toda la cuenta (8 meses)</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depChart"></canvas></div></div>
+    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
+    <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
+  </div>
   <div class="card"><h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2><div id="tickets"></div></div>
 </div>
 <div class="backdrop" id="backdrop">
