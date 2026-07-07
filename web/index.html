@@ -100,6 +100,7 @@
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
+  .chart-wrap { position:relative; height:260px; }
 
   /* Distribution — horizontal magnitude bars, 4px rounded data-end from a left baseline */
   .distrow { display:grid; grid-template-columns:104px 1fr 34px; align-items:center; gap:12px; margin:0 -8px 5px; padding:3px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
@@ -203,6 +204,7 @@
   <div class="snapshot" id="snap">Cargando…</div>
   <div class="filters">
     <div><label for="fEstado">Estado</label><select id="fEstado"><option value="all">Todas</option><option value="evaluated">Evaluadas</option><option value="skipped">Sin evaluar</option></select></div>
+    <div><label for="fSeg">Segmento</label><select id="fSeg"></select></div>
     <div><label for="fCanal">Canal</label><select id="fCanal"></select></div>
     <div><label for="fOp">Operador</label><select id="fOp"></select></div>
     <div><label for="fSort">Orden</label><select id="fSort"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
@@ -215,6 +217,9 @@
     <div class="card"><h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2><div id="dist"></div></div>
     <div class="card"><h2>Operadores <small>· los más activos primero</small></h2><div id="ops"></div></div>
   </div>
+  <div class="card" style="margin-bottom:16px"><h2>Depósitos por mes <small>· conversaciones con depósito · toda la cuenta (8 meses)</small></h2><div class="chart-wrap"><canvas id="depChart"></canvas></div></div>
+  <div class="card" style="margin-bottom:16px"><h2>Carga mensual por operador <small>· conversaciones de jugadores · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
+  <div class="card" style="margin-bottom:16px"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
   <div class="card"><h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2><div id="tickets"></div></div>
 </div>
 <div class="backdrop" id="backdrop">
@@ -226,6 +231,7 @@
     </div>
   </div>
 </div>
+<script src="/vendor/chart.umd.js"></script>
 <script>
 const RATINGS = {
   excelente:{s:5,c:"--r-excelente"}, buena:{s:4,c:"--r-buena"}, aceptable:{s:3,c:"--r-aceptable"},
@@ -246,9 +252,17 @@ const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—")
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
 const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
+// Paleta categórica validada (dataviz): 8 slots, orden fijo (no ciclado). Dark =
+// los mismos hues escalonados para superficie oscura. 'Otros' va en gris neutro.
+const SERIES_LIGHT=["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"];
+const SERIES_DARK =["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"];
+const isDark = () => { const t=document.documentElement.getAttribute("data-theme");
+  return t==="dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches); };
+const seriesColors = () => isDark()?SERIES_DARK:SERIES_LIGHT;
 
 let DATA = [];
-let state = { account:null, estado:"all", canal:"all", op:"all", sort:"new", search:"", from:"", to:"", rating:"all", page:1, openKeys:new Set(), opsExpanded:false };
+let CHARTS = null;   // agregados full-scale (deterministas) para los cuadros
+let state = { account:null, estado:"all", segment:"all", canal:"all", op:"all", sort:"new", search:"", from:"", to:"", rating:"all", page:1, openKeys:new Set(), opsExpanded:false };
 const TOP_OPS = 8;
 
 // Bucket de una fila según su estrella (une human y bot: 'optima' y 'excelente'
@@ -264,6 +278,7 @@ function matchBase(r){ const q=state.search.trim().toLowerCase();
   const from=state.from?new Date(state.from).getTime():null;
   const to=state.to?new Date(state.to).getTime():null;
   if(state.estado!=="all" && r.eval_status!==state.estado) return false;
+  if(state.segment!=="all" && r.segment!==state.segment) return false;
   if(state.canal!=="all" && r.channel!==state.canal) return false;
   if(state.op!=="all" && opName(r)!==state.op) return false;
   if(from!=null || to!=null){ const t=new Date(r.conversation_created_at).getTime();
@@ -276,6 +291,8 @@ function populationForDist(){ return DATA.filter(matchBase); }
 function renderSnap(){ const ev=DATA.filter(r=>r.eval_status==="evaluated").length;
   $("#snap").innerHTML=`En vivo desde la BD · cuenta <b>${esc(state.account)}</b> · <b>${DATA.length}</b> conversaciones (${ev} evaluadas), <b>${new Set(DATA.map(r=>r.customer_name).filter(Boolean)).size}</b> clientes.`; }
 function renderFilters(){
+  const segs=[...new Set(DATA.map(r=>r.segment).filter(Boolean))].sort();
+  $("#fSeg").innerHTML=`<option value="all">Todos</option>`+segs.map(s=>`<option value="${esc(s)}" ${s===state.segment?"selected":""}>${esc(s[0].toUpperCase()+s.slice(1))}</option>`).join("");
   const chans=[...new Set(DATA.map(r=>r.channel).filter(Boolean))].sort();
   const curC=state.canal;
   $("#fCanal").innerHTML=`<option value="all">Todos</option>`+chans.map(s=>`<option ${s===curC?"selected":""}>${esc(s)}</option>`).join("");
@@ -361,7 +378,51 @@ async function openModal(id){
   box.innerHTML=`<div style="margin-bottom:12px">${chip(r)}</div><div class="why">${esc(r.rating_rationale)}</div><div class="dims">${dh}</div>${eh}${metaGrid(r)}<div class="est">★ estimada por LLM (rúbrica ${esc(r.rubric)}) — no es un dato de la plataforma.</div>`;
 }
 function closeModal(){ $("#backdrop").classList.remove("show"); }
-function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderSnap(); }
+// Depósitos por mes (comprobantes) — 1 serie, sin doble-eje. Full-scale: usa el
+// agregado determinista del endpoint (los 8 meses), NO el subconjunto scoreado.
+// Se re-crea en cada render para tomar los colores del tema.
+let depChartInst=null;
+function renderDepChart(){ const el=$("#depChart"); if(!el || !window.Chart) return;
+  const rows=(CHARTS && CHARTS.deposits_by_month) || [];
+  // Ploteo conversaciones-con-depósito (robusto). 'veces' (conteo crudo de
+  // imágenes) tiene picos de ruido (nov) que taparían el resto; va en el tooltip.
+  const months=rows.map(r=>r.month), data=rows.map(r=>r.con_deposito);
+  const accent=cvar("--accent"), grid=cvar("--border"), ink=cvar("--muted");
+  if(depChartInst) depChartInst.destroy();
+  depChartInst=new Chart(el,{ type:"bar",
+    data:{ labels:months, datasets:[{ label:"Depósitos", data, backgroundColor:accent, borderRadius:4, maxBarThickness:46 }] },
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>{ const r=rows[c.dataIndex];
+        return ` ${r.veces} depósitos · ${r.con_deposito} conv · ${r.pct}%`; } } } },
+      scales:{ x:{ grid:{display:false}, ticks:{color:ink} },
+               y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0} } } } });
+}
+// Multi-línea por operador (jugadores) — top-N + Otros. Full-scale desde el
+// endpoint (no depende de los filtros de calidad). Leyenda (identidad, no
+// color-solo) + hover multi-serie; paleta validada; se re-crea con el tema.
+// `pct` => eje/tooltip en %, y los meses de bajo volumen (null) rompen la línea.
+function multiLine(el, d, { pct = false } = {}) {
+  if (!el || !window.Chart) return null;
+  const pal=seriesColors(), grid=cvar("--border"), ink=cvar("--muted"), faint=cvar("--faint");
+  const datasets=(d.series||[]).map((s,i)=>{ const c = s.op==="Otros"?faint:pal[i%pal.length];
+    return { label:s.op, data:s.data, borderColor:c, backgroundColor:c, borderWidth:2,
+             borderDash: s.op==="Otros"?[4,3]:[], tension:.25, pointRadius:2, pointHoverRadius:5, spanGaps:false }; });
+  return new Chart(el,{ type:"line", data:{ labels:d.months||[], datasets },
+    options:{ responsive:true, maintainAspectRatio:false, animation:false,
+      interaction:{ mode:"index", intersect:false },
+      plugins:{ legend:{ position:"bottom", labels:{ color:ink, boxWidth:10, boxHeight:10, usePointStyle:true, font:{size:11} } },
+                tooltip: pct?{ callbacks:{ label:c=>` ${c.dataset.label}: ${c.parsed.y==null?"—":c.parsed.y+"%"}` } }:{} },
+      scales:{ x:{ grid:{display:false}, ticks:{color:ink} },
+               y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0, callback: pct?(v=>v+"%"):undefined } } } });
+}
+let loadChartInst=null, depPctChartInst=null;
+function renderLoadChart(){ const el=$("#loadChart"); if(!el) return;
+  if(loadChartInst) loadChartInst.destroy();
+  loadChartInst=multiLine(el, (CHARTS&&CHARTS.load_by_operator)||{}); }
+function renderDepPctChart(){ const el=$("#depPctChart"); if(!el) return;
+  if(depPctChartInst) depPctChartInst.destroy();
+  depPctChartInst=multiLine(el, (CHARTS&&CHARTS.deposit_pct_by_operator)||{}, {pct:true}); }
+function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderDepChart(); renderLoadChart(); renderDepPctChart(); renderSnap(); }
 // Aviso de datos nuevos (no auto-refresca: el usuario decide cuándo, para no
 // interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
 function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!btn) return;
@@ -379,7 +440,8 @@ async function load(){
   $("#snap").textContent="Cargando cuenta "+state.account+"…";
   try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); }
   catch(e){ $("#snap").textContent="Error cargando datos."; DATA=[]; }
-  state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
+  try { CHARTS=await fetchJSON("/api/charts?account="+encodeURIComponent(state.account)); } catch(e){ CHARTS=null; }
+  state.segment="all"; state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
   if($("#fSearch")) $("#fSearch").value=""; if($("#fFrom")) $("#fFrom").value=""; if($("#fTo")) $("#fTo").value=""; renderAll();
 }
 function renderAcctSwitch(accts){
@@ -388,13 +450,14 @@ function renderAcctSwitch(accts){
 }
 async function init(){
   $("#fEstado").onchange=e=>{state.estado=e.target.value;state.page=1;renderAll();};
+  $("#fSeg").onchange=e=>{state.segment=e.target.value;state.page=1;renderAll();};
   $("#fCanal").onchange=e=>{state.canal=e.target.value;state.page=1;renderAll();};
   $("#fOp").onchange=e=>{state.op=e.target.value;state.page=1;renderAll();};
   $("#fSort").onchange=e=>{state.sort=e.target.value;state.page=1;renderTickets();};
   $("#fFrom").onchange=e=>{state.from=e.target.value;state.page=1;renderAll();};
   $("#fTo").onchange=e=>{state.to=e.target.value;state.page=1;renderAll();};
   $("#fSearch").oninput=e=>{state.search=e.target.value;state.page=1;renderAll();};
-  $("#fReset").onclick=()=>{ Object.assign(state,{estado:"all",canal:"all",op:"all",sort:"new",search:"",from:"",to:"",rating:"all",page:1});
+  $("#fReset").onclick=()=>{ Object.assign(state,{estado:"all",segment:"all",canal:"all",op:"all",sort:"new",search:"",from:"",to:"",rating:"all",page:1});
     $("#fEstado").value="all"; $("#fSort").value="new"; $("#fSearch").value=""; $("#fFrom").value=""; $("#fTo").value=""; renderAll(); };
   $("#refreshBtn").onclick=refresh;
   setInterval(checkNew, 60000);

@@ -13,6 +13,7 @@ from pathlib import Path
 import psycopg
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from src import queries
 from src.config import load_config
@@ -20,6 +21,7 @@ from src.worker import run_worker_loop
 
 cfg = load_config()
 _WEB = Path(__file__).resolve().parent.parent / "web" / "index.html"
+_VENDOR = _WEB.parent / "vendor"  # libs estáticas (Chart.js), servidas local
 
 
 @asynccontextmanager
@@ -37,6 +39,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="dashboard-whaticket", version="1.0", lifespan=lifespan)
+app.mount("/vendor", StaticFiles(directory=str(_VENDOR)), name="vendor")
 
 
 def _conn():
@@ -60,6 +63,18 @@ def scores(account: str = Query(..., description="datos | sistemas")) -> list[di
     """Conversaciones scoreadas de una cuenta (sin transcript)."""
     with _conn() as c, c.cursor() as cur:
         return queries.scored_rows(cur, account)
+
+
+@app.get("/api/charts")
+def charts(account: str = Query(..., description="datos | sistemas")) -> dict:
+    """Agregados FULL-SCALE para los cuadros (deterministas, sobre toda la cuenta;
+    no dependen del scoring LLM). Hoy: depósitos por mes."""
+    with _conn() as c, c.cursor() as cur:
+        return {
+            "deposits_by_month": queries.deposits_by_month(cur, account),
+            "load_by_operator": queries.load_by_operator(cur, account),
+            "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account),
+        }
 
 
 @app.get("/api/conversation/{cid}")

@@ -16,8 +16,11 @@ from __future__ import annotations
 
 import re
 
-# Razon de recarga en el texto (tolera acentos y mayusculas).
-_RECHARGE_RE = re.compile(r"recarg|comprobante|dep[oó]sit|transferenc", re.IGNORECASE)
+# Razon de recarga en el texto (tolera acentos y mayusculas). Fuente unica del
+# patron: lo reusa la deteccion en Python (aca) y la agregacion full-scale en SQL
+# (src.queries, via regexp `~*`). No duplicar.
+RECHARGE_PATTERN = r"recarg|comprobante|dep[oó]sit|transferenc"
+_RECHARGE_RE = re.compile(RECHARGE_PATTERN, re.IGNORECASE)
 
 
 def _is_customer(m: dict) -> bool:

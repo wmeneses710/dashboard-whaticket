@@ -2,7 +2,13 @@
 esta scopeada por cuenta (datos vs sistemas conviven en la misma BD)."""
 from decimal import Decimal
 
-from src.queries import conversation_detail, scored_rows
+from src.queries import (
+    _build_load_series,
+    _build_pct_series,
+    conversation_detail,
+    deposits_by_month,
+    scored_rows,
+)
 
 
 class _FakeCursor:
@@ -70,6 +76,55 @@ def test_scored_rows_incluye_contact_id_para_agrupar_por_cliente():
     scored_rows(cur, "datos")
     query, _ = cur.executed[0]
     assert "AS contact_id" in query
+
+
+def test_deposits_by_month_scopea_por_cuenta_y_pasa_patron():
+    cur = _FakeCursor([])
+    deposits_by_month(cur, "sistemas")
+    query, params = cur.executed[0]
+    assert params["account"] == "sistemas"
+    assert "recarg" in params["re"]           # patron de recarga compartido con deposits.py
+
+
+def test_deposits_by_month_mapea_y_calcula_pct_sin_div_por_cero():
+    cur = _FakeCursor([("2026-06", 100, 42, 50), ("2026-05", 0, 0, 0)])
+    out = deposits_by_month(cur, "sistemas")
+    assert out[0] == {"month": "2026-06", "conv": 100, "con_deposito": 42, "veces": 50, "pct": 42.0}
+    assert out[1]["pct"] == 0.0               # mes sin conversaciones -> 0, no ZeroDivisionError
+
+
+def test_build_load_series_top_n_y_otros_alineado_a_meses():
+    rows = [("2026-01", "A", 5), ("2026-01", "B", 3), ("2026-02", "A", 2),
+            ("2026-01", "C", 1), ("2026-02", "C", 1)]
+    out = _build_load_series(rows, top_n=2)
+    assert out["months"] == ["2026-01", "2026-02"]
+    ops = [s["op"] for s in out["series"]]
+    assert ops == ["A", "B", "Otros"]                    # A(7) B(3) top-2; C(2) -> Otros
+    a = next(s for s in out["series"] if s["op"] == "A")
+    assert a["data"] == [5, 2]                            # alineado a los meses
+    otros = next(s for s in out["series"] if s["op"] == "Otros")
+    assert otros["data"] == [1, 1]                        # meses sin dato -> 0
+
+
+def test_build_load_series_sin_otros_si_no_sobran():
+    out = _build_load_series([("2026-01", "A", 4)], top_n=7)
+    assert [s["op"] for s in out["series"]] == ["A"]      # no aparece 'Otros' vacío
+
+
+def test_build_pct_series_calcula_pct_y_omite_bajo_volumen():
+    rows = [("2026-01", "A", 10, 5), ("2026-02", "A", 4, 4)]
+    out = _build_pct_series(rows, top_n=7, min_conv=8)
+    a = out["series"][0]
+    assert a["op"] == "A"
+    assert a["data"] == [50.0, None]         # ene 5/10=50%; feb 4<8 -> None (omitido)
+
+
+def test_build_pct_series_otros_agrega_conv_y_dep_del_resto():
+    rows = [("2026-01", "A", 100, 50), ("2026-01", "B", 10, 1), ("2026-01", "C", 10, 9)]
+    out = _build_pct_series(rows, top_n=1, min_conv=8)
+    assert [s["op"] for s in out["series"]] == ["A", "Otros"]
+    otros = next(s for s in out["series"] if s["op"] == "Otros")
+    assert otros["data"] == [50.0]           # (1+9)/(10+10) = 50%
 
 
 def test_conversation_detail_coacciona_decimal_a_numero():

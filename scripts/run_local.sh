@@ -37,9 +37,11 @@ if [ "${RESET:-0}" = "1" ]; then
   docker exec "$DB_CONTAINER" psql -U whaticket -d whaticket -c "TRUNCATE conversation_scores;" >/dev/null
 fi
 
-echo "==> 2) Nombres de operador + backfill de depositos (rapido, sin Ollama)"
-.venv/bin/python -m scripts.seed_users >/dev/null 2>&1 || true
-.venv/bin/python -m scripts.backfill_deposits || true
+echo "==> 2) Colas + nombres de operador + backfill de depositos (rapido, sin Ollama)"
+.venv/bin/python -m scripts.seed_queues 2>&1 | head -1 || true
+.venv/bin/python -m scripts.seed_users  2>&1 | head -1 || true
+.venv/bin/python -m scripts.backfill_segments 2>&1 | head -1 || true
+.venv/bin/python -m scripts.backfill_deposits 2>&1 | head -1 || true
 
 echo "==> 3) Ollama ($OLLAMA_URL / $OLLAMA_MODEL)"
 if curl -sf "$OLLAMA_URL/api/tags" >/dev/null 2>&1; then echo "    alcanzable"; else
