@@ -231,9 +231,9 @@
   </div>
   <div id="chartsStatus" class="charts-status" aria-live="polite"></div>
   <div class="charts">
-    <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores · dos paneles (sin doble-eje)</small></h2>
-      <div class="nvd-lbl">Nuevos jugadores / mes</div><div style="position:relative;height:120px"><canvas id="nvdBars"></canvas></div>
-      <div class="nvd-lbl" style="margin-top:8px">% depósito / mes</div><div style="position:relative;height:140px"><canvas id="nvdLine"></canvas></div>
+    <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores</small></h2>
+      <p style="font-size:12px;color:var(--muted);margin:-6px 0 12px">Barras = jugadores nuevos por mes · línea = % que depositó. Cuando el <b style="color:var(--ink)">volumen sube</b>, la <b style="color:var(--ink)">tasa de depósito suele bajar</b>.</p>
+      <div style="position:relative;height:330px"><canvas id="nvdCombo"></canvas></div>
     </div>
     <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
     <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
@@ -421,21 +421,45 @@ function renderLoadChart(){ const el=$("#loadChart"); if(!el) return;
 function renderDepPctChart(){ const el=$("#depPctChart"); if(!el) return;
   if(depPctChartInst) depPctChartInst.destroy();
   depPctChartInst=multiLine(el, (CHARTS&&CHARTS.deposit_pct_by_operator)||{}, {pct:true}); }
-// §9 Nuevos jugadores vs % depósito — DOS paneles que comparten el eje mes (no
-// doble-eje): barras arriba (nuevos), línea abajo (% depósito).
-let nvdBarInst=null, nvdLineInst=null;
-function renderNewVsDep(){ const elB=$("#nvdBars"), elL=$("#nvdLine"); if(!elB||!elL||!window.Chart) return;
+// §9 Nuevos jugadores vs % depósito — UN panel: barras (nuevos, eje izq) + línea
+// (% depósito, eje der 0-100). Etiquetas de valor en barras, % selectivo en la
+// línea (extremos + pico/piso) y banda de anotación en el mes de mayor captación.
+// Nota: usa dos ejes-y para superponer volumen y tasa en un panel; los ejes están
+// rotulados y con color propio para no confundir escalas.
+let nvdInst=null;
+function renderNewVsDep(){ const el=$("#nvdCombo"); if(!el||!window.Chart) return;
   const d=(CHARTS&&CHARTS.new_vs_deposit_by_month)||{months:[],nuevos:[],pct:[]};
-  const pal=seriesColors(), grid=cvar("--border"), ink=cvar("--muted");
-  if(nvdBarInst) nvdBarInst.destroy(); if(nvdLineInst) nvdLineInst.destroy();
-  nvdBarInst=new Chart(elB,{ type:"bar", data:{ labels:d.months, datasets:[{ label:"Nuevos", data:d.nuevos, backgroundColor:pal[0], borderRadius:4, maxBarThickness:46 }] },
-    options:{ responsive:true, maintainAspectRatio:false, animation:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ${c.parsed.y} nuevos` } } },
-      scales:{ x:{ grid:{display:false}, ticks:{display:false} }, y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0} } } } });
-  nvdLineInst=new Chart(elL,{ type:"line", data:{ labels:d.months, datasets:[{ label:"% depósito", data:d.pct, borderColor:pal[1], backgroundColor:pal[1], borderWidth:2, tension:.25, pointRadius:2, pointHoverRadius:5 }] },
-    options:{ responsive:true, maintainAspectRatio:false, animation:false,
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ${c.parsed.y}% depósito` } } },
-      scales:{ x:{ grid:{display:false}, ticks:{color:ink} }, y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, callback:v=>v+"%" } } } } });
+  const months=d.months||[], nuevos=d.nuevos||[], pct=d.pct||[];
+  const pal=seriesColors(), grid=cvar("--border"), muted=cvar("--muted"), faint=cvar("--faint"), ink=cvar("--ink");
+  if(nvdInst) nvdInst.destroy();
+  // Etiquetas selectivas de la línea (no todos los puntos): extremos + pico + piso.
+  const valid=pct.map((v,i)=>v==null?-1:i).filter(i=>i>=0);
+  const iMax=valid.length?valid.reduce((a,b)=>pct[b]>pct[a]?b:a,valid[0]):-1;
+  const iMin=valid.length?valid.reduce((a,b)=>pct[b]<pct[a]?b:a,valid[0]):-1;
+  const lineLabels=new Set([valid[0],iMax,iMin,valid[valid.length-1]].filter(i=>i>=0));
+  const iPeak=nuevos.length?nuevos.reduce((a,b,i)=>(b??-1)>(nuevos[a]??-1)?i:a,0):-1;
+  const maxN=Math.max(0,...nuevos.filter(v=>v!=null));
+  const adorn={ id:"nvdAdorn", afterDatasetsDraw(chart){ const {ctx,scales:{x}}=chart, area=chart.chartArea;
+    ctx.save();
+    if(iPeak>=0 && months.length>1){ const bx=x.getPixelForValue(iPeak), half=Math.abs(x.getPixelForValue(1)-x.getPixelForValue(0))/2;
+      ctx.fillStyle=pal[0]+"1a"; ctx.fillRect(bx-half,area.top,half*2,area.bottom-area.top);
+      ctx.font="700 10.5px system-ui"; ctx.fillStyle=faint; ctx.textAlign="center"; ctx.fillText("▲ pico de captación",bx,area.top+11); }
+    const bm=chart.getDatasetMeta(0); ctx.font="600 10px system-ui"; ctx.textAlign="center"; ctx.fillStyle=ink;
+    bm.data.forEach((bar,i)=>{ if(nuevos[i]==null) return; ctx.fillText(Number(nuevos[i]).toLocaleString("es"),bar.x,bar.y-5); });
+    const lm=chart.getDatasetMeta(1); ctx.font="700 10.5px system-ui"; ctx.fillStyle=pal[1];
+    lm.data.forEach((pt,i)=>{ if(!lineLabels.has(i)||pct[i]==null) return; ctx.fillText(pct[i]+"%",pt.x,pt.y+(i===iMin?15:-9)); });
+    ctx.restore(); } };
+  nvdInst=new Chart(el,{ data:{ labels:months, datasets:[
+      { type:"bar", label:"Nuevos jugadores", data:nuevos, yAxisID:"y", backgroundColor:pal[0], borderRadius:4, maxBarThickness:54, order:2 },
+      { type:"line", label:"% depósito", data:pct, yAxisID:"y1", borderColor:pal[1], backgroundColor:pal[1], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 } ]},
+    options:{ responsive:true, maintainAspectRatio:false, animation:false, layout:{padding:{top:22}},
+      interaction:{mode:"index",intersect:false},
+      plugins:{ legend:{position:"bottom",labels:{color:muted,boxWidth:10,boxHeight:10,usePointStyle:true,font:{size:11}}},
+        tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` % depósito: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} nuevos` } } },
+      scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},
+        y:{position:"left",beginAtZero:true,suggestedMax:maxN*1.2||10,title:{display:true,text:"Nuevos jugadores",color:faint,font:{size:10}},grid:{color:grid},ticks:{color:muted,precision:0}},
+        y1:{position:"right",beginAtZero:true,max:100,title:{display:true,text:"% depósito",color:pal[1],font:{size:10}},grid:{display:false},ticks:{color:pal[1],callback:v=>v+"%"}} } },
+    plugins:[adorn] });
 }
 function renderCharts(){ renderNewVsDep(); renderDepPctChart(); renderLoadChart(); }
 function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderCharts(); renderSnap(); }
