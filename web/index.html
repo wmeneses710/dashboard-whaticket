@@ -98,6 +98,7 @@
   /* Cards */
   .cols { display:grid; grid-template-columns:1.05fr 1fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
+  .col-stack{ display:flex; flex-direction:column; gap:16px; }
   /* Cuadros de análisis en grilla 2-up para aprovechar el ancho */
   .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .charts{ grid-template-columns:1fr;} }
@@ -226,7 +227,10 @@
   </div>
   <section class="kpis" id="kpis"></section>
   <div class="cols">
-    <div class="card"><h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2><div id="dist"></div></div>
+    <div class="col-stack">
+      <div class="card"><h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2><div id="dist"></div></div>
+      <div class="card"><h2>% depósito por canal <small>· el resultado de negocio, no la estrella · respeta filtros</small></h2><div id="depCanal"></div></div>
+    </div>
     <div class="card"><h2>Operadores <small>· los más activos primero</small></h2><div id="ops"></div></div>
   </div>
   <div id="chartsStatus" class="charts-status" aria-live="polite"></div>
@@ -347,6 +351,17 @@ function renderOps(){ const ev=population().filter(r=>r.eval_status==="evaluated
   const more=rows.length>TOP_OPS?`<button class="ops-more" id="opsMore" type="button">${state.opsExpanded?"Ver menos":"Ver todos ("+rows.length+")"}</button>`:"";
   $("#ops").innerHTML=`<div class="ops-scroll${state.opsExpanded?" exp":""}">${table}</div>${more}`;
   if($("#opsMore")) $("#opsMore").onclick=()=>{ state.opsExpanded=!state.opsExpanded; renderOps(); }; }
+// % depósito por canal — resultado de negocio (NO la estrella), calculado del lado
+// del cliente sobre lo filtrado (respeta filtros). Barras horizontales de magnitud
+// (un solo hue = acento); el canal es la etiqueta. Refleja el hallazgo del análisis:
+// el depósito depende del canal (WhatsApp >> Facebook).
+function renderDepByChannel(){ const pop=population(), by={};
+  pop.forEach(r=>{ const c=r.channel||"—"; (by[c]=by[c]||{n:0,dep:0}); by[c].n++; if(Number(r.deposit_count)>0) by[c].dep++; });
+  const rows=Object.entries(by).map(([c,v])=>({c,n:v.n,dep:v.dep,pct:v.n?Math.round(100*v.dep/v.n):0})).sort((a,b)=>b.n-a.n);
+  const acc=cvar("--accent");
+  $("#depCanal").innerHTML = rows.length ? rows.map(r=>
+    `<div class="distrow static"><span class="lbl">${esc(r.c)} <span style="color:var(--faint)">${r.n}</span></span><span class="track"><span class="fill" style="width:${r.pct}%;background:${acc}"></span></span><span class="n num">${r.pct}%</span></div>`).join("")
+    : `<div style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>`; }
 function sortConvs(list){ const s=state.sort; return [...list].sort((a,b)=>{
   if(s==="new")return new Date(b.conversation_created_at)-new Date(a.conversation_created_at);
   if(s==="old")return new Date(a.conversation_created_at)-new Date(b.conversation_created_at);
@@ -462,7 +477,7 @@ function renderNewVsDep(){ const el=$("#nvdCombo"); if(!el||!window.Chart) retur
     plugins:[adorn] });
 }
 function renderCharts(){ renderNewVsDep(); renderDepPctChart(); renderLoadChart(); }
-function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderOps(); renderTickets(); renderCharts(); renderSnap(); }
+function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderDepByChannel(); renderOps(); renderTickets(); renderCharts(); renderSnap(); }
 // Aviso de datos nuevos (no auto-refresca: el usuario decide cuándo, para no
 // interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
 function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!btn) return;
