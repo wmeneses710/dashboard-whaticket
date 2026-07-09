@@ -115,8 +115,9 @@
   .conv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(235px,1fr)); gap:12px 16px; }
   .conv-mini h4 { font-size:12px; font-weight:640; margin:0 0 3px; letter-spacing:-.01em; }
 
-  /* Distribution — horizontal magnitude bars, 4px rounded data-end from a left baseline */
-  .distrow { display:grid; grid-template-columns:104px 1fr 34px; align-items:center; gap:12px; margin:0 -8px 5px; padding:3px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
+  /* Distribution — barra proporcional real (largo = valor), con el valor pegado
+     al final de la barra (no un track vacío con el número perdido a la derecha). */
+  .distrow { display:grid; grid-template-columns:118px 1fr; align-items:center; gap:12px; margin:0 -8px 7px; padding:5px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
   .distrow:last-child { margin-bottom:0; }
   .distrow:not(.static):hover { background:var(--surface-2); }
   .distrow.active { background:var(--accent-soft); }
@@ -124,9 +125,9 @@
   .distrow.static { cursor:default; }
   .distrow .lbl { display:flex; align-items:center; gap:8px; color:var(--ink); }
   .swatch { width:11px; height:11px; border-radius:3px; flex:none; }
-  .track { height:14px; background:var(--surface-2); border-radius:7px; overflow:hidden; }
-  .fill { height:100%; border-radius:0 4px 4px 0; min-width:3px; }
-  .distrow .n { text-align:right; color:var(--muted); font-weight:600; }
+  .barrow { display:flex; align-items:center; gap:9px; min-width:0; }
+  .fill { height:16px; border-radius:5px; min-width:4px; flex:none; }
+  .barrow .val { font-size:12px; color:var(--muted); font-weight:600; font-variant-numeric:tabular-nums; white-space:nowrap; }
 
   /* Operators table */
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
@@ -344,7 +345,7 @@ function renderDist(){ const ev=populationForDist().filter(r=>r.eval_status==="e
     const active=sel===l, dim=sel!=="all"&&!active, clickable=n>0;
     const cls=`distrow${active?" active":""}${dim?" dim":""}${clickable?"":" static"}`;
     const attrs=clickable?` data-rating="${l}" role="button" tabindex="0" aria-pressed="${active}"`:"";
-    return `<div class="${cls}"${attrs}><span class="lbl"><span class="swatch" style="background:${c}"></span>${l} <span style="color:var(--faint)">${RATINGS[l].s}★</span></span><span class="track"><span class="fill" style="width:${Math.round(100*n/max)}%;background:${c}"></span></span><span class="n num">${n}</span></div>`;}).join("");
+    return `<div class="${cls}"${attrs}><span class="lbl"><span class="swatch" style="background:${c}"></span>${l} <span style="color:var(--faint)">${RATINGS[l].s}★</span></span><span class="barrow"><span class="fill" style="width:${Math.round(88*n/max)}%;background:${c}"></span><span class="val num">${n}</span></span></div>`;}).join("");
   document.querySelectorAll('#dist .distrow[data-rating]').forEach(row=>{ const toggle=()=>{ const l=row.dataset.rating; state.rating=state.rating===l?"all":l; state.page=1; renderAll(); };
     row.addEventListener("click",toggle); row.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}}); }); }
 function renderOps(){ const ev=population().filter(r=>r.eval_status==="evaluated" && (r.user_name||r.user_id));
@@ -369,7 +370,7 @@ function renderDepByChannel(){ const pop=population(), by={};
   const rows=Object.entries(by).map(([c,v])=>({c,n:v.n,dep:v.dep,pct:v.n?Math.round(100*v.dep/v.n):0})).sort((a,b)=>b.n-a.n);
   const acc=cvar("--accent");
   $("#depCanal").innerHTML = rows.length ? rows.map(r=>
-    `<div class="distrow static"><span class="lbl">${esc(r.c)} <span style="color:var(--faint)">${r.n}</span></span><span class="track"><span class="fill" style="width:${r.pct}%;background:${acc}"></span></span><span class="n num">${r.pct}%</span></div>`).join("")
+    `<div class="distrow static"><span class="lbl">${esc(r.c)} <span style="color:var(--faint)">${r.n}</span></span><span class="barrow"><span class="fill" style="width:${r.pct}%;background:${acc}"></span><span class="val num">${r.pct}%</span></span></div>`).join("")
     : `<div style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>`; }
 function sortConvs(list){ const s=state.sort; return [...list].sort((a,b)=>{
   if(s==="new")return new Date(b.conversation_created_at)-new Date(a.conversation_created_at);
