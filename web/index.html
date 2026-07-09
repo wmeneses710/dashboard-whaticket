@@ -108,6 +108,12 @@
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
   .chart-wrap { position:relative; height:260px; }
+  /* 4.º cuadro: small-multiples por operador (conversión vs pasiva) */
+  .conv-legend { display:flex; gap:18px; font-size:11.5px; color:var(--muted); margin:-4px 0 14px; }
+  .conv-legend i { display:inline-block; width:16px; height:3px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  .conv-legend i.dash { background:none !important; border-top:3px dashed var(--r-mala); height:0; }
+  .conv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(235px,1fr)); gap:12px 16px; }
+  .conv-mini h4 { font-size:12px; font-weight:640; margin:0 0 3px; letter-spacing:-.01em; }
 
   /* Distribution — horizontal magnitude bars, 4px rounded data-end from a left baseline */
   .distrow { display:grid; grid-template-columns:104px 1fr 34px; align-items:center; gap:12px; margin:0 -8px 5px; padding:3px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
@@ -241,6 +247,9 @@
     </div>
     <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
     <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
+    <div class="card span-2"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
+      <div id="qualGrid" class="conv-grid"></div>
+    </div>
   </div>
   <div class="card"><h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2><div id="tickets"></div></div>
 </div>
@@ -476,8 +485,38 @@ function renderNewVsDep(){ const el=$("#nvdCombo"); if(!el||!window.Chart) retur
         y1:{position:"right",beginAtZero:true,max:100,title:{display:true,text:"% depósito",color:pal[1],font:{size:10}},grid:{display:false},ticks:{color:pal[1],callback:v=>v+"%"}} } },
     plugins:[adorn] });
 }
+// Evolución de la calidad por operador — small-multiples: un mini-gráfico por
+// operador con su ★ PROMEDIO por mes. Client-side desde los scores evaluados
+// (respeta filtros). Usa el eje que SÍ tenemos (calidad), no conversión.
+let qualInsts=[];
+function renderQualityEvolution(){ const grid=$("#qualGrid"); if(!grid||!window.Chart) return;
+  qualInsts.forEach(c=>c.destroy()); qualInsts=[];
+  const pop=population().filter(r=>r.eval_status==="evaluated" && (r.user_name||r.user_id) && r.conversation_created_at);
+  const mkey=r=>String(r.conversation_created_at).slice(0,7);
+  const by={};   // op -> mes -> [sumaStars, n]
+  pop.forEach(r=>{ const op=opName(r), m=mkey(r); (by[op]=by[op]||{}); (by[op][m]=by[op][m]||[0,0]);
+    by[op][m][0]+=Number(r.stars)||0; by[op][m][1]++; });
+  const months=[...new Set(pop.map(mkey))].sort();
+  const totals=Object.fromEntries(Object.entries(by).map(([op,ms])=>[op,Object.values(ms).reduce((a,x)=>a+x[1],0)]));
+  const top=Object.keys(totals).sort((a,b)=>totals[b]-totals[a]).slice(0,8);
+  const MIN=5;   // mes-operador con menos convs -> None (evita promedio ruidoso)
+  if(!top.length){ grid.innerHTML=`<div style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin conversaciones evaluadas en este filtro.</div>`; return; }
+  const muted=cvar("--muted"), gridc=cvar("--border");
+  grid.innerHTML=top.map((op,i)=>`<div class="conv-mini"><h4>${esc(op.length>18?short(op):op)}</h4><div style="position:relative;height:128px"><canvas id="qualC${i}"></canvas></div></div>`).join("");
+  top.forEach((op,i)=>{ const el=$("#qualC"+i); if(!el) return;
+    const data=months.map(m=>{ const c=by[op][m]; return (c&&c[1]>=MIN)? Math.round(c[0]/c[1]*100)/100 : null; });
+    // color de la línea según el promedio del operador (verde bueno ↔ rojo malo)
+    const avg=totals[op]?data.filter(v=>v!=null).reduce((a,v,_,arr)=>a+v/arr.length,0):0;
+    const col=starColor(avg||3);
+    qualInsts.push(new Chart(el,{ type:"line", data:{ labels:months, datasets:[
+        { label:"★ promedio", data, borderColor:col, backgroundColor:col, borderWidth:2, tension:.3, pointRadius:2, pointHoverRadius:5, spanGaps:false } ]},
+      options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:"index",intersect:false},
+        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ★ ${c.parsed.y==null?"—":c.parsed.y}` } } },
+        scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:4}},
+                 y:{min:0,max:5,grid:{color:gridc},ticks:{color:muted,font:{size:9},stepSize:1,maxTicksLimit:6}} } } })); });
+}
 function renderCharts(){ renderNewVsDep(); renderDepPctChart(); renderLoadChart(); }
-function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderDepByChannel(); renderOps(); renderTickets(); renderCharts(); renderSnap(); }
+function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderDepByChannel(); renderOps(); renderTickets(); renderCharts(); renderQualityEvolution(); renderSnap(); }
 // Aviso de datos nuevos (no auto-refresca: el usuario decide cuándo, para no
 // interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
 function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!btn) return;
