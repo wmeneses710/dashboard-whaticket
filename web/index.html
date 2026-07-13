@@ -198,10 +198,15 @@
   .charts-status.error-state { color:#c0392b; }
   .spin { display:inline-block; width:11px; height:11px; margin-right:7px; vertical-align:-1px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
-  /* Estado de carga por sección: atenúa la sección mientras se re-consulta al
-     server (los filtros ya no son en memoria; ahora hay una llamada de por medio). */
-  .is-loading { opacity:.55; transition:opacity .15s; pointer-events:none; }
-  .sec-spin { font-size:11.5px; color:var(--faint); }
+  /* Estado de carga por sección: en vez de dejar datos viejos atenuados, se muestra
+     un SKELETON (placeholder con shimmer) mientras se re-consulta al server. */
+  .skel { position:relative; overflow:hidden; background:var(--surface-2); border-radius:7px; }
+  .skel::after { content:""; position:absolute; inset:0; transform:translateX(-100%);
+    background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--border) 90%, transparent), transparent);
+    animation:shimmer 1.2s infinite; }
+  @keyframes shimmer { 100% { transform:translateX(100%); } }
+  .skel-bars .skel { height:16px; margin:11px 0; }
+  .skel-rows .skel { height:64px; margin-bottom:11px; border-radius:var(--radius); }
 </style>
 </head>
 <body>
@@ -249,19 +254,29 @@
     <button class="btn-reset" type="button" @click="resetFilters">Limpiar filtros</button>
   </div>
 
-  <section class="kpis" :class="{'is-loading': loadingSummary}">
-    <div class="tile" v-for="t in kpiTiles" :key="t.k">
-      <div class="k">{{ t.k }}</div>
-      <div class="v">{{ t.v }}<small v-if="t.u">{{ t.u }}</small></div>
-      <div class="foot">{{ t.foot }}</div>
-    </div>
+  <section class="kpis">
+    <template v-if="loadingSummary">
+      <div class="tile" v-for="n in 5" :key="'sk'+n">
+        <div class="skel" style="height:11px;width:55%"></div>
+        <div class="skel" style="height:28px;width:45%;margin-top:12px"></div>
+        <div class="skel" style="height:11px;width:70%;margin-top:10px"></div>
+      </div>
+    </template>
+    <template v-else>
+      <div class="tile" v-for="t in kpiTiles" :key="t.k">
+        <div class="k">{{ t.k }}</div>
+        <div class="v">{{ t.v }}<small v-if="t.u">{{ t.u }}</small></div>
+        <div class="foot">{{ t.foot }}</div>
+      </div>
+    </template>
   </section>
 
   <div class="cols">
     <div class="col-stack">
-      <div class="card" :class="{'is-loading': loadingSummary}">
+      <div class="card">
         <h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2>
-        <div>
+        <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
+        <div v-else>
           <div v-for="row in distRows" :key="row.label"
                :class="['distrow', {active: filters.rating===row.label, dim: filters.rating!=='all' && filters.rating!==row.label, static: row.n===0}]"
                :role="row.n>0?'button':null" :tabindex="row.n>0?0:null" :aria-pressed="filters.rating===row.label"
@@ -271,9 +286,10 @@
           </div>
         </div>
       </div>
-      <div class="card" :class="{'is-loading': loadingSummary}">
+      <div class="card">
         <h2>% depósito por canal <small>· el resultado de negocio, no la estrella · respeta filtros</small></h2>
-        <div>
+        <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 3" :key="n" :style="{width:(85-n*15)+'%'}"></div></div>
+        <div v-else>
           <div class="distrow static" v-for="r in depByChannel" :key="r.canal">
             <span class="lbl">{{ r.canal }} <span style="color:var(--faint)">{{ r.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:r.pct+'%', background:accentColor}"></span><span class="val num">{{ r.pct }}%</span></span>
@@ -282,9 +298,10 @@
         </div>
       </div>
     </div>
-    <div class="card" :class="{'is-loading': loadingSummary}">
+    <div class="card">
       <h2>Operadores <small>· los más activos primero</small></h2>
-      <div>
+      <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
+      <div v-else>
         <div class="ops-scroll" :class="{exp: opsExpanded}">
           <table><thead><tr><th>Operador</th><th class="r">Vol.</th><th class="r">★ prom</th><th class="r">Conv.</th><th>Distribución</th></tr></thead>
             <tbody>
@@ -306,15 +323,19 @@
     </div>
   </div>
 
-  <div class="card" :class="{'is-loading': loadingConversion}" style="margin-bottom:16px">
+  <div class="card" style="margin-bottom:16px">
     <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · cohorte histórica</small></h2>
-    <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Tasa global <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> · <b style="color:var(--ink)">{{ convGlobal.total_converted }}</b> convertidos de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
-    <div>
-      <div class="distrow static" v-for="o in convOps" :key="o.op">
-        <span class="lbl" :title="o.op">{{ o.op }} <span style="color:var(--faint)">{{ o.potential }}</span></span>
-        <span class="barrow"><span class="fill" :style="{width: Math.round(88*o.pct/convMaxPct)+'%', background: accentColor}"></span><span class="val num">{{ o.pct }}% · {{ o.converted }}</span></span>
+    <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
+    <div v-else>
+      <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Tasa global <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> · <b style="color:var(--ink)">{{ convGlobal.total_converted }}</b> convertidos de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
+      <div>
+        <div class="distrow" :class="o.op==='Otros'||o.op.startsWith('BOT')?'static':''" v-for="o in convOps" :key="o.op"
+             :role="o.drillable?'button':null" :tabindex="o.drillable?0:null" @click="o.drillable && openDrill(o.op)" @keydown.enter.prevent="o.drillable && openDrill(o.op)">
+          <span class="lbl" :title="o.op">{{ o.op }} <span style="color:var(--faint)">{{ o.potential }}</span></span>
+          <span class="barrow"><span class="fill" :style="{width: Math.round(88*o.pct/convMaxPct)+'%', background: accentColor}"></span><span class="val num">{{ o.pct }}% · {{ o.converted }}</span></span>
+        </div>
+        <div v-if="!convOps.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos de conversión todavía (¿corrió el pase del worker?).</div>
       </div>
-      <div v-if="!convOps.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos de conversión todavía (¿corrió el pase del worker?).</div>
     </div>
   </div>
 
@@ -328,10 +349,10 @@
     </div>
     <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="depPctChart"></canvas></div></div>
     <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="loadChart"></canvas></div></div>
-    <div class="card span-2" :class="{'is-loading': loadingConversion}"><h2>Conversiones de jugadores nuevos por mes <small>· cohorte por mes de ingreso · barras = nº · línea = %</small></h2>
+    <div class="card span-2"><h2>Conversiones de jugadores nuevos por mes <small>· cohorte por mes de ingreso · barras = nº · línea = %</small></h2>
       <div style="position:relative;height:300px"><canvas ref="convMonth"></canvas></div>
     </div>
-    <div class="card span-2" :class="{'is-loading': loadingSummary}"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
+    <div class="card span-2"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
       <div class="conv-grid">
         <div class="conv-mini" v-for="(op,i) in qualOps" :key="op.name">
           <h4>{{ op.name.length>18?short(op.name):op.name }}</h4>
@@ -342,9 +363,10 @@
     </div>
   </div>
 
-  <div class="card" :class="{'is-loading': loadingTickets}">
+  <div class="card">
     <h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2>
-    <div>
+    <div v-if="loadingTickets" class="skel-rows"><div class="skel" v-for="n in 6" :key="n"></div></div>
+    <div v-else>
       <div class="tk" v-for="t in tickets.cards" :key="t.key" :class="{open: openKeys.has(t.key)}">
         <div class="tk-head" role="button" tabindex="0" @click="toggleCard(t.key)" @keydown.enter.prevent="toggleCard(t.key)" @keydown.space.prevent="toggleCard(t.key)">
           <div class="avatar">{{ initials(t.cust) }}</div>
@@ -417,6 +439,24 @@
       </div>
     </div>
   </div>
+  <div class="backdrop" :class="{show: drill.open}" @click.self="closeDrill">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head"><div class="who">Cohorte · {{ drill.op }} <small>· jugadores nuevos · abrí uno para ver qué pasó</small></div><button class="x" type="button" aria-label="Cerrar" @click="closeDrill">✕</button></div>
+      <div style="padding:6px 12px 14px;overflow-y:auto;max-height:74vh">
+        <div v-if="drill.loading" class="loading">Cargando cohorte…</div>
+        <template v-else>
+          <div class="conv" v-for="p in drill.rows" :key="p.contact_id" role="button" tabindex="0"
+               @click="openFromDrill(p.first_conversation_id)" @keydown.enter.prevent="openFromDrill(p.first_conversation_id)">
+            <span class="when num">{{ fmtDate(p.first_at) }}</span>
+            <span class="snip">{{ p.channel || '—' }}</span>
+            <span class="op"></span>
+            <span class="chip" :style="{background:'color-mix(in srgb, '+drillCol(p)+' 15%, transparent)', color:drillCol(p)}">{{ p.deposited ? '✓ convirtió' : 'no convirtió' }}</span>
+          </div>
+          <div v-if="!drill.rows.length" style="color:var(--faint);padding:16px;text-align:center">Sin jugadores en esta cohorte.</div>
+        </template>
+      </div>
+    </div>
+  </div>
 </div>
 
 <style>[v-cloak]{display:none}</style>
@@ -471,6 +511,7 @@ createApp({
     const updating = ref(false);
     let loadedCount = 0;
     const modal = reactive({ open:false, loading:false, detail:null, title:"" });
+    const drill = reactive({ open:false, op:"", loading:false, rows:[] });
 
     // refs de canvas para Chart.js
     const nvdCombo = ref(null), depPctChart = ref(null), loadChart = ref(null), convMonth = ref(null);
@@ -596,6 +637,18 @@ createApp({
     }
     function closeModal() { modal.open = false; }
 
+    // Drill-down: cohorte de jugadores nuevos de un operador -> sus conversaciones
+    // de entrada (respeta los filtros activos + el operador clickeado).
+    async function openDrill(op) {
+      drill.open = true; drill.op = op; drill.loading = true; drill.rows = [];
+      try { drill.rows = await fetchJSON("/api/conversion/cohort?" + qs({ op })); }
+      catch(e) {}
+      finally { drill.loading = false; }
+    }
+    function closeDrill() { drill.open = false; }
+    function openFromDrill(cid) { if(!cid) return; drill.open = false; openModal(cid); }
+    function drillCol(p) { return p.deposited ? cvar("--r-excelente") : cvar("--faint"); }
+
     // ---- computed para la vista ----
     const kpiTiles = computed(() => { const k = summary.kpis||{};
       const cov = k.total ? Math.round(100*k.evaluadas/k.total) : 0;
@@ -618,7 +671,8 @@ createApp({
     const accentColor = computed(() => cvar("--accent"));
     // Conversión: ranking por operador + mapa por nombre (para las columnas de la
     // tabla de operadores) + totales para el KPI.
-    const convOps = computed(() => (conversion.by_operator && conversion.by_operator.operators) || []);
+    const convOps = computed(() => ((conversion.by_operator && conversion.by_operator.operators) || [])
+      .map(o => ({ ...o, drillable: o.op !== "Otros" })));   // 'Otros' agrega varios -> no drill
     const convMaxPct = computed(() => Math.max(1, ...convOps.value.map(o => o.pct || 0)));
     const convByOp = computed(() => { const m = {}; convOps.value.forEach(o => { m[o.op] = o; }); return m; });
     const convGlobal = computed(() => conversion.by_operator || { total_potential:0, total_converted:0, pct:0 });
@@ -735,7 +789,7 @@ createApp({
     watch(() => filters.sort, () => { tickets.page = 1; fetchTickets(); });
 
     onMounted(async () => {
-      document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+      document.addEventListener("keydown", e => { if(e.key==="Escape") { closeModal(); closeDrill(); } });
       setInterval(checkNew, 60000);
       let accts = [];
       try { accts = await fetchJSON("/api/accounts"); } catch(e) {}
@@ -745,12 +799,13 @@ createApp({
     });
 
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
-      loadingSummary, loadingTickets, loadingConversion, opsExpanded, openKeys, updating, modal,
+      loadingSummary, loadingTickets, loadingConversion, opsExpanded, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, convMonth,
       kpiTiles, distRows, depByChannel, operators, opsShown, qualOps, accentColor, snapText,
       convOps, convMaxPct, convByOp, convGlobal,
       TOP_OPS, SKIP_LABEL,
       switchAccount, toggleRating, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
+      openDrill, closeDrill, openFromDrill, drillCol,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, metaGrid };
   }
