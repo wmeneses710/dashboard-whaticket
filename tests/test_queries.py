@@ -15,6 +15,7 @@ from src.queries import (
     conversation_detail,
     deposit_by_channel,
     distribution,
+    filter_options,
     operators_table,
     scored_rows,
     summary,
@@ -211,6 +212,20 @@ def test_summary_combina_las_cuatro_secciones():
                       one=(0, 0, None, 0, 0, 0))
     out = summary(cur, "datos")
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel"}
+
+
+def test_filter_options_devuelve_listas_por_cuenta():
+    # Los desplegables (segmento/canal/operador) salían de DATA en el front; ahora
+    # del server, sin filtrar y scopeado por cuenta.
+    cur = _FakeCursor(rows=[("a",), ("b",)], description=[])
+    out = filter_options(cur, "datos")
+    assert set(out) == {"segments", "channels", "operators"}
+    assert out["segments"] == ["a", "b"]
+    # las 3 consultas: DISTINCT, ORDER, scopeadas por cuenta
+    assert len(cur.executed) == 3
+    for query, params in cur.executed:
+        assert "DISTINCT" in query and "ORDER BY" in query
+        assert params["account"] == "datos"
 
 
 def test_sort_convs_replica_sortconvs_del_front():

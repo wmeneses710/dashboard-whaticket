@@ -59,3 +59,10 @@ def test_tickets_endpoint_mapea_page_sort_y_filtros(monkeypatch):
 def test_summary_endpoint_exige_account(monkeypatch):
     _stub(monkeypatch, "summary")
     assert client.get("/api/summary").status_code == 422  # account requerido
+
+
+def test_options_endpoint(monkeypatch):
+    calls = _stub(monkeypatch, "filter_options")
+    r = client.get("/api/options", params={"account": "datos"})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert calls["account"] == "datos"

@@ -353,6 +353,29 @@ def tickets_page(cur, account: str, page: int = 1, sort: str = "new",
             "page": page, "pages": pages, "page_size": page_size}
 
 
+def filter_options(cur, account: str) -> dict:
+    """Valores para los desplegables de filtros (segmento, canal, operador) de UNA
+    cuenta, sin filtrar (el front los derivaba de DATA; ahora salen del server).
+    Estable por cuenta -> el front lo pide una vez, no en cada cambio de filtro."""
+    cur.execute("SELECT DISTINCT segment FROM conversation_scores "
+                "WHERE account = %(account)s AND segment IS NOT NULL ORDER BY 1",
+                {"account": account})
+    segments = [r[0] for r in cur.fetchall()]
+    cur.execute("SELECT DISTINCT t.channel FROM conversation_scores cs "
+                "JOIN tickets t ON t.id = cs.ticket_id "
+                "WHERE cs.account = %(account)s AND t.channel IS NOT NULL ORDER BY 1",
+                {"account": account})
+    channels = [r[0] for r in cur.fetchall()]
+    cur.execute("SELECT DISTINCT coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
+                "'Operador sin identificar') AS op FROM conversation_scores cs "
+                "LEFT JOIN users u ON u.id = cs.user_id WHERE cs.account = %(account)s "
+                "AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL "
+                "OR cs.user_id IS NOT NULL) ORDER BY 1",
+                {"account": account})
+    operators = [r[0] for r in cur.fetchall()]
+    return {"segments": segments, "channels": channels, "operators": operators}
+
+
 def _transcript(msgs: list[dict]) -> list[dict]:
     out = []
     for m in msgs:

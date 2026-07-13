@@ -133,6 +133,14 @@ def _filters(
             "date_from": date_from, "date_to": date_to, "rating": rating, "search": search}
 
 
+@app.get("/api/options")
+def options(account: str = Query(..., description="datos | sistemas")) -> dict:
+    """Valores de los desplegables de filtros (segmento/canal/operador) de la cuenta.
+    Estable -> el front lo pide una vez por cuenta."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.filter_options(cur, account)
+
+
 @app.get("/api/summary")
 def summary(account: str = Query(..., description="datos | sistemas"),
             filters: dict = Depends(_filters)) -> dict:
