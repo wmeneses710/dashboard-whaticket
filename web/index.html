@@ -85,6 +85,8 @@
   .filters .search { flex:1; min-width:190px; }
   .btn-reset { border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px 13px; font-size:12.5px; cursor:pointer; font-family:inherit; transition:border-color .12s,color .12s; }
   .btn-reset:hover { color:var(--ink); border-color:var(--accent); }
+  .winbtn { border:none; background:transparent; color:var(--accent); font:inherit; font-size:inherit; cursor:pointer; padding:0 2px; text-decoration:underline; text-underline-offset:2px; }
+  .winbtn:hover { opacity:.8; } .winbtn:disabled { color:var(--faint); cursor:default; text-decoration:none; }
 
   /* KPI stat tiles */
   .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:14px; margin-bottom:24px; }
@@ -284,6 +286,10 @@ const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—")
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
 const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
+// B1: la carga inicial pide solo una ventana reciente (sistemas tiene ~113k
+// scoreadas -> traerlas todas es ~112MB/13s). state.windowMonths=0 => histórico completo.
+const scoresUrl = () => `/api/scores?account=${encodeURIComponent(state.account)}`
+  + (state.windowMonths?`&months=${state.windowMonths}`:"");
 // Paleta categórica validada (dataviz): 8 slots, orden fijo (no ciclado). Dark =
 // los mismos hues escalonados para superficie oscura. 'Otros' va en gris neutro.
 const SERIES_LIGHT=["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"];
@@ -294,7 +300,7 @@ const seriesColors = () => isDark()?SERIES_DARK:SERIES_LIGHT;
 
 let DATA = [];
 let CHARTS = null;   // agregados full-scale (deterministas) para los cuadros
-let state = { account:null, estado:"all", segment:"all", canal:"all", op:"all", sort:"new", search:"", from:"", to:"", rating:"all", page:1, openKeys:new Set(), opsExpanded:false };
+let state = { account:null, estado:"all", segment:"all", canal:"all", op:"all", sort:"new", search:"", from:"", to:"", rating:"all", page:1, openKeys:new Set(), opsExpanded:false, windowMonths:6 };
 const TOP_OPS = 8;
 
 // Bucket de una fila según su estrella (une human y bot: 'optima' y 'excelente'
@@ -321,7 +327,17 @@ function population(){ return DATA.filter(r=> matchBase(r) && (state.rating==="a
 function populationForDist(){ return DATA.filter(matchBase); }
 
 function renderSnap(){ const ev=DATA.filter(r=>r.eval_status==="evaluated").length;
-  $("#snap").innerHTML=`En vivo desde la BD · cuenta <b>${esc(state.account)}</b> · <b>${DATA.length}</b> conversaciones (${ev} evaluadas), <b>${new Set(DATA.map(r=>r.customer_name).filter(Boolean)).size}</b> clientes.`; }
+  const win = state.windowMonths?`últimos <b>${state.windowMonths} meses</b>`:`<b>histórico completo</b>`;
+  const toggle = state.windowMonths?"Ver histórico completo":"Ver solo últimos 6 meses";
+  $("#snap").innerHTML=`En vivo desde la BD · cuenta <b>${esc(state.account)}</b> · <b>${DATA.length}</b> conversaciones (${ev} evaluadas), <b>${new Set(DATA.map(r=>r.customer_name).filter(Boolean)).size}</b> clientes · ventana: ${win} <button type="button" id="winToggle" class="winbtn">${toggle}</button>`;
+  const wt=$("#winToggle"); if(wt) wt.onclick=toggleWindow; }
+// B1: alterna ventana reciente <-> histórico completo. Preserva filtros/orden/página
+// (no es load()). El histórico completo trae TODAS las filas (lento en sistemas): el
+// usuario lo pide explícito.
+async function toggleWindow(){ const wt=$("#winToggle"); if(wt){ wt.disabled=true; wt.textContent="Cargando…"; }
+  state.windowMonths = state.windowMonths?0:6; state.page=1;
+  try { DATA=await fetchJSON(scoresUrl()); } catch(e){}
+  renderAll(); await checkNew(); }
 function renderFilters(){
   const segs=[...new Set(DATA.map(r=>r.segment).filter(Boolean))].sort();
   $("#fSeg").innerHTML=`<option value="all">Todos</option>`+segs.map(s=>`<option value="${esc(s)}" ${s===state.segment?"selected":""}>${esc(s[0].toUpperCase()+s.slice(1))}</option>`).join("");
@@ -526,10 +542,12 @@ function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!b
 async function checkNew(){ if(!state.account) return;
   try { const accts=await fetchJSON("/api/accounts"); renderAcctSwitch(accts);
     const a=accts.find(x=>x.account===state.account);
-    if(a) setNewBadge(Math.max(0, a.count-DATA.length)); } catch(e){} }
+    // Con ventana, DATA es un subconjunto: count(total) - DATA.length NO es "datos
+    // nuevos". El badge solo aplica en histórico completo; windowed -> 0.
+    if(a) setNewBadge(state.windowMonths?0:Math.max(0, a.count-DATA.length)); } catch(e){} }
 async function refresh(){ const btn=$("#refreshBtn"); if(btn) btn.disabled=true;
   // Preserva filtros, orden, búsqueda, página y cards abiertas (no es load()).
-  try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); } catch(e){}
+  try { DATA=await fetchJSON(scoresUrl()); } catch(e){}
   if(btn) btn.disabled=false; renderAll(); await checkNew();
   loadCharts(state.account);   // cuadros en segundo plano; el TTL evita re-escanear si están frescos
 }
@@ -560,7 +578,7 @@ async function loadCharts(account){
 }
 async function load(){
   $("#snap").textContent="Cargando cuenta "+state.account+"…";
-  try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); }
+  try { DATA=await fetchJSON(scoresUrl()); }
   catch(e){ $("#snap").textContent="Error cargando datos."; DATA=[]; }
   CHARTS = (chartsCache[state.account] && chartsCache[state.account].data) || null;   // instantáneo si ya se cargó antes
   state.segment="all"; state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);

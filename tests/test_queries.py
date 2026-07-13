@@ -78,6 +78,28 @@ def test_scored_rows_incluye_contact_id_para_agrupar_por_cliente():
     assert "AS contact_id" in query
 
 
+def test_scored_rows_sin_ventana_trae_todo():
+    # Backward-compatible: sin window_months no se filtra por fecha (histórico completo).
+    cur = _FakeCursor([], description=[])
+    scored_rows(cur, "datos")
+    query, params = cur.executed[0]
+    assert "make_interval" not in query
+    assert "months_back" not in params
+
+
+def test_scored_rows_con_ventana_filtra_ultimos_n_meses():
+    # B1: la carga inicial trae solo lo reciente (sistemas 113k filas -> ventana).
+    # Anclado al mes más reciente de la cuenta (no now(): el dataset puede estar
+    # pausado/histórico), igual que los cuadros.
+    cur = _FakeCursor([], description=[])
+    scored_rows(cur, "sistemas", window_months=6)
+    query, params = cur.executed[0]
+    assert "make_interval(months => %(months_back)s)" in query
+    assert "max(conversation_created_at)" in query
+    assert params["months_back"] == 5  # N meses = mes más reciente + (N-1) previos
+    assert params["account"] == "sistemas"
+
+
 def test_scored_rows_aligera_payload_de_la_lista():
     # /api/scores traia TODA la cuenta sin paginar: sistemas ~112MB/13s. El
     # rating_rationale (parrafo del LLM) era el 40% del payload y en la lista
