@@ -28,9 +28,13 @@ _CREATE_STMTS = (
         channel               text,
         segment               text,
         deposited             boolean     NOT NULL DEFAULT false,
+        attention             text,
         updated_at            timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (account, contact_id)
     )""",
+    # attention = clasificación LLM de pasividad (empujo|pasivo|no_respondio); NULL =
+    # sin clasificar. ALTER para tablas ya creadas por una versión previa del pase.
+    "ALTER TABLE player_conversions ADD COLUMN IF NOT EXISTS attention text",
     "CREATE INDEX IF NOT EXISTS idx_player_conv_op    ON player_conversions (account, user_id)",
     "CREATE INDEX IF NOT EXISTS idx_player_conv_month ON player_conversions (account, first_at)",
 )
@@ -112,3 +116,38 @@ def refresh_account_conversions(cur, account: str) -> int:
         return 0
     cur.execute(_REFRESH_SQL, {"account": account, "qids": qids, "re": RECHARGE_PATTERN})
     return cur.rowcount
+
+
+# Pase LLM de PASIVIDAD: clasifica la conversación de ENTRADA de cada jugador nuevo
+# con operador humano (user_id) que aún no tenga `attention`. Incremental (batch por
+# ciclo, como el scorer): se pone al día con el tiempo. Solo filas con operador humano
+# (los bot no van al cuadro por operador).
+_PENDING_ATTENTION_SQL = """
+SELECT contact_id, first_conversation_id FROM player_conversions
+ WHERE account = %(account)s AND attention IS NULL
+   AND first_conversation_id IS NOT NULL AND user_id IS NOT NULL
+ LIMIT %(limit)s"""
+
+
+def classify_passivity_batch(conn, llm, account: str, limit: int = 20) -> dict:
+    """Clasifica un batch de conversaciones de entrada sin `attention`. Devuelve
+    {seen, classified}. Usa el LLM (pase con modelo), commit por fila clasificada."""
+    from src.context import fetch_messages
+    from src.passivity import classify_passivity
+
+    with conn.cursor() as cur:
+        cur.execute(_PENDING_ATTENTION_SQL, {"account": account, "limit": limit})
+        pending = cur.fetchall()
+    classified = 0
+    for contact_id, conv_id in pending:
+        with conn.cursor() as cur:
+            msgs = fetch_messages(cur, conv_id)
+        label = classify_passivity(llm, msgs)
+        if not label:
+            continue  # LLM no devolvió válido -> se reintenta en otro ciclo
+        with conn.cursor() as cur:
+            cur.execute("UPDATE player_conversions SET attention = %s, updated_at = now() "
+                        "WHERE account = %s AND contact_id = %s", (label, account, contact_id))
+        conn.commit()
+        classified += 1
+    return {"seen": len(pending), "classified": classified}

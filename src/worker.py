@@ -101,7 +101,7 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
     import psycopg
 
-    from src.conversions import refresh_account_conversions
+    from src.conversions import classify_passivity_batch, refresh_account_conversions
 
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
     log(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
@@ -131,6 +131,17 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                             conn.rollback()
                             log(f"[worker] conversión {account} error: {type(e).__name__}: {e}")
                     last_conv = time.time()
+                # Pase de PASIVIDAD (LLM): clasifica un batch de entradas sin attention.
+                # Cuenta como 'seen' para que el loop siga sin dormir mientras haya pendientes.
+                for account in cfg.scoring_accounts:
+                    try:
+                        p = classify_passivity_batch(conn, llm, account, cfg.scoring_batch_size)
+                        seen += p["seen"]
+                        if p["seen"]:
+                            log(f"[worker] pasividad {account}: clasificadas={p['classified']}/{p['seen']}")
+                    except Exception as e:  # noqa: BLE001
+                        conn.rollback()
+                        log(f"[worker] pasividad {account} error: {type(e).__name__}: {e}")
         except Exception as e:  # noqa: BLE001 - un fallo de red/DB no debe matar el loop
             log(f"[worker] error de ciclo: {type(e).__name__}: {e}")
         if seen == 0:  # nada pendiente -> dormir en tramos para poder frenar
