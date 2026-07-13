@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -115,6 +115,43 @@ def scores(account: str = Query(..., description="datos | sistemas")) -> list[di
     """Conversaciones scoreadas de una cuenta (sin transcript)."""
     with _conn() as c, c.cursor() as cur:
         return queries.scored_rows(cur, account)
+
+
+def _filters(
+    estado: str = "all",
+    segment: str = "all",
+    canal: str = "all",
+    op: str = "all",
+    date_from: str | None = Query(None, alias="from"),
+    date_to: str | None = Query(None, alias="to"),
+    rating: str = "all",
+    search: str = "",
+) -> dict:
+    """Filtros del dashboard (matchBase del front) como dependencia común. `from`/`to`
+    llegan como alias porque `from` es palabra reservada en Python."""
+    return {"estado": estado, "segment": segment, "canal": canal, "op": op,
+            "date_from": date_from, "date_to": date_to, "rating": rating, "search": search}
+
+
+@app.get("/api/summary")
+def summary(account: str = Query(..., description="datos | sistemas"),
+            filters: dict = Depends(_filters)) -> dict:
+    """Agregados de las tarjetas (KPIs, distribución, operadores, depósito por canal)
+    calculados en la BD para el filtro dado. Reemplaza el cómputo en memoria del front
+    sobre las ~113k filas de /api/scores."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.summary(cur, account, **filters)
+
+
+@app.get("/api/tickets")
+def tickets(account: str = Query(..., description="datos | sistemas"),
+            page: int = Query(1, ge=1),
+            sort: str = Query("new", description="new | old | best | worst"),
+            filters: dict = Depends(_filters)) -> dict:
+    """Una página de la lista de tickets (persona + conversaciones), agrupada,
+    ordenada y paginada en la BD."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.tickets_page(cur, account, page=page, sort=sort, **filters)
 
 
 @app.get("/api/charts")
