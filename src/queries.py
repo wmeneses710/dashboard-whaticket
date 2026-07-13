@@ -143,6 +143,109 @@ def summary_kpis(cur, account: str, **filters) -> dict:
     return {c: _coerce(v) for c, v in zip(cols, row)}
 
 
+# Mapeo label->estrella y orden de buckets, igual que RATINGS/ORDER del front.
+# Los labels de bot (optima/funcional/mejorable/falla) caen en el mismo bucket
+# que su equivalente humano por estrella.
+_LABEL_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1,
+                "optima": 5, "funcional": 4, "mejorable": 3, "falla": 1}
+_ORDER = ["excelente", "buena", "aceptable", "deficiente", "mala"]
+
+
+def _dist_from_labels(rows) -> dict:
+    """{bucket: count} desde filas (rating_label, n). bucket = ORDER[5-estrella]."""
+    counts = {l: 0 for l in _ORDER}
+    for label, n in rows:
+        s = _LABEL_STARS.get(label)
+        if s:
+            counts[_ORDER[5 - s]] += int(n)
+    return counts
+
+
+# Distribución (renderDist): cuenta por bucket de estrella sobre las evaluadas.
+# OJO: usa los filtros MENOS 'rating' (populationForDist), para mostrar todas las
+# barras aunque haya una calificación seleccionada.
+_DIST_SQL = """
+SELECT cs.rating_label, count(*) AS n""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated' AND cs.rating_label IS NOT NULL
+ GROUP BY cs.rating_label"""
+
+
+def distribution(cur, account: str, **filters) -> dict:
+    """Distribución de calificaciones por bucket (ignora el filtro 'rating')."""
+    where, params = _scores_filters(account, **{**filters, "rating": "all"})
+    cur.execute(_DIST_SQL.format(where=where), params)
+    return _dist_from_labels(cur.fetchall())
+
+
+def _build_ops(rows) -> list[dict]:
+    """Tabla de operadores (renderOps) desde filas (op, rating_label, n, sum_stars):
+    por operador -> volumen, ★ promedio y distribución por bucket. Orden por volumen."""
+    by: dict[str, dict] = {}
+    for op, label, n, sum_stars in rows:
+        o = by.setdefault(op, {"name": op, "n": 0, "_sum": 0.0, "buckets": {l: 0 for l in _ORDER}})
+        o["n"] += int(n)
+        o["_sum"] += float(sum_stars or 0)
+        if label in o["buckets"]:            # segmenta por label (igual que el front)
+            o["buckets"][label] += int(n)
+    out = []
+    for o in by.values():
+        out.append({"name": o["name"], "n": o["n"],
+                    "avg": o["_sum"] / o["n"] if o["n"] else 0.0,
+                    "dist": [o["buckets"][l] for l in _ORDER]})
+    out.sort(key=lambda x: (-x["n"], x["name"]))
+    return out
+
+
+# Operadores: solo filas EVALUADAS y CON operador (user_name o user_id). Las filas
+# sin nombre pero con user_id caen en 'Operador sin identificar' (como opName).
+_OPS_SQL = """
+SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+       cs.rating_label, count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated'
+   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+ GROUP BY 1, cs.rating_label"""
+
+
+def operators_table(cur, account: str, **filters) -> list[dict]:
+    """Tabla de operadores agregada en la BD (reemplaza renderOps sobre DATA)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_OPS_SQL.format(where=where), params)
+    return _build_ops(cur.fetchall())
+
+
+def _build_dep_channel(rows) -> list[dict]:
+    """% depósito por canal (renderDepByChannel) desde filas (canal, n, dep)."""
+    out = [{"canal": c, "n": int(n), "dep": int(dep), "pct": round(100 * int(dep) / int(n)) if n else 0}
+           for c, n, dep in rows]
+    out.sort(key=lambda x: (-x["n"], x["canal"]))
+    return out
+
+
+_DEP_CH_SQL = """
+SELECT coalesce(t.channel, '—') AS canal, count(*) AS n,
+       count(*) FILTER (WHERE cs.deposit_count > 0) AS dep""" + _SCORES_JOINS + """
+ GROUP BY 1"""
+
+
+def deposit_by_channel(cur, account: str, **filters) -> list[dict]:
+    """% depósito por canal agregado en la BD (respeta filtros, incl. rating)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_DEP_CH_SQL.format(where=where), params)
+    return _build_dep_channel(cur.fetchall())
+
+
+def summary(cur, account: str, **filters) -> dict:
+    """Todos los agregados de las tarjetas en una llamada: KPIs, distribución,
+    tabla de operadores y % depósito por canal. Reemplaza el cómputo en memoria
+    sobre las ~113k filas de /api/scores."""
+    return {
+        "kpis": summary_kpis(cur, account, **filters),
+        "distribution": distribution(cur, account, **filters),
+        "operators": operators_table(cur, account, **filters),
+        "deposit_by_channel": deposit_by_channel(cur, account, **filters),
+    }
+
+
 def _transcript(msgs: list[dict]) -> list[dict]:
     out = []
     for m in msgs:

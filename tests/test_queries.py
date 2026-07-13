@@ -3,12 +3,19 @@ esta scopeada por cuenta (datos vs sistemas conviven en la misma BD)."""
 from decimal import Decimal
 
 from src.queries import (
+    _build_dep_channel,
     _build_load_series,
     _build_new_vs_deposit,
+    _build_ops,
     _build_pct_series,
+    _dist_from_labels,
     _scores_filters,
     conversation_detail,
+    deposit_by_channel,
+    distribution,
+    operators_table,
     scored_rows,
+    summary,
     summary_kpis,
 )
 
@@ -143,6 +150,64 @@ def test_summary_kpis_agrega_server_side_scopeado_por_cuenta():
     # numeric -> float (evita el bug de string en el JSON)
     assert out["avg_stars"] == 3.2 and isinstance(out["avg_stars"], float)
     assert out["total"] == 120 and out["evaluadas"] == 100 and out["operadores"] == 8
+
+
+def test_dist_from_labels_bucketea_por_estrella():
+    # Reproduce renderDist: label -> estrella -> bucket. Los labels de bot
+    # (funcional=4★) caen en el mismo bucket que su equivalente humano (buena).
+    counts = _dist_from_labels([("excelente", 10), ("funcional", 5), ("mala", 2)])
+    assert counts == {"excelente": 10, "buena": 5, "aceptable": 0, "deficiente": 0, "mala": 2}
+
+
+def test_build_ops_agrupa_por_operador_y_ordena_por_volumen():
+    rows = [("Ana", "buena", 3, 12.0), ("Ana", "mala", 1, 1.0), ("Beto", "excelente", 5, 25.0)]
+    out = _build_ops(rows)
+    assert [o["name"] for o in out] == ["Beto", "Ana"]        # orden por volumen desc
+    ana = out[1]
+    assert ana["n"] == 4 and round(ana["avg"], 2) == 3.25       # (12+1)/4
+    assert ana["dist"] == [0, 3, 0, 0, 1]                        # [excelente,buena,aceptable,deficiente,mala]
+
+
+def test_build_dep_channel_calcula_pct_y_ordena():
+    out = _build_dep_channel([("WHATSAPP", 100, 40), ("FACEBOOK", 10, 1)])
+    assert out[0] == {"canal": "WHATSAPP", "n": 100, "dep": 40, "pct": 40}
+    assert out[1] == {"canal": "FACEBOOK", "n": 10, "dep": 1, "pct": 10}
+
+
+def test_distribution_ignora_filtro_rating():
+    # renderDist usa populationForDist = matchBase SIN el filtro de calificación
+    # (para mostrar todas las barras aunque haya un rating seleccionado).
+    cur = _FakeCursor(rows=[("buena", 5)], description=["rating_label", "n"])
+    distribution(cur, "datos", rating="excelente", segment="jugador")
+    query, params = cur.executed[0]
+    assert "cs.stars" not in query                 # rating stripped
+    assert "cs.segment = %(segment)s" in query      # otros filtros sí
+    assert "cs.eval_status = 'evaluated'" in query
+    assert "rstars" not in params
+
+
+def test_operators_table_agrupa_solo_con_operador_y_evaluadas():
+    cur = _FakeCursor(rows=[], description=["op", "rating_label", "n", "sum_stars"])
+    operators_table(cur, "sistemas")
+    query, _ = cur.executed[0]
+    assert "'Operador sin identificar'" in query
+    assert "cs.eval_status = 'evaluated'" in query
+    assert "u.name IS NOT NULL OR" in query          # excluye filas sin operador
+
+
+def test_deposit_by_channel_sql():
+    cur = _FakeCursor(rows=[], description=["canal", "n", "dep"])
+    deposit_by_channel(cur, "datos")
+    query, _ = cur.executed[0]
+    assert "FILTER (WHERE cs.deposit_count > 0)" in query
+    assert "GROUP BY 1" in query
+
+
+def test_summary_combina_las_cuatro_secciones():
+    cur = _FakeCursor(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"],
+                      one=(0, 0, None, 0, 0, 0))
+    out = summary(cur, "datos")
+    assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel"}
 
 
 def test_build_load_series_top_n_y_otros_alineado_a_meses():
