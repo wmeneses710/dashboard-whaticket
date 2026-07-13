@@ -62,7 +62,9 @@
   .toggle:hover { color:var(--ink); border-color:var(--accent); }
   .toggle:disabled { opacity:.5; cursor:default; }
   #refreshBtn.has-new { border-color:var(--accent); color:var(--accent); }
-  .newbadge { display:inline-flex; align-items:center; margin-left:7px; padding:1px 7px; border-radius:999px; background:var(--accent); color:#fff; font-size:10.5px; font-weight:700; line-height:1.5; }
+  /* Texto de auto-actualización: cuando llegan datos nuevos el botón se reemplaza
+     por este aviso mientras Vue re-consulta y re-pinta en vivo (sin recargar). */
+  .upd-text { display:inline-flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; color:var(--accent); background:var(--accent-soft); border:1px solid var(--accent); border-radius:9px; padding:9px 13px; }
   .snapshot { font-size:12px; color:var(--muted); margin:16px 0 22px; }
   .snapshot b { color:var(--ink); font-weight:640; }
 
@@ -214,10 +216,11 @@
           {{ a.account }} <span style="opacity:.6" class="num">{{ a.count }}</span>
         </button>
       </div>
-      <button class="toggle" id="refreshBtn" type="button" :class="{'has-new': newCount>0}"
+      <span v-if="updating" class="upd-text" role="status" aria-live="polite">
+        <span class="spin"></span>Datos nuevos · actualizando, por favor espere…</span>
+      <button v-else class="toggle" id="refreshBtn" type="button"
               title="Traer las conversaciones scoreadas desde la última carga" @click="refresh">
-        ↻ Actualizar<span class="newbadge" v-if="newCount>0">+{{ newCount }}</span>
-      </button>
+        ↻ Actualizar</button>
       <button class="toggle" type="button" @click="toggleTheme">Tema</button>
     </div>
   </header>
@@ -448,7 +451,7 @@ createApp({
     const loadingSummary = ref(false), loadingTickets = ref(false);
     const opsExpanded = ref(false);
     const openKeys = reactive(new Set());
-    const newCount = ref(0);
+    const updating = ref(false);
     let loadedCount = 0;
     const modal = reactive({ open:false, loading:false, detail:null, title:"" });
 
@@ -516,7 +519,7 @@ createApp({
       account.value = acc;
       Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
       tickets.page = 1; openKeys.clear(); opsExpanded.value = false;
-      const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0; newCount.value = 0;
+      const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0;
       charts.value = chartsCache[acc]?.data || null;
       await Promise.all([fetchOptions(), fetchSummary(), fetchTickets()]);
       loadCharts();
@@ -525,16 +528,30 @@ createApp({
     function toggleCard(k) { openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k); }
     function setPage(p) { tickets.page = Math.min(Math.max(1,p), tickets.pages); fetchTickets(); }
     function resetFilters() { Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" }); }
+    // Actualiza en vivo (re-consulta + re-pinta reactivo, NO recarga la página).
+    // Preserva filtros, orden, página y tarjetas abiertas.
     async function refresh() {
-      const acc = accounts.value = await fetchJSON("/api/accounts").catch(()=>accounts.value);
-      const a = (accounts.value||[]).find(x=>x.account===account.value); loadedCount = a? a.count : loadedCount; newCount.value = 0;
-      delete chartsCache[account.value];
-      await Promise.all([fetchSummary(), fetchTickets()]); loadCharts();
+      if (updating.value) return;
+      updating.value = true;
+      try {
+        const accts = await fetchJSON("/api/accounts").catch(() => accounts.value);
+        accounts.value = accts || accounts.value;
+        const a = (accounts.value || []).find(x => x.account === account.value);
+        if (a) loadedCount = a.count;
+        delete chartsCache[account.value];
+        await Promise.all([fetchSummary(), fetchTickets()]);
+        await loadCharts();
+      } finally { updating.value = false; }
     }
+    // Detecta datos nuevos (más scoreadas que en la última carga) y AUTO-actualiza,
+    // mostrando el aviso "actualizando…" mientras Vue re-pinta. Ya no es un badge
+    // que el usuario tiene que clickear.
     async function checkNew() {
-      try { const accts = await fetchJSON("/api/accounts"); accounts.value = accts;
-        const a = accts.find(x=>x.account===account.value);
-        if (a) newCount.value = Math.max(0, a.count - loadedCount);
+      if (updating.value) return;
+      try {
+        const accts = await fetchJSON("/api/accounts"); accounts.value = accts;
+        const a = accts.find(x => x.account === account.value);
+        if (a && a.count > loadedCount) refresh();
       } catch(e) {}
     }
     function toggleTheme() {
@@ -678,7 +695,7 @@ createApp({
     });
 
     return { accounts, account, filters, options, summary, tickets, charts, chartsStatus,
-      loadingSummary, loadingTickets, opsExpanded, openKeys, newCount, modal,
+      loadingSummary, loadingTickets, opsExpanded, openKeys, updating, modal,
       nvdCombo, depPctChart, loadChart, qualCanvases,
       kpiTiles, distRows, depByChannel, operators, opsShown, qualOps, accentColor, snapText,
       TOP_OPS, SKIP_LABEL,
