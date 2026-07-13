@@ -8,6 +8,7 @@ from src.queries import (
     _build_new_vs_deposit,
     _build_ops,
     _build_pct_series,
+    _build_quality_evolution,
     _dist_from_labels,
     _scores_filters,
     _sort_convs,
@@ -211,7 +212,19 @@ def test_summary_combina_las_cuatro_secciones():
     cur = _FakeCursor(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"],
                       one=(0, 0, None, 0, 0, 0))
     out = summary(cur, "datos")
-    assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel"}
+    assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel", "quality_evolution"}
+
+
+def test_build_quality_evolution_top_n_avg_y_umbral_min():
+    # (mes, op, n, sum_stars). MIN=2 aquí: mes-op con <2 convs -> None.
+    rows = [("2026-01", "Ana", 4, 16.0), ("2026-02", "Ana", 1, 5.0),
+            ("2026-01", "Beto", 2, 6.0)]
+    out = _build_quality_evolution(rows, top_n=8, min_conv=2)
+    assert out["months"] == ["2026-01", "2026-02"]
+    ana = next(o for o in out["operators"] if o["name"] == "Ana")
+    assert ana["data"] == [4.0, None]     # ene 16/4=4.0; feb 1<2 conv -> None
+    beto = next(o for o in out["operators"] if o["name"] == "Beto")
+    assert beto["data"] == [3.0, None]    # ene 6/2=3.0; feb sin datos -> None
 
 
 def test_filter_options_devuelve_listas_por_cuenta():

@@ -234,15 +234,54 @@ def deposit_by_channel(cur, account: str, **filters) -> list[dict]:
     return _build_dep_channel(cur.fetchall())
 
 
+# Evolución de la calidad por operador (renderQualityEvolution): ★ promedio por
+# mes, top-N operadores por volumen, mes-operador con <min_conv -> None (ruido).
+# Respeta filtros (a diferencia de los otros 3 cuadros full-scale de /api/charts).
+def _build_quality_evolution(rows, top_n: int = 8, min_conv: int = 5) -> dict:
+    """{months, operators:[{name, data:[★prom|None por mes]}]} desde filas
+    (mes, op, n, sum_stars). Puro/testeable."""
+    by: dict[str, dict] = {}
+    for mes, op, n, sum_stars in rows:
+        by.setdefault(op, {})[mes] = [float(sum_stars or 0), int(n)]
+    months = sorted({m for ms in by.values() for m in ms})
+    totals = {op: sum(v[1] for v in ms.values()) for op, ms in by.items()}
+    top = sorted(totals, key=lambda o: (-totals[o], o))[:top_n]
+    operators = []
+    for op in top:
+        data = []
+        for m in months:
+            c = by[op].get(m)
+            data.append(round(c[0] / c[1], 2) if c and c[1] >= min_conv else None)
+        operators.append({"name": op, "data": data})
+    return {"months": months, "operators": operators}
+
+
+_QUALITY_SQL = """
+SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
+       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+       count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
+   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+ GROUP BY 1, 2"""
+
+
+def quality_evolution(cur, account: str, **filters) -> dict:
+    """Evolución mensual de la ★ promedio por operador (respeta filtros)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_QUALITY_SQL.format(where=where), params)
+    return _build_quality_evolution(cur.fetchall())
+
+
 def summary(cur, account: str, **filters) -> dict:
-    """Todos los agregados de las tarjetas en una llamada: KPIs, distribución,
-    tabla de operadores y % depósito por canal. Reemplaza el cómputo en memoria
-    sobre las ~113k filas de /api/scores."""
+    """Todos los agregados de las tarjetas/cuadros filtro-aware en una llamada: KPIs,
+    distribución, tabla de operadores, % depósito por canal y evolución de calidad.
+    Reemplaza el cómputo en memoria sobre las ~113k filas de /api/scores."""
     return {
         "kpis": summary_kpis(cur, account, **filters),
         "distribution": distribution(cur, account, **filters),
         "operators": operators_table(cur, account, **filters),
         "deposit_by_channel": deposit_by_channel(cur, account, **filters),
+        "quality_evolution": quality_evolution(cur, account, **filters),
     }
 
 
