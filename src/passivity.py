@@ -26,13 +26,17 @@ PASSIVITY_SCHEMA = {
 _SYSTEM = (
     "Sos analista de calidad de una operación de apuestas. Clasificás en UNA etiqueta "
     "el comportamiento del OPERADOR (Agente) frente a un jugador nuevo. NO juzgás si el "
-    "jugador terminó depositando (eso es otro eje); solo si el operador EMPUJÓ hacia la "
-    "conversión o fue pasivo.\n"
-    "- empujo: impulsó activamente (pidió datos para registrar, mandó link, invitó a "
-    "depositar/recargar/apostar, insistió con la promo, guió el alta paso a paso).\n"
-    "- pasivo: solo respondió/saludó/informó sin impulsar (contestó la duda y no avanzó, "
-    "saludó y esperó, cerró sin empujar).\n"
+    "jugador terminó depositando (eso es otro eje); solo el ESFUERZO del operador.\n"
+    "- empujo: el operador IMPULSÓ CONCRETAMENTE la conversión. Requiere una acción "
+    "real: ofrecer/guiar el registro, pedir datos para crear la cuenta, invitar a "
+    "depositar/recargar/apostar, mandar un link, o presentar la promo/bono. Si no hay "
+    "NINGUNA de esas acciones, NO es empujo.\n"
+    "- pasivo: el operador solo saludó, hizo una pregunta suelta, informó o respondió "
+    "una duda SIN impulsar la conversión. Un simple 'Hola', 'en qué te ayudo', o una "
+    "pregunta trivial = pasivo (no ofreció nada).\n"
     "- no_respondio: prácticamente no atendió lo que el cliente necesitaba.\n"
+    "Ejemplos: 'Hola' -> pasivo. 'te ayudo a crear tu cuenta?' -> empujo. 'en qué le "
+    "puedo ayudar?' -> pasivo. 'registrate y hacé tu primera recarga de $5' -> empujo.\n"
     'Respondé SOLO JSON: {"atencion":"empujo|pasivo|no_respondio"}.'
 )
 
