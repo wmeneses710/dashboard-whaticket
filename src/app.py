@@ -171,6 +171,7 @@ def conversion(account: str = Query(..., description="datos | sistemas"),
         return {
             "by_operator": queries.conversion_by_operator(cur, account, **filters),
             "by_month": queries.conversion_by_month(cur, account, **filters),
+            "evolution": queries.conversion_passivity_evolution(cur, account, **filters),
         }
 
 

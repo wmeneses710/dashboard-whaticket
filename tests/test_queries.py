@@ -6,6 +6,7 @@ from src.queries import (
     _build_dep_channel,
     _build_load_series,
     _build_conversion_by_month,
+    _build_conversion_passivity,
     _build_conversion_ranking,
     _build_new_vs_deposit,
     _build_ops,
@@ -20,6 +21,7 @@ from src.queries import (
     conversion_by_month,
     conversion_by_operator,
     conversion_cohort,
+    conversion_passivity_evolution,
     deposit_by_channel,
     distribution,
     filter_options,
@@ -375,6 +377,27 @@ def test_conversion_by_month_sql():
     conversion_by_month(cur, "datos")
     query, _ = cur.executed[0]
     assert "to_char(pc.first_at, 'YYYY-MM')" in query and "GROUP BY 1" in query
+
+
+def test_build_conversion_passivity_denominadores_distintos():
+    # conv% sobre total; pasiva% sobre CLASIFICADAS. Mes con <min -> None.
+    rows = [("2026-01", "Ana", 10, 3, 8, 4), ("2026-02", "Ana", 3, 1, 2, 1)]
+    out = _build_conversion_passivity(rows, top_n=8, min_conv=5)
+    assert out["months"] == ["2026-01", "2026-02"]
+    ana = out["operators"][0]
+    assert ana["name"] == "Ana"
+    assert ana["conv"] == [30.0, None]      # 3/10; feb n=3<5 -> None
+    assert ana["pasiva"] == [50.0, None]    # 4/8 clasif; feb clasif=2<5 -> None
+
+
+def test_conversion_passivity_sql_conv_y_pasiva():
+    cur = _FakeCursor(rows=[], description=[])
+    conversion_passivity_evolution(cur, "sistemas")
+    query, _ = cur.executed[0]
+    assert "FILTER (WHERE pc.deposited)" in query
+    assert "FILTER (WHERE pc.attention = 'pasivo')" in query
+    assert "FILTER (WHERE pc.attention IS NOT NULL)" in query   # denominador de pasiva
+    assert "JOIN users u" in query and "pc.user_id IS NOT NULL" in query
 
 
 def test_conversion_cohort_lista_con_llave_de_drilldown():

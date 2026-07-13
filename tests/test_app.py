@@ -68,9 +68,11 @@ def test_conversion_endpoint_mapea_filtros_y_combina(monkeypatch):
                         lambda cur, account, **k: seen.setdefault("op", (account, k)) or {"operators": []})
     monkeypatch.setattr(appmod.queries, "conversion_by_month",
                         lambda cur, account, **k: {"months": []})
+    monkeypatch.setattr(appmod.queries, "conversion_passivity_evolution",
+                        lambda cur, account, **k: {"months": [], "operators": []})
     r = client.get("/api/conversion", params={"account": "sistemas", "canal": "WHATSAPP", "from": "2026-01-01"})
     assert r.status_code == 200
-    assert set(r.json()) == {"by_operator", "by_month"}
+    assert set(r.json()) == {"by_operator", "by_month", "evolution"}
     account, k = seen["op"]
     assert account == "sistemas" and k["canal"] == "WHATSAPP" and k["date_from"] == "2026-01-01"
 

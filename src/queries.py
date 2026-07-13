@@ -718,6 +718,57 @@ def conversion_by_month(cur, account: str, **filters) -> dict:
     return _build_conversion_by_month(cur.fetchall())
 
 
+# Cuadro del análisis: conversión vs atención pasiva por operador/mes (small-multiples).
+# conv% = depositó / total (siempre conocido). pasiva% = pasivo / CLASIFICADAS (attention
+# no NULL), NO sobre el total: attention se llena de a poco (pase LLM) y no queremos
+# diluir la línea roja con lo aún sin clasificar. Solo operadores HUMANOS (user_id).
+_CONV_PASV_SQL = """
+SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
+       coalesce(nullif(u.name, ''), 'Operador sin identificar') AS op,
+       count(*) AS n,
+       count(*) FILTER (WHERE pc.deposited) AS conv,
+       count(*) FILTER (WHERE pc.attention IS NOT NULL) AS clasif,
+       count(*) FILTER (WHERE pc.attention = 'pasivo') AS pasiva
+  FROM player_conversions pc
+  JOIN users u ON u.id = pc.user_id
+ WHERE {where} AND pc.first_at IS NOT NULL AND pc.user_id IS NOT NULL
+ GROUP BY 1, 2"""
+
+
+def _build_conversion_passivity(rows, top_n: int = 8, min_conv: int = 5) -> dict:
+    """{months, operators:[{name, conv:[%|None], pasiva:[%|None]}]} para el cuadro
+    verde(conv)/rojo(pasiva) por operador. conv% sobre total; pasiva% sobre clasificadas.
+    Top-N operadores por volumen; mes-operador con <min_conv -> None (rompe la línea)."""
+    by: dict[str, dict] = {}
+    for mes, op, n, conv, clasif, pasiva in rows:
+        by.setdefault(op, {})[mes] = (int(n), int(conv), int(clasif), int(pasiva))
+    months = sorted({m for ms in by.values() for m in ms})
+    totals = {op: sum(v[0] for v in ms.values()) for op, ms in by.items()}
+    top = sorted(totals, key=lambda o: (-totals[o], o))[:top_n]
+    operators = []
+    for op in top:
+        conv_s, pasv_s = [], []
+        for m in months:
+            c = by[op].get(m)
+            if c and c[0] >= min_conv:
+                conv_s.append(round(100.0 * c[1] / c[0], 1))
+            else:
+                conv_s.append(None)
+            if c and c[2] >= min_conv:              # clasif >= min
+                pasv_s.append(round(100.0 * c[3] / c[2], 1))
+            else:
+                pasv_s.append(None)
+        operators.append({"name": op, "conv": conv_s, "pasiva": pasv_s})
+    return {"months": months, "operators": operators}
+
+
+def conversion_passivity_evolution(cur, account: str, **filters) -> dict:
+    """Evolución mensual conv% vs pasiva% por operador (cuadro del análisis)."""
+    where, params = _conversion_where(account, **filters)
+    cur.execute(_CONV_PASV_SQL.format(where=where), params)
+    return _build_conversion_passivity(cur.fetchall())
+
+
 # Drill-down: la cohorte de jugadores nuevos de un operador (o filtro) con las
 # llaves para abrir su conversación de entrada. Responde "¿qué pasó?" -> a los
 # mensajes. El operador clickeado llega como filtro `op` (via _conversion_where).
