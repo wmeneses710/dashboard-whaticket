@@ -718,6 +718,26 @@ def conversion_by_month(cur, account: str, **filters) -> dict:
     return _build_conversion_by_month(cur.fetchall())
 
 
+# Drill-down: la cohorte de jugadores nuevos de un operador (o filtro) con las
+# llaves para abrir su conversación de entrada. Responde "¿qué pasó?" -> a los
+# mensajes. El operador clickeado llega como filtro `op` (via _conversion_where).
+_CONV_COHORT_SQL = """
+SELECT pc.contact_id, pc.first_conversation_id, pc.first_at, pc.channel, pc.deposited
+  FROM player_conversions pc
+  LEFT JOIN users u ON u.id = pc.user_id
+ WHERE {where}
+ ORDER BY pc.first_at DESC
+ LIMIT 500"""
+
+
+def conversion_cohort(cur, account: str, **filters) -> list[dict]:
+    """Personas (jugadores nuevos) de la cohorte filtrada, con first_conversation_id
+    para el drill-down al modal de conversación. Tope 500 (la UI pagina/scrollea)."""
+    where, params = _conversion_where(account, **filters)
+    cur.execute(_CONV_COHORT_SQL.format(where=where), params)
+    return _rows_as_dicts(cur)
+
+
 def conversation_detail(cur, conversation_id: str) -> dict | None:
     """Una conversacion con su analisis completo + transcript reconstruido."""
     cur.execute(_DETAIL_SQL, {"cid": conversation_id})

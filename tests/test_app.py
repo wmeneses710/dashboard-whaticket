@@ -75,6 +75,20 @@ def test_conversion_endpoint_mapea_filtros_y_combina(monkeypatch):
     assert account == "sistemas" and k["canal"] == "WHATSAPP" and k["date_from"] == "2026-01-01"
 
 
+def test_conversion_cohort_endpoint(monkeypatch):
+    calls = {}
+
+    def fake(cur, account, **kwargs):
+        calls["account"] = account; calls["kwargs"] = kwargs
+        return [{"contact_id": "c1", "deposited": True}]   # el endpoint devuelve lista
+
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    monkeypatch.setattr(appmod.queries, "conversion_cohort", fake)
+    r = client.get("/api/conversion/cohort", params={"account": "sistemas", "op": "Virginia"})
+    assert r.status_code == 200 and isinstance(r.json(), list)
+    assert calls["account"] == "sistemas" and calls["kwargs"]["op"] == "Virginia"
+
+
 def test_options_endpoint(monkeypatch):
     calls = _stub(monkeypatch, "filter_options")
     r = client.get("/api/options", params={"account": "datos"})

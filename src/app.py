@@ -174,6 +174,15 @@ def conversion(account: str = Query(..., description="datos | sistemas"),
         }
 
 
+@app.get("/api/conversion/cohort")
+def conversion_cohort(account: str = Query(..., description="datos | sistemas"),
+                      filters: dict = Depends(_filters)) -> list[dict]:
+    """Drill-down: personas (jugadores nuevos) de la cohorte filtrada (p. ej. un
+    operador) con la llave para abrir su conversación de entrada."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.conversion_cohort(cur, account, **filters)
+
+
 @app.get("/api/charts")
 def charts(account: str = Query(..., description="datos | sistemas")) -> dict:
     """Agregados FULL-SCALE para los cuadros del análisis (deterministas, sobre el

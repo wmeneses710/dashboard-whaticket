@@ -19,6 +19,7 @@ from src.queries import (
     conversation_detail,
     conversion_by_month,
     conversion_by_operator,
+    conversion_cohort,
     deposit_by_channel,
     distribution,
     filter_options,
@@ -374,6 +375,16 @@ def test_conversion_by_month_sql():
     conversion_by_month(cur, "datos")
     query, _ = cur.executed[0]
     assert "to_char(pc.first_at, 'YYYY-MM')" in query and "GROUP BY 1" in query
+
+
+def test_conversion_cohort_lista_con_llave_de_drilldown():
+    cur = _FakeCursor(rows=[], description=[])
+    conversion_cohort(cur, "sistemas", op="Virginia")
+    query, params = cur.executed[0]
+    assert "FROM player_conversions pc" in query
+    assert "pc.first_conversation_id" in query          # llave para abrir la conversación
+    assert "ORDER BY pc.first_at DESC" in query and "LIMIT 500" in query
+    assert "%(op)s" in query and params["op"] == "Virginia"
 
 
 def test_conversation_detail_coacciona_decimal_a_numero():
