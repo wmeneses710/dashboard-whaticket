@@ -63,9 +63,6 @@
   .toggle:disabled { opacity:.5; cursor:default; }
   #refreshBtn.has-new { border-color:var(--accent); color:var(--accent); }
   .newbadge { display:inline-flex; align-items:center; margin-left:7px; padding:1px 7px; border-radius:999px; background:var(--accent); color:#fff; font-size:10.5px; font-weight:700; line-height:1.5; }
-  /* Una regla de autor le gana al [hidden]{display:none} del UA stylesheet, así
-     que el atributo `hidden` no oculta por sí solo: hay que forzarlo acá. */
-  .newbadge[hidden] { display:none; }
   .snapshot { font-size:12px; color:var(--muted); margin:16px 0 22px; }
   .snapshot b { color:var(--ink); font-weight:640; }
 
@@ -77,8 +74,6 @@
   select:hover, input[type=search]:hover, input[type=datetime-local]:hover { border-color:var(--faint); }
   select:focus-visible, input[type=search]:focus-visible, input[type=datetime-local]:focus-visible { outline:2px solid var(--accent); outline-offset:1px; border-color:var(--accent); }
   input[type=datetime-local] { color-scheme:light dark; }
-  /* Rango de fechas: fondo compartido que agrupa 'Desde' y 'Hasta' como un par,
-     dejándolas como dos campos separados (cada uno con su etiqueta). */
   .filters .dr-group { display:flex; flex-direction:row; gap:10px; align-items:flex-end; background:var(--surface-2); border:1px solid var(--border); border-radius:11px; padding:7px 10px; }
   .dr-group > div { display:flex; flex-direction:column; gap:4px; }
   input[type=search] { width:100%; cursor:text; }
@@ -99,7 +94,6 @@
   .cols { display:grid; grid-template-columns:1.05fr 1fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .col-stack{ display:flex; flex-direction:column; gap:16px; }
-  /* Cuadros de análisis en grilla 2-up para aprovechar el ancho */
   .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .charts{ grid-template-columns:1fr;} }
   .charts .card { margin:0; }
@@ -108,15 +102,13 @@
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
   .chart-wrap { position:relative; height:260px; }
-  /* 4.º cuadro: small-multiples por operador (conversión vs pasiva) */
   .conv-legend { display:flex; gap:18px; font-size:11.5px; color:var(--muted); margin:-4px 0 14px; }
   .conv-legend i { display:inline-block; width:16px; height:3px; border-radius:2px; margin-right:6px; vertical-align:middle; }
   .conv-legend i.dash { background:none !important; border-top:3px dashed var(--r-mala); height:0; }
   .conv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(235px,1fr)); gap:12px 16px; }
   .conv-mini h4 { font-size:12px; font-weight:640; margin:0 0 3px; letter-spacing:-.01em; }
 
-  /* Distribution — barra proporcional real (largo = valor), con el valor pegado
-     al final de la barra (no un track vacío con el número perdido a la derecha). */
+  /* Distribution */
   .distrow { display:grid; grid-template-columns:118px 1fr; align-items:center; gap:12px; margin:0 -8px 7px; padding:5px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
   .distrow:last-child { margin-bottom:0; }
   .distrow:not(.static):hover { background:var(--surface-2); }
@@ -135,7 +127,6 @@
   th.r, td.r { text-align:right; }
   td { padding:10px 8px; border-top:1px solid var(--border); }
   tr.op:hover td { background:var(--surface-2); }
-  /* Stacked minibar: 2px surface gap between segments (the gap does the separating) */
   .minibar { display:inline-flex; height:11px; border-radius:6px; overflow:hidden; width:104px; background:var(--surface-2); vertical-align:middle; }
   .minibar span { height:100%; }
   .minibar span + span { border-left:2px solid var(--surface); }
@@ -158,8 +149,6 @@
   .tk-right { display:flex; align-items:center; gap:16px; }
   .tk-avg { text-align:right; } .tk-avg .big { font-size:19px; font-weight:720; letter-spacing:-.02em; } .tk-avg .cap { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--faint); margin-top:1px; }
   .chev { color:var(--faint); transition:transform .16s; font-size:11px; } .tk.open .chev { transform:rotate(90deg); }
-  /* Cuerpo con scroll propio: un cliente con muchas visitas (p.ej. 27) no debe
-     empujar toda la página; se acota y scrollea dentro. Cards chicas ni lo notan. */
   .tk-body { display:none; border-top:1px solid var(--border); padding:7px 9px 10px; background:var(--surface-2); max-height:340px; overflow-y:auto; } .tk.open .tk-body { display:block; }
   .conv { display:grid; grid-template-columns:104px 1fr auto auto; gap:12px; align-items:center; padding:10px 11px; border-radius:9px; cursor:pointer; transition:background .1s; }
   .conv:hover { background:var(--surface); }
@@ -202,398 +191,502 @@
   .metagrid .m { font-size:11.5px; } .metagrid .m span { color:var(--faint); } .metagrid .m b { font-weight:640; }
   .est { font-size:10.5px; color:var(--faint); margin-top:16px; font-style:italic; }
   .loading { color:var(--faint); text-align:center; padding:60px 12px; font-size:13px; }
-  .charts-status { font-size:12px; margin-bottom:10px; display:none; }
-  .charts-status.show { display:block; }
+  .charts-status { font-size:12px; margin-bottom:10px; }
   .charts-status.loading-state { color:var(--faint); }
   .charts-status.error-state { color:#c0392b; }
-  .charts-status .spin { display:inline-block; width:11px; height:11px; margin-right:7px; vertical-align:-1px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .7s linear infinite; }
+  .spin { display:inline-block; width:11px; height:11px; margin-right:7px; vertical-align:-1px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .7s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
+  /* Estado de carga por sección: atenúa la sección mientras se re-consulta al
+     server (los filtros ya no son en memoria; ahora hay una llamada de por medio). */
+  .is-loading { opacity:.55; transition:opacity .15s; pointer-events:none; }
+  .sec-spin { font-size:11.5px; color:var(--faint); }
 </style>
 </head>
 <body>
-<div class="wrap">
+<div id="app" class="wrap" v-cloak>
   <header class="top">
     <div class="brand"><div class="dot">✦</div>
       <div><h1>Calidad de atención</h1><div class="sub">Sorti · cómo atendemos a cada cliente que se contacta</div></div></div>
     <div class="head-ctl">
-      <div class="acct" id="acct" role="group" aria-label="Cuenta"></div>
-      <button class="toggle" id="refreshBtn" type="button" title="Traer las conversaciones scoreadas desde la última carga">↻ Actualizar<span class="newbadge" id="newBadge" hidden></span></button>
-      <button class="toggle" id="themeBtn" type="button">Tema</button>
+      <div class="acct" role="group" aria-label="Cuenta">
+        <button v-for="a in accounts" :key="a.account" type="button"
+                :aria-pressed="a.account===account" @click="switchAccount(a.account)">
+          {{ a.account }} <span style="opacity:.6" class="num">{{ a.count }}</span>
+        </button>
+      </div>
+      <button class="toggle" id="refreshBtn" type="button" :class="{'has-new': newCount>0}"
+              title="Traer las conversaciones scoreadas desde la última carga" @click="refresh">
+        ↻ Actualizar<span class="newbadge" v-if="newCount>0">+{{ newCount }}</span>
+      </button>
+      <button class="toggle" type="button" @click="toggleTheme">Tema</button>
     </div>
   </header>
-  <div class="snapshot" id="snap">Cargando…</div>
+
+  <div class="snapshot" v-html="snapText"></div>
+
   <div class="filters">
-    <div><label for="fEstado">Estado</label><select id="fEstado"><option value="all">Todas</option><option value="evaluated">Evaluadas</option><option value="skipped">Sin evaluar</option></select></div>
-    <div><label for="fSeg">Segmento</label><select id="fSeg"></select></div>
-    <div><label for="fCanal">Canal</label><select id="fCanal"></select></div>
-    <div><label for="fOp">Operador</label><select id="fOp"></select></div>
-    <div><label for="fSort">Orden</label><select id="fSort"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
-    <div class="dr-group"><div><label for="fFrom">Desde</label><input id="fFrom" type="datetime-local"></div><div><label for="fTo">Hasta</label><input id="fTo" type="datetime-local"></div></div>
-    <div class="search"><label for="fSearch">Buscar</label><input id="fSearch" type="search" placeholder="cliente u operador…" autocomplete="off"></div>
-    <button class="btn-reset" id="fReset" type="button">Limpiar filtros</button>
+    <div><label>Estado</label>
+      <select v-model="filters.estado"><option value="all">Todas</option><option value="evaluated">Evaluadas</option><option value="skipped">Sin evaluar</option></select></div>
+    <div><label>Segmento</label>
+      <select v-model="filters.segment"><option value="all">Todos</option>
+        <option v-for="s in options.segments" :key="s" :value="s">{{ cap(s) }}</option></select></div>
+    <div><label>Canal</label>
+      <select v-model="filters.canal"><option value="all">Todos</option>
+        <option v-for="c in options.channels" :key="c" :value="c">{{ c }}</option></select></div>
+    <div><label>Operador</label>
+      <select v-model="filters.op"><option value="all">Todos</option>
+        <option v-for="o in options.operators" :key="o" :value="o">{{ o.length>16?short(o):o }}</option></select></div>
+    <div><label>Orden</label>
+      <select v-model="filters.sort"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
+    <div class="dr-group">
+      <div><label>Desde</label><input type="datetime-local" v-model="filters.from"></div>
+      <div><label>Hasta</label><input type="datetime-local" v-model="filters.to"></div></div>
+    <div class="search"><label>Buscar</label>
+      <input type="search" v-model="filters.search" placeholder="cliente u operador…" autocomplete="off"></div>
+    <button class="btn-reset" type="button" @click="resetFilters">Limpiar filtros</button>
   </div>
-  <section class="kpis" id="kpis"></section>
+
+  <section class="kpis" :class="{'is-loading': loadingSummary}">
+    <div class="tile" v-for="t in kpiTiles" :key="t.k">
+      <div class="k">{{ t.k }}</div>
+      <div class="v">{{ t.v }}<small v-if="t.u">{{ t.u }}</small></div>
+      <div class="foot">{{ t.foot }}</div>
+    </div>
+  </section>
+
   <div class="cols">
     <div class="col-stack">
-      <div class="card"><h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2><div id="dist"></div></div>
-      <div class="card"><h2>% depósito por canal <small>· el resultado de negocio, no la estrella · respeta filtros</small></h2><div id="depCanal"></div></div>
+      <div class="card" :class="{'is-loading': loadingSummary}">
+        <h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2>
+        <div>
+          <div v-for="row in distRows" :key="row.label"
+               :class="['distrow', {active: filters.rating===row.label, dim: filters.rating!=='all' && filters.rating!==row.label, static: row.n===0}]"
+               :role="row.n>0?'button':null" :tabindex="row.n>0?0:null" :aria-pressed="filters.rating===row.label"
+               @click="row.n>0 && toggleRating(row.label)" @keydown.enter.prevent="row.n>0 && toggleRating(row.label)" @keydown.space.prevent="row.n>0 && toggleRating(row.label)">
+            <span class="lbl"><span class="swatch" :style="{background:row.color}"></span>{{ row.label }} <span style="color:var(--faint)">{{ row.stars }}★</span></span>
+            <span class="barrow"><span class="fill" :style="{width:row.width+'%', background:row.color}"></span><span class="val num">{{ row.n }}</span></span>
+          </div>
+        </div>
+      </div>
+      <div class="card" :class="{'is-loading': loadingSummary}">
+        <h2>% depósito por canal <small>· el resultado de negocio, no la estrella · respeta filtros</small></h2>
+        <div>
+          <div class="distrow static" v-for="r in depByChannel" :key="r.canal">
+            <span class="lbl">{{ r.canal }} <span style="color:var(--faint)">{{ r.n }}</span></span>
+            <span class="barrow"><span class="fill" :style="{width:r.pct+'%', background:accentColor}"></span><span class="val num">{{ r.pct }}%</span></span>
+          </div>
+          <div v-if="!depByChannel.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
+        </div>
+      </div>
     </div>
-    <div class="card"><h2>Operadores <small>· los más activos primero</small></h2><div id="ops"></div></div>
+    <div class="card" :class="{'is-loading': loadingSummary}">
+      <h2>Operadores <small>· los más activos primero</small></h2>
+      <div>
+        <div class="ops-scroll" :class="{exp: opsExpanded}">
+          <table><thead><tr><th>Operador</th><th class="r">Vol.</th><th class="r">★ prom</th><th>Distribución</th></tr></thead>
+            <tbody>
+              <tr class="op" v-for="o in opsShown" :key="o.name">
+                <td style="font-weight:600">{{ o.name }}</td>
+                <td class="r num">{{ o.n }}</td>
+                <td class="r num" style="font-weight:600" :style="{color:starColor(o.avg)}">{{ o.avg.toFixed(2) }}</td>
+                <td><span class="minibar"><span v-for="(seg,i) in miniSegs(o)" :key="i" :style="{width:seg.w+'%', background:seg.c}"></span></span></td>
+              </tr>
+              <tr v-if="!opsShown.length"><td colspan="4" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <button class="ops-more" v-if="operators.length>TOP_OPS" type="button" @click="opsExpanded=!opsExpanded">
+          {{ opsExpanded ? 'Ver menos' : 'Ver todos ('+operators.length+')' }}
+        </button>
+      </div>
+    </div>
   </div>
-  <div id="chartsStatus" class="charts-status" aria-live="polite"></div>
+
+  <div class="charts-status" v-if="chartsStatus" :class="chartsStatus.kind+'-state'">
+    <span v-if="chartsStatus.kind==='loading'" class="spin"></span>{{ chartsStatus.msg }}
+  </div>
   <div class="charts">
     <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores</small></h2>
       <p style="font-size:12px;color:var(--muted);margin:-6px 0 12px">Barras = jugadores nuevos por mes · línea = % que depositó. Cuando el <b style="color:var(--ink)">volumen sube</b>, la <b style="color:var(--ink)">tasa de depósito suele bajar</b>.</p>
-      <div style="position:relative;height:330px"><canvas id="nvdCombo"></canvas></div>
+      <div style="position:relative;height:330px"><canvas ref="nvdCombo"></canvas></div>
     </div>
-    <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="depPctChart"></canvas></div></div>
-    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas id="loadChart"></canvas></div></div>
-    <div class="card span-2"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
-      <div id="qualGrid" class="conv-grid"></div>
-    </div>
-  </div>
-  <div class="card"><h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2><div id="tickets"></div></div>
-</div>
-<div class="backdrop" id="backdrop">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle">
-    <div class="modal-head"><div class="who" id="mTitle"></div><button class="x" id="mClose" type="button" aria-label="Cerrar">✕</button></div>
-    <div class="modal-body">
-      <div class="pane chat"><h3>Conversación real</h3><div id="mChat"></div></div>
-      <div class="pane"><h3>Análisis del modelo</h3><div id="mAnalysis"></div></div>
+    <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="depPctChart"></canvas></div></div>
+    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="loadChart"></canvas></div></div>
+    <div class="card span-2" :class="{'is-loading': loadingSummary}"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
+      <div class="conv-grid">
+        <div class="conv-mini" v-for="(op,i) in qualOps" :key="op.name">
+          <h4>{{ op.name.length>18?short(op.name):op.name }}</h4>
+          <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualCanvases[i]=el }"></canvas></div>
+        </div>
+        <div v-if="!qualOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin conversaciones evaluadas en este filtro.</div>
+      </div>
     </div>
   </div>
+
+  <div class="card" :class="{'is-loading': loadingTickets}">
+    <h2>Clientes <small>· cada uno se contactó con la empresa · abrí para ver sus visitas</small></h2>
+    <div>
+      <div class="tk" v-for="t in tickets.cards" :key="t.key" :class="{open: openKeys.has(t.key)}">
+        <div class="tk-head" role="button" tabindex="0" @click="toggleCard(t.key)" @keydown.enter.prevent="toggleCard(t.key)" @keydown.space.prevent="toggleCard(t.key)">
+          <div class="avatar">{{ initials(t.cust) }}</div>
+          <div style="min-width:0">
+            <div class="cust-name">{{ t.cust || 'Cliente sin nombre' }}</div>
+            <div class="cust-sub"><span class="mono">{{ phone(t.num) }}</span>
+              <span v-if="t.ch" class="badge">{{ t.ch }}</span>
+              <span>{{ t.n }} conversación{{ t.n>1?'es':'' }}</span>
+              <span v-if="t.visitas>1">{{ t.visitas }} visitas</span></div>
+          </div>
+          <div class="tk-right">
+            <div class="tk-avg">
+              <template v-if="t.avg!=null"><div class="big num" :style="{color:starColor(t.avg)}">{{ t.avg.toFixed(1) }}★</div><div class="cap">promedio</div></template>
+              <div v-else class="cap">sin evaluar</div>
+            </div>
+            <span class="chev">▶</span>
+          </div>
+        </div>
+        <div class="tk-body">
+          <div class="conv" v-for="cv in t.convs" :key="cv.conversation_id" role="button" tabindex="0"
+               @click="openModal(cv.conversation_id)" @keydown.enter.prevent="openModal(cv.conversation_id)" @keydown.space.prevent="openModal(cv.conversation_id)">
+            <span class="when num">{{ fmtDate(cv.conversation_created_at) }}</span>
+            <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
+            <span class="op">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
+            <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
+            <span class="chip skip" v-else>sin evaluar</span>
+          </div>
+        </div>
+      </div>
+      <div v-if="!tickets.cards.length && !loadingTickets" style="color:var(--faint);padding:20px;text-align:center">Nada en este filtro.</div>
+      <div class="pager" v-if="tickets.pages>1">
+        <button class="pgbtn" type="button" :disabled="tickets.page<=1" @click="setPage(tickets.page-1)">‹ Anterior</button>
+        <span class="pginfo num">Página {{ tickets.page }} de {{ tickets.pages }} · {{ tickets.total }} clientes</span>
+        <button class="pgbtn" type="button" :disabled="tickets.page>=tickets.pages" @click="setPage(tickets.page+1)">Siguiente ›</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="backdrop" :class="{show: modal.open}" @click.self="closeModal">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head"><div class="who" v-html="modal.title"></div><button class="x" type="button" aria-label="Cerrar" @click="closeModal">✕</button></div>
+      <div class="modal-body">
+        <div class="pane chat"><h3>Conversación real</h3>
+          <div v-if="modal.loading" class="loading">Cargando conversación…</div>
+          <div v-else-if="!modal.detail" class="loading">No se pudo cargar.</div>
+          <div v-else>
+            <div class="bub" v-for="(m,i) in (modal.detail.transcript||[])" :key="i" :class="bubClass(m.role)">
+              <div class="au">{{ bubAuthor(m) }}</div>{{ bubText(m) || '' }}<i v-if="!bubText(m)">[multimedia]</i>
+            </div>
+            <div v-if="!(modal.detail.transcript||[]).length" style="color:var(--faint)">Sin mensajes.</div>
+          </div>
+        </div>
+        <div class="pane"><h3>Análisis del modelo</h3>
+          <div v-if="modal.detail && modal.detail.eval_status!=='evaluated'">
+            <div class="why" style="border-color:var(--faint)">No se evaluó: <b>{{ SKIP_LABEL[modal.detail.skip_reason]||modal.detail.skip_reason }}</b>. Queda registrada para explicar la cobertura sin ensuciar la estadística.</div>
+            <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
+          </div>
+          <div v-else-if="modal.detail">
+            <div style="margin-bottom:12px"><span class="chip" :style="chipStyle(modal.detail)"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span></div>
+            <div class="why">{{ modal.detail.rating_rationale }}</div>
+            <div class="dims">
+              <div class="dim" v-for="(v,k) in dimsOnly(modal.detail.dimensions)" :key="k"><div class="dh">{{ k }}</div><p>{{ v }}</p></div>
+            </div>
+            <div class="errs" v-if="dimErrors(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Errores detectados</div>
+              <div class="err" v-for="(e,i) in dimErrors(modal.detail.dimensions)" :key="i">{{ e }}</div></div>
+            <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
+            <div class="est">★ estimada por LLM (rúbrica {{ modal.detail.rubric }}) — no es un dato de la plataforma.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
+
+<style>[v-cloak]{display:none}</style>
 <script src="/vendor/chart.umd.js"></script>
+<script src="/vendor/vue.global.prod.js"></script>
 <script>
+const { createApp, reactive, ref, computed, watch, nextTick, onMounted } = Vue;
+
+// --- Helpers (portados del front vanilla, sin cambios de lógica) ---
+const cvar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const short = id => id ? String(id).slice(0,8) : "—";
+const fmtDate = s => { if(!s) return "—"; const d=new Date(s); return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
+const secs = v => v==null? "—" : v<60? Math.round(v)+"s" : v<3600? Math.round(v/60)+"m" : (v/3600).toFixed(1)+"h";
+const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
+const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
+const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
+const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
+
+const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", media_only:"solo multimedia" };
 const RATINGS = {
   excelente:{s:5,c:"--r-excelente"}, buena:{s:4,c:"--r-buena"}, aceptable:{s:3,c:"--r-aceptable"},
   deficiente:{s:2,c:"--r-deficiente"}, mala:{s:1,c:"--r-mala"},
   optima:{s:5,c:"--r-excelente"}, funcional:{s:4,c:"--r-buena"}, mejorable:{s:3,c:"--r-aceptable"}, falla:{s:1,c:"--r-mala"},
 };
 const ORDER = ["excelente","buena","aceptable","deficiente","mala"];
-const PAGE_SIZE = 12;
-const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", media_only:"solo multimedia" };
+const TOP_OPS = 8, PAGE_SIZE = 12;
+const ratingColor = l => RATINGS[l] ? cvar(RATINGS[l].c) : cvar("--faint");
+const starColor = a => { const l=a>=4.5?"excelente":a>=3.5?"buena":a>=2.5?"aceptable":a>=1.5?"deficiente":"mala"; return cvar(RATINGS[l].c); };
 
-const $ = s => document.querySelector(s);
-const cvar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
-const short = id => id ? String(id).slice(0,8) : "—";
-const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const fmtDate = s => { if(!s) return "—"; const d=new Date(s); return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
-const secs = v => v==null? "—" : v<60? Math.round(v)+"s" : v<3600? Math.round(v/60)+"m" : (v/3600).toFixed(1)+"h";
-const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
-const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
-const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
-const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
-// Paleta categórica validada (dataviz): 8 slots, orden fijo (no ciclado). Dark =
-// los mismos hues escalonados para superficie oscura. 'Otros' va en gris neutro.
 const SERIES_LIGHT=["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948","#e87ba4","#eb6834"];
 const SERIES_DARK =["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"];
-const isDark = () => { const t=document.documentElement.getAttribute("data-theme");
-  return t==="dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches); };
+const isDark = () => { const t=document.documentElement.getAttribute("data-theme"); return t==="dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches); };
 const seriesColors = () => isDark()?SERIES_DARK:SERIES_LIGHT;
 
-let DATA = [];
-let CHARTS = null;   // agregados full-scale (deterministas) para los cuadros
-let state = { account:null, estado:"all", segment:"all", canal:"all", op:"all", sort:"new", search:"", from:"", to:"", rating:"all", page:1, openKeys:new Set(), opsExpanded:false };
-const TOP_OPS = 8;
+const debounce = (fn, ms=300) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
 
-// Bucket de una fila según su estrella (une human y bot: 'optima' y 'excelente'
-// caen ambas en el bucket de 5★). Es la misma clave que usa la distribución.
-const bucketOf = r => { const s=RATINGS[r.rating_label]?.s; return s?ORDER[5-s]:null; };
-function ratingColor(l){ const r=RATINGS[l]; return r? cvar(r.c):cvar("--faint"); }
-function starColor(a){ const l=a>=4.5?"excelente":a>=3.5?"buena":a>=2.5?"aceptable":a>=1.5?"deficiente":"mala"; return cvar(RATINGS[l].c); }
-function chip(r){ if(r.eval_status!=="evaluated") return `<span class="chip skip">sin evaluar</span>`;
-  const c=ratingColor(r.rating_label); return `<span class="chip" style="background:color-mix(in srgb, ${c} 15%, transparent);color:${c}"><span class="st">${r.stars}★</span>${r.rating_label}</span>`; }
-// Filtros base (todo menos calificación): los comparte la distribución para
-// seguir mostrando TODAS las barras aunque haya un rating seleccionado.
-function matchBase(r){ const q=state.search.trim().toLowerCase();
-  const from=state.from?new Date(state.from).getTime():null;
-  const to=state.to?new Date(state.to).getTime():null;
-  if(state.estado!=="all" && r.eval_status!==state.estado) return false;
-  if(state.segment!=="all" && r.segment!==state.segment) return false;
-  if(state.canal!=="all" && r.channel!==state.canal) return false;
-  if(state.op!=="all" && opName(r)!==state.op) return false;
-  if(from!=null || to!=null){ const t=new Date(r.conversation_created_at).getTime();
-    if(from!=null && t<from) return false; if(to!=null && t>to) return false; }
-  if(q && ![r.customer_name,r.customer_number,opName(r)].some(v=>String(v||"").toLowerCase().includes(q))) return false;
-  return true; }
-function population(){ return DATA.filter(r=> matchBase(r) && (state.rating==="all"||bucketOf(r)===state.rating)); }
-function populationForDist(){ return DATA.filter(matchBase); }
+createApp({
+  setup() {
+    const accounts = ref([]);
+    const account = ref(null);
+    const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
+    const options = reactive({ segments:[], channels:[], operators:[] });
+    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]} });
+    const tickets = reactive({ cards:[], total:0, page:1, pages:1 });
+    const charts = ref(null);
+    const chartsStatus = ref(null);
+    const loadingSummary = ref(false), loadingTickets = ref(false);
+    const opsExpanded = ref(false);
+    const openKeys = reactive(new Set());
+    const newCount = ref(0);
+    let loadedCount = 0;
+    const modal = reactive({ open:false, loading:false, detail:null, title:"" });
 
-function renderSnap(){ const ev=DATA.filter(r=>r.eval_status==="evaluated").length;
-  $("#snap").innerHTML=`En vivo desde la BD · cuenta <b>${esc(state.account)}</b> · <b>${DATA.length}</b> conversaciones (${ev} evaluadas), <b>${new Set(DATA.map(r=>r.customer_name).filter(Boolean)).size}</b> clientes.`; }
-function renderFilters(){
-  const segs=[...new Set(DATA.map(r=>r.segment).filter(Boolean))].sort();
-  $("#fSeg").innerHTML=`<option value="all">Todos</option>`+segs.map(s=>`<option value="${esc(s)}" ${s===state.segment?"selected":""}>${esc(s[0].toUpperCase()+s.slice(1))}</option>`).join("");
-  const chans=[...new Set(DATA.map(r=>r.channel).filter(Boolean))].sort();
-  const curC=state.canal;
-  $("#fCanal").innerHTML=`<option value="all">Todos</option>`+chans.map(s=>`<option ${s===curC?"selected":""}>${esc(s)}</option>`).join("");
-  const ops=[...new Set(DATA.filter(r=>r.user_name||r.user_id).map(opName))].sort();
-  const curO=state.op;
-  $("#fOp").innerHTML=`<option value="all">Todos</option>`+ops.map(o=>`<option value="${esc(o)}" ${o===curO?"selected":""}>${esc(o.length>16?short(o):o)}</option>`).join("");
-}
-function renderKpis(){ const pop=population(), ev=pop.filter(r=>r.eval_status==="evaluated");
-  const avg=ev.length? ev.reduce((a,r)=>a+Number(r.stars),0)/ev.length:0, cov=pop.length?Math.round(100*ev.length/pop.length):0;
-  const ops=new Set(ev.map(r=>r.user_name||r.user_id).filter(Boolean)).size;
-  const dep=pop.reduce((a,r)=>a+(Number(r.deposit_count)||0),0), depConv=pop.filter(r=>Number(r.deposit_count)>0).length;
-  const tiles=[{k:"Conversaciones",v:pop.length,foot:`${ev.length} evaluadas`},{k:"Estrella promedio",v:avg.toFixed(2),u:"★",foot:"solo evaluadas"},{k:"Depósitos",v:dep,foot:`${depConv} conversaciones`},{k:"Cobertura",v:cov,u:"%",foot:`${pop.length-ev.length} sin evaluar`},{k:"Operadores",v:ops,foot:"con atención evaluada"}];
-  $("#kpis").innerHTML=tiles.map(t=>`<div class="tile"><div class="k">${t.k}</div><div class="v">${t.v}${t.u?`<small>${t.u}</small>`:""}</div><div class="foot">${t.foot}</div></div>`).join(""); }
-function renderDist(){ const ev=populationForDist().filter(r=>r.eval_status==="evaluated"); const counts={}; ORDER.forEach(l=>counts[l]=0);
-  ev.forEach(r=>{ const n=RATINGS[r.rating_label]?.s; if(n) counts[ORDER[5-n]]++; }); const max=Math.max(1,...Object.values(counts));
-  const sel=state.rating;
-  $("#dist").innerHTML=ORDER.map(l=>{const c=cvar(RATINGS[l].c),n=counts[l];
-    const active=sel===l, dim=sel!=="all"&&!active, clickable=n>0;
-    const cls=`distrow${active?" active":""}${dim?" dim":""}${clickable?"":" static"}`;
-    const attrs=clickable?` data-rating="${l}" role="button" tabindex="0" aria-pressed="${active}"`:"";
-    return `<div class="${cls}"${attrs}><span class="lbl"><span class="swatch" style="background:${c}"></span>${l} <span style="color:var(--faint)">${RATINGS[l].s}★</span></span><span class="barrow"><span class="fill" style="width:${Math.round(88*n/max)}%;background:${c}"></span><span class="val num">${n}</span></span></div>`;}).join("");
-  document.querySelectorAll('#dist .distrow[data-rating]').forEach(row=>{ const toggle=()=>{ const l=row.dataset.rating; state.rating=state.rating===l?"all":l; state.page=1; renderAll(); };
-    row.addEventListener("click",toggle); row.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();toggle();}}); }); }
-function renderOps(){ const ev=population().filter(r=>r.eval_status==="evaluated" && (r.user_name||r.user_id));
-  const by={}; ev.forEach(r=>{const k=opName(r); (by[k]=by[k]||[]).push(r);});
-  // Orden por VOLUMEN (más activos): con 44 operadores, rankear por promedio pone
-  // arriba a quien tiene 5★ de una sola charla. El volumen es lo que define la
-  // experiencia real. Se muestran los TOP_OPS y el resto se despliega bajo demanda.
-  const rows=Object.entries(by).map(([name,rs])=>({name,n:rs.length,avg:rs.reduce((a,r)=>a+Number(r.stars),0)/rs.length,rs})).sort((a,b)=>b.n-a.n);
-  const shown=state.opsExpanded?rows:rows.slice(0,TOP_OPS);
-  const body=shown.map(o=>{const seg=ORDER.map(l=>{const c=cvar(RATINGS[l].c),cnt=o.rs.filter(r=>r.rating_label===l).length,w=100*cnt/o.n; return w>0?`<span style="width:${w}%;background:${c}"></span>`:"";}).join("");
-    return `<tr class="op"><td style="font-weight:600">${esc(o.name)}</td><td class="r num">${o.n}</td><td class="r num" style="font-weight:600;color:${starColor(o.avg)}">${o.avg.toFixed(2)}</td><td><span class="minibar">${seg}</span></td></tr>`;}).join("")||`<tr><td colspan="4" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>`;
-  const table=`<table><thead><tr><th>Operador</th><th class="r">Vol.</th><th class="r">★ prom</th><th>Distribución</th></tr></thead><tbody>${body}</tbody></table>`;
-  const more=rows.length>TOP_OPS?`<button class="ops-more" id="opsMore" type="button">${state.opsExpanded?"Ver menos":"Ver todos ("+rows.length+")"}</button>`:"";
-  $("#ops").innerHTML=`<div class="ops-scroll${state.opsExpanded?" exp":""}">${table}</div>${more}`;
-  if($("#opsMore")) $("#opsMore").onclick=()=>{ state.opsExpanded=!state.opsExpanded; renderOps(); }; }
-// % depósito por canal — resultado de negocio (NO la estrella), calculado del lado
-// del cliente sobre lo filtrado (respeta filtros). Barras horizontales de magnitud
-// (un solo hue = acento); el canal es la etiqueta. Refleja el hallazgo del análisis:
-// el depósito depende del canal (WhatsApp >> Facebook).
-function renderDepByChannel(){ const pop=population(), by={};
-  pop.forEach(r=>{ const c=r.channel||"—"; (by[c]=by[c]||{n:0,dep:0}); by[c].n++; if(Number(r.deposit_count)>0) by[c].dep++; });
-  const rows=Object.entries(by).map(([c,v])=>({c,n:v.n,dep:v.dep,pct:v.n?Math.round(100*v.dep/v.n):0})).sort((a,b)=>b.n-a.n);
-  const acc=cvar("--accent");
-  $("#depCanal").innerHTML = rows.length ? rows.map(r=>
-    `<div class="distrow static"><span class="lbl">${esc(r.c)} <span style="color:var(--faint)">${r.n}</span></span><span class="barrow"><span class="fill" style="width:${r.pct}%;background:${acc}"></span><span class="val num">${r.pct}%</span></span></div>`).join("")
-    : `<div style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>`; }
-function sortConvs(list){ const s=state.sort; return [...list].sort((a,b)=>{
-  if(s==="new")return new Date(b.conversation_created_at)-new Date(a.conversation_created_at);
-  if(s==="old")return new Date(a.conversation_created_at)-new Date(b.conversation_created_at);
-  const sa=a.stars??99,sb=b.stars??99; return s==="worst"?sa-sb:sb-sa; }); }
-function renderTickets(){ const pop=population(), byC={};
-  // Una tarjeta = una PERSONA (contact_id), no un ticket. Un mismo cliente que
-  // escribió hoy y hace dos semanas son 2 tickets pero 1 sola tarjeta, con todas
-  // sus conversaciones anidadas. Sin contact_id (score huérfano) cae en su propia
-  // clave para no fusionar desconocidos.
-  pop.forEach(r=>{const k=r.contact_id!=null?"c"+r.contact_id:"t"+(r.ticket_id??r.conversation_id); (byC[k]=byC[k]||[]).push(r);});
-  let tks=Object.entries(byC).map(([key,rs])=>{ const ev=rs.filter(r=>r.eval_status==="evaluated"); const avg=ev.length?ev.reduce((a,r)=>a+Number(r.stars),0)/ev.length:null;
-    const last=Math.max(...rs.map(r=>new Date(r.conversation_created_at))); const c=rs.find(r=>r.customer_name)||rs[0];
-    const visitas=new Set(rs.map(r=>r.ticket_id)).size;
-    return {key,rs:sortConvs(rs),n:rs.length,visitas,avg,last,cust:c.customer_name,num:c.customer_number,ch:c.channel}; });
-  const s=state.sort; tks.sort((a,b)=> s==="worst"?(a.avg??9)-(b.avg??9):s==="best"?(b.avg??-9)-(a.avg??-9):s==="old"?a.last-b.last:b.last-a.last);
-  const pages=Math.max(1,Math.ceil(tks.length/PAGE_SIZE)); state.page=Math.min(Math.max(1,state.page),pages);
-  const pageTks=tks.slice((state.page-1)*PAGE_SIZE, state.page*PAGE_SIZE);
-  const listHtml=pageTks.map(t=>{
-    const avg=t.avg!=null?`<div class="tk-avg"><div class="big num" style="color:${starColor(t.avg)}">${t.avg.toFixed(1)}★</div><div class="cap">promedio</div></div>`:`<div class="tk-avg"><div class="cap">sin evaluar</div></div>`;
-    const convs=t.rs.map(r=>`<div class="conv" data-id="${r.conversation_id}" tabindex="0" role="button"><span class="when num">${fmtDate(r.conversation_created_at)}</span><span class="snip">${r.eval_status==="evaluated"?esc(r.rating_rationale||""):(SKIP_LABEL[r.skip_reason]||r.skip_reason)}</span><span class="op">${r.eval_status==="evaluated"?esc(opName(r)):""}</span>${chip(r)}</div>`).join("");
-    const meta=`<span>${t.n} conversación${t.n>1?"es":""}</span>${t.visitas>1?`<span>${t.visitas} visitas</span>`:""}`;
-    return `<div class="tk${state.openKeys.has(t.key)?" open":""}" data-key="${esc(t.key)}"><div class="tk-head" role="button" tabindex="0"><div class="avatar">${esc(initials(t.cust))}</div><div style="min-width:0"><div class="cust-name">${esc(t.cust||"Cliente sin nombre")}</div><div class="cust-sub"><span class="mono">${esc(phone(t.num))}</span>${t.ch?`<span class="badge">${esc(t.ch)}</span>`:""}${meta}</div></div><div class="tk-right">${avg}<span class="chev">▶</span></div></div><div class="tk-body">${convs}</div></div>`;
-  }).join("")||`<div style="color:var(--faint);padding:20px;text-align:center">Nada en este filtro.</div>`;
-  const pager=tks.length>PAGE_SIZE?`<div class="pager"><button class="pgbtn" id="pgPrev" ${state.page<=1?"disabled":""} type="button">‹ Anterior</button><span class="pginfo num">Página ${state.page} de ${pages} · ${tks.length} clientes</span><button class="pgbtn" id="pgNext" ${state.page>=pages?"disabled":""} type="button">Siguiente ›</button></div>`:"";
-  $("#tickets").innerHTML=listHtml+pager;
-  const go=d=>{state.page+=d;renderTickets();document.getElementById("tickets").scrollIntoView({behavior:"smooth",block:"start"});};
-  if($("#pgPrev")) $("#pgPrev").onclick=()=>go(-1); if($("#pgNext")) $("#pgNext").onclick=()=>go(1);
-  document.querySelectorAll(".tk-head").forEach(h=>{const el=h.parentElement;const t=()=>{el.classList.toggle("open");const k=el.dataset.key;el.classList.contains("open")?state.openKeys.add(k):state.openKeys.delete(k);};h.addEventListener("click",t);h.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();t();}});});
-  document.querySelectorAll(".conv").forEach(c=>{const o=()=>openModal(c.dataset.id);c.addEventListener("click",o);c.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();o();}});}); }
-function bubble(m){ let author="",text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/);
-  if(mm && m.role!=="CLIENTE"){author=mm[1];text=text.slice(mm[0].length);}
-  const cls=m.role==="CLIENTE"?"cli":m.role==="BOT"?"bot":"age"; const au=m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Agente"));
-  return `<div class="bub ${cls}"><div class="au">${esc(au)}</div>${esc(text)||"<i>[multimedia]</i>"}</div>`; }
-function metaGrid(r){ const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
-  return `<div class="metagrid">${m("operador",esc(opName(r)))}${m("canal",esc(r.channel||"—"))}${m("1ª respuesta",secs(r.first_response_seconds))}${m("resolución",secs(r.resolution_seconds))}${m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} agente${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)}${m("asignada",r.was_unassigned?"no":"sí")}</div>`; }
-async function openModal(id){
-  $("#mTitle").textContent="Cargando…"; $("#mChat").innerHTML=`<div class="loading">Cargando conversación…</div>`; $("#mAnalysis").innerHTML="";
-  $("#backdrop").classList.add("show");
-  let r; try { r=await fetchJSON("/api/conversation/"+encodeURIComponent(id)); } catch(e){ $("#mChat").innerHTML=`<div class="loading">No se pudo cargar.</div>`; return; }
-  $("#mTitle").innerHTML=`${esc(r.customer_name||"Cliente")} <small>· ${fmtDate(r.conversation_created_at)}</small>`;
-  $("#mChat").innerHTML=(r.transcript||[]).map(bubble).join("")||`<div style="color:var(--faint)">Sin mensajes.</div>`;
-  const box=$("#mAnalysis");
-  if(r.eval_status!=="evaluated"){ box.innerHTML=`<div class="why" style="border-color:var(--faint)">No se evaluó: <b>${SKIP_LABEL[r.skip_reason]||r.skip_reason}</b>. Queda registrada para explicar la cobertura sin ensuciar la estadística.</div>${metaGrid(r)}`; return; }
-  const dims=r.dimensions||{}, errs=dims.errores||[];
-  const dh=Object.entries(dims).filter(([k])=>k!=="errores").map(([k,v])=>`<div class="dim"><div class="dh">${esc(k)}</div><p>${esc(v)}</p></div>`).join("");
-  const eh=errs.length?`<div class="errs"><div class="dh" style="margin-bottom:4px">Errores detectados</div>${errs.map(e=>`<div class="err">${esc(e)}</div>`).join("")}</div>`:"";
-  box.innerHTML=`<div style="margin-bottom:12px">${chip(r)}</div><div class="why">${esc(r.rating_rationale)}</div><div class="dims">${dh}</div>${eh}${metaGrid(r)}<div class="est">★ estimada por LLM (rúbrica ${esc(r.rubric)}) — no es un dato de la plataforma.</div>`;
-}
-function closeModal(){ $("#backdrop").classList.remove("show"); }
-// Multi-línea por operador (jugadores) — top-N + Otros. Full-scale desde el
-// endpoint (no depende de los filtros de calidad). Leyenda (identidad, no
-// color-solo) + hover multi-serie; paleta validada; se re-crea con el tema.
-// `pct` => eje/tooltip en %, y los meses de bajo volumen (null) rompen la línea.
-function multiLine(el, d, { pct = false } = {}) {
-  if (!el || !window.Chart) return null;
-  const pal=seriesColors(), grid=cvar("--border"), ink=cvar("--muted"), faint=cvar("--faint");
-  const datasets=(d.series||[]).map((s,i)=>{ const c = s.op==="Otros"?faint:pal[i%pal.length];
-    return { label:s.op, data:s.data, borderColor:c, backgroundColor:c, borderWidth:2,
-             borderDash: s.op==="Otros"?[4,3]:[], tension:.25, pointRadius:2, pointHoverRadius:5, spanGaps:false }; });
-  return new Chart(el,{ type:"line", data:{ labels:d.months||[], datasets },
-    options:{ responsive:true, maintainAspectRatio:false, animation:false,
-      interaction:{ mode:"index", intersect:false },
-      plugins:{ legend:{ position:"bottom", labels:{ color:ink, boxWidth:10, boxHeight:10, usePointStyle:true, font:{size:11} } },
-                tooltip: pct?{ callbacks:{ label:c=>` ${c.dataset.label}: ${c.parsed.y==null?"—":c.parsed.y+"%"}` } }:{} },
-      scales:{ x:{ grid:{display:false}, ticks:{color:ink} },
-               y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0, callback: pct?(v=>v+"%"):undefined } } } } });
-}
-let loadChartInst=null, depPctChartInst=null;
-function renderLoadChart(){ const el=$("#loadChart"); if(!el) return;
-  if(loadChartInst) loadChartInst.destroy();
-  loadChartInst=multiLine(el, (CHARTS&&CHARTS.load_by_operator)||{}); }
-function renderDepPctChart(){ const el=$("#depPctChart"); if(!el) return;
-  if(depPctChartInst) depPctChartInst.destroy();
-  depPctChartInst=multiLine(el, (CHARTS&&CHARTS.deposit_pct_by_operator)||{}, {pct:true}); }
-// §9 Nuevos jugadores vs % depósito — UN panel: barras (nuevos, eje izq) + línea
-// (% depósito, eje der 0-100). Etiquetas de valor en barras, % selectivo en la
-// línea (extremos + pico/piso) y banda de anotación en el mes de mayor captación.
-// Nota: usa dos ejes-y para superponer volumen y tasa en un panel; los ejes están
-// rotulados y con color propio para no confundir escalas.
-let nvdInst=null;
-function renderNewVsDep(){ const el=$("#nvdCombo"); if(!el||!window.Chart) return;
-  const d=(CHARTS&&CHARTS.new_vs_deposit_by_month)||{months:[],nuevos:[],pct:[]};
-  const months=d.months||[], nuevos=d.nuevos||[], pct=d.pct||[];
-  const pal=seriesColors(), grid=cvar("--border"), muted=cvar("--muted"), faint=cvar("--faint"), ink=cvar("--ink");
-  if(nvdInst) nvdInst.destroy();
-  // Etiquetas selectivas de la línea (no todos los puntos): extremos + pico + piso.
-  const valid=pct.map((v,i)=>v==null?-1:i).filter(i=>i>=0);
-  const iMax=valid.length?valid.reduce((a,b)=>pct[b]>pct[a]?b:a,valid[0]):-1;
-  const iMin=valid.length?valid.reduce((a,b)=>pct[b]<pct[a]?b:a,valid[0]):-1;
-  const lineLabels=new Set([valid[0],iMax,iMin,valid[valid.length-1]].filter(i=>i>=0));
-  const iPeak=nuevos.length?nuevos.reduce((a,b,i)=>(b??-1)>(nuevos[a]??-1)?i:a,0):-1;
-  const maxN=Math.max(0,...nuevos.filter(v=>v!=null));
-  const adorn={ id:"nvdAdorn", afterDatasetsDraw(chart){ const {ctx,scales:{x}}=chart, area=chart.chartArea;
-    ctx.save();
-    if(iPeak>=0 && months.length>1){ const bx=x.getPixelForValue(iPeak), half=Math.abs(x.getPixelForValue(1)-x.getPixelForValue(0))/2;
-      ctx.fillStyle=pal[0]+"1a"; ctx.fillRect(bx-half,area.top,half*2,area.bottom-area.top);
-      ctx.font="700 10.5px system-ui"; ctx.fillStyle=faint; ctx.textAlign="center"; ctx.fillText("▲ pico de captación",bx,area.top+11); }
-    const bm=chart.getDatasetMeta(0); ctx.font="600 10px system-ui"; ctx.textAlign="center"; ctx.fillStyle=ink;
-    bm.data.forEach((bar,i)=>{ if(nuevos[i]==null) return; ctx.fillText(Number(nuevos[i]).toLocaleString("es"),bar.x,bar.y-5); });
-    const lm=chart.getDatasetMeta(1); ctx.font="700 10.5px system-ui"; ctx.fillStyle=pal[1];
-    lm.data.forEach((pt,i)=>{ if(!lineLabels.has(i)||pct[i]==null) return; ctx.fillText(pct[i]+"%",pt.x,pt.y+(i===iMin?15:-9)); });
-    ctx.restore(); } };
-  nvdInst=new Chart(el,{ data:{ labels:months, datasets:[
-      { type:"bar", label:"Nuevos jugadores", data:nuevos, yAxisID:"y", backgroundColor:pal[0], borderRadius:4, maxBarThickness:54, order:2 },
-      { type:"line", label:"% depósito", data:pct, yAxisID:"y1", borderColor:pal[1], backgroundColor:pal[1], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 } ]},
-    options:{ responsive:true, maintainAspectRatio:false, animation:false, layout:{padding:{top:22}},
-      interaction:{mode:"index",intersect:false},
-      plugins:{ legend:{position:"bottom",labels:{color:muted,boxWidth:10,boxHeight:10,usePointStyle:true,font:{size:11}}},
-        tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` % depósito: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} nuevos` } } },
-      scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},
-        y:{position:"left",beginAtZero:true,suggestedMax:maxN*1.2||10,title:{display:true,text:"Nuevos jugadores",color:faint,font:{size:10}},grid:{color:grid},ticks:{color:muted,precision:0}},
-        y1:{position:"right",beginAtZero:true,max:100,title:{display:true,text:"% depósito",color:pal[1],font:{size:10}},grid:{display:false},ticks:{color:pal[1],callback:v=>v+"%"}} } },
-    plugins:[adorn] });
-}
-// Evolución de la calidad por operador — small-multiples: un mini-gráfico por
-// operador con su ★ PROMEDIO por mes. Client-side desde los scores evaluados
-// (respeta filtros). Usa el eje que SÍ tenemos (calidad), no conversión.
-let qualInsts=[];
-function renderQualityEvolution(){ const grid=$("#qualGrid"); if(!grid||!window.Chart) return;
-  qualInsts.forEach(c=>c.destroy()); qualInsts=[];
-  const pop=population().filter(r=>r.eval_status==="evaluated" && (r.user_name||r.user_id) && r.conversation_created_at);
-  const mkey=r=>String(r.conversation_created_at).slice(0,7);
-  const by={};   // op -> mes -> [sumaStars, n]
-  pop.forEach(r=>{ const op=opName(r), m=mkey(r); (by[op]=by[op]||{}); (by[op][m]=by[op][m]||[0,0]);
-    by[op][m][0]+=Number(r.stars)||0; by[op][m][1]++; });
-  const months=[...new Set(pop.map(mkey))].sort();
-  const totals=Object.fromEntries(Object.entries(by).map(([op,ms])=>[op,Object.values(ms).reduce((a,x)=>a+x[1],0)]));
-  const top=Object.keys(totals).sort((a,b)=>totals[b]-totals[a]).slice(0,8);
-  const MIN=5;   // mes-operador con menos convs -> None (evita promedio ruidoso)
-  if(!top.length){ grid.innerHTML=`<div style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin conversaciones evaluadas en este filtro.</div>`; return; }
-  const muted=cvar("--muted"), gridc=cvar("--border");
-  grid.innerHTML=top.map((op,i)=>`<div class="conv-mini"><h4>${esc(op.length>18?short(op):op)}</h4><div style="position:relative;height:128px"><canvas id="qualC${i}"></canvas></div></div>`).join("");
-  top.forEach((op,i)=>{ const el=$("#qualC"+i); if(!el) return;
-    const data=months.map(m=>{ const c=by[op][m]; return (c&&c[1]>=MIN)? Math.round(c[0]/c[1]*100)/100 : null; });
-    // color de la línea según el promedio del operador (verde bueno ↔ rojo malo)
-    const avg=totals[op]?data.filter(v=>v!=null).reduce((a,v,_,arr)=>a+v/arr.length,0):0;
-    const col=starColor(avg||3);
-    qualInsts.push(new Chart(el,{ type:"line", data:{ labels:months, datasets:[
-        { label:"★ promedio", data, borderColor:col, backgroundColor:col, borderWidth:2, tension:.3, pointRadius:2, pointHoverRadius:5, spanGaps:false } ]},
-      options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:"index",intersect:false},
-        plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ★ ${c.parsed.y==null?"—":c.parsed.y}` } } },
-        scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:4}},
-                 y:{min:0,max:5,grid:{color:gridc},ticks:{color:muted,font:{size:9},stepSize:1,maxTicksLimit:6}} } } })); });
-}
-function renderCharts(){ renderNewVsDep(); renderDepPctChart(); renderLoadChart(); }
-function renderAll(){ renderFilters(); renderKpis(); renderDist(); renderDepByChannel(); renderOps(); renderTickets(); renderCharts(); renderQualityEvolution(); renderSnap(); }
-// Aviso de datos nuevos (no auto-refresca: el usuario decide cuándo, para no
-// interrumpir la lectura). Compara el conteo scoreado de la cuenta vs lo cargado.
-function setNewBadge(n){ const b=$("#newBadge"), btn=$("#refreshBtn"); if(!b||!btn) return;
-  if(n>0){ b.textContent="+"+n; b.hidden=false; btn.classList.add("has-new"); }
-  else { b.textContent=""; b.hidden=true; btn.classList.remove("has-new"); } }
-async function checkNew(){ if(!state.account) return;
-  try { const accts=await fetchJSON("/api/accounts"); renderAcctSwitch(accts);
-    const a=accts.find(x=>x.account===state.account);
-    if(a) setNewBadge(Math.max(0, a.count-DATA.length)); } catch(e){} }
-async function refresh(){ const btn=$("#refreshBtn"); if(btn) btn.disabled=true;
-  // Preserva filtros, orden, búsqueda, página y cards abiertas (no es load()).
-  try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); } catch(e){}
-  if(btn) btn.disabled=false; renderAll(); await checkNew();
-  loadCharts(state.account);   // cuadros en segundo plano; el TTL evita re-escanear si están frescos
-}
-// Cuadros: las agregaciones full-scale son pesadas. NO se esperan en load() (eso
-// congelaba el cambio de cuenta); se traen aparte, se cachean por cuenta, y se
-// pintan al llegar. El guard account===state.account evita que una respuesta
-// vieja pise una cuenta ya cambiada.
-const chartsCache={};              // account -> {data, ts}
-const CHARTS_TTL_MS=10*60*1000;    // 10 min: son agregados MENSUALES, cambian lento;
-                                   // no re-escaneamos en cada Actualizar (query cara).
-let chartsInFlight=null;           // guarda anti doble-fetch simultáneo (Actualizar repetido)
-function setChartsStatus(kind, msg){   // kind: "" | "loading" | "error"
-  const el=$("#chartsStatus"); if(!el) return;
-  el.className="charts-status"+(kind?" show "+kind+"-state":"");
-  el.innerHTML = kind==="loading" ? `<span class="spin"></span>${esc(msg)}` : (kind==="error"?esc(msg):"");
-}
-async function loadCharts(account){
-  const c=chartsCache[account];
-  const fresh = c && (Date.now()-c.ts < CHARTS_TTL_MS);   // TTL: cache vigente
-  if(!fresh && chartsInFlight!==account){
-    chartsInFlight=account;
-    setChartsStatus("loading","Cargando cuadros…");
-    try { chartsCache[account]={data:await fetchJSON("/api/charts?account="+encodeURIComponent(account)), ts:Date.now()}; }
-    catch(e){ if(account===state.account) setChartsStatus("error","No se pudieron cargar los cuadros. Probá con Actualizar."); return; }
-    finally { chartsInFlight=null; }
+    // refs de canvas para Chart.js
+    const nvdCombo = ref(null), depPctChart = ref(null), loadChart = ref(null);
+    const qualCanvases = reactive({});
+    let chartInsts = { nvd:null, dep:null, load:null, qual:[] };
+    const chartsCache = {}; const CHARTS_TTL = 10*60*1000; let chartsInFlight = null;
+
+    // ---- query string desde el estado ----
+    const qs = (extra={}) => {
+      const p = new URLSearchParams({ account: account.value });
+      if (filters.estado!=="all") p.set("estado", filters.estado);
+      if (filters.segment!=="all") p.set("segment", filters.segment);
+      if (filters.canal!=="all") p.set("canal", filters.canal);
+      if (filters.op!=="all") p.set("op", filters.op);
+      if (filters.rating!=="all") p.set("rating", filters.rating);
+      if (filters.from) p.set("from", filters.from);
+      if (filters.to) p.set("to", filters.to);
+      if (filters.search.trim()) p.set("search", filters.search.trim());
+      for (const [k,v] of Object.entries(extra)) p.set(k, v);
+      return p.toString();
+    };
+
+    // ---- fetchers ----
+    async function fetchSummary() {
+      if (!account.value) return;
+      loadingSummary.value = true;
+      try {
+        const d = await fetchJSON("/api/summary?" + qs());
+        Object.assign(summary, d);
+      } catch(e) { /* deja lo anterior */ }
+      finally { loadingSummary.value = false; }
+      await nextTick(); renderQuality();
+    }
+    async function fetchTickets() {
+      if (!account.value) return;
+      loadingTickets.value = true;
+      try {
+        const d = await fetchJSON("/api/tickets?" + qs({ page: tickets.page, sort: filters.sort }));
+        Object.assign(tickets, d);
+      } catch(e) {}
+      finally { loadingTickets.value = false; }
+    }
+    async function fetchOptions() {
+      try { const d = await fetchJSON("/api/options?account=" + encodeURIComponent(account.value)); Object.assign(options, d); }
+      catch(e) {}
+    }
+    async function loadCharts() {
+      const acc = account.value, c = chartsCache[acc];
+      if (c && (Date.now()-c.ts < CHARTS_TTL)) { charts.value = c.data; chartsStatus.value=null; await nextTick(); renderCharts(); return; }
+      if (chartsInFlight === acc) return;
+      chartsInFlight = acc; chartsStatus.value = {kind:"loading", msg:"Cargando cuadros…"};
+      try {
+        const d = await fetchJSON("/api/charts?account=" + encodeURIComponent(acc));
+        chartsCache[acc] = { data:d, ts:Date.now() };
+        if (acc === account.value) { charts.value = d; chartsStatus.value=null; await nextTick(); renderCharts(); }
+      } catch(e) { if (acc === account.value) chartsStatus.value = {kind:"error", msg:"No se pudieron cargar los cuadros. Probá con Actualizar."}; }
+      finally { chartsInFlight = null; }
+    }
+
+    // ---- acciones ----
+    const debouncedFilter = debounce(() => { tickets.page = 1; fetchSummary(); fetchTickets(); }, 300);
+    async function switchAccount(acc) {
+      account.value = acc;
+      Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
+      tickets.page = 1; openKeys.clear(); opsExpanded.value = false;
+      const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0; newCount.value = 0;
+      charts.value = chartsCache[acc]?.data || null;
+      await Promise.all([fetchOptions(), fetchSummary(), fetchTickets()]);
+      loadCharts();
+    }
+    function toggleRating(l) { filters.rating = filters.rating===l ? "all" : l; }
+    function toggleCard(k) { openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k); }
+    function setPage(p) { tickets.page = Math.min(Math.max(1,p), tickets.pages); fetchTickets(); }
+    function resetFilters() { Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" }); }
+    async function refresh() {
+      const acc = accounts.value = await fetchJSON("/api/accounts").catch(()=>accounts.value);
+      const a = (accounts.value||[]).find(x=>x.account===account.value); loadedCount = a? a.count : loadedCount; newCount.value = 0;
+      delete chartsCache[account.value];
+      await Promise.all([fetchSummary(), fetchTickets()]); loadCharts();
+    }
+    async function checkNew() {
+      try { const accts = await fetchJSON("/api/accounts"); accounts.value = accts;
+        const a = accts.find(x=>x.account===account.value);
+        if (a) newCount.value = Math.max(0, a.count - loadedCount);
+      } catch(e) {}
+    }
+    function toggleTheme() {
+      const cur = document.documentElement.getAttribute("data-theme");
+      const next = cur==="dark"?"light":cur==="light"?"dark":(matchMedia("(prefers-color-scheme: dark)").matches?"light":"dark");
+      document.documentElement.setAttribute("data-theme", next);
+      nextTick(() => { renderCharts(); renderQuality(); });
+    }
+
+    // ---- modal ----
+    async function openModal(id) {
+      modal.open = true; modal.loading = true; modal.detail = null; modal.title = "Cargando…";
+      try { const r = await fetchJSON("/api/conversation/" + encodeURIComponent(id));
+        modal.detail = r; modal.title = esc(r.customer_name||"Cliente") + ` <small>· ${fmtDate(r.conversation_created_at)}</small>`;
+      } catch(e) { modal.title = "Error"; }
+      finally { modal.loading = false; }
+    }
+    function closeModal() { modal.open = false; }
+
+    // ---- computed para la vista ----
+    const kpiTiles = computed(() => { const k = summary.kpis||{};
+      const cov = k.total ? Math.round(100*k.evaluadas/k.total) : 0;
+      return [
+        { k:"Conversaciones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
+        { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
+        { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} conversaciones` },
+        { k:"Cobertura", v:cov, u:"%", foot:`${(k.total||0)-(k.evaluadas||0)} sin evaluar` },
+        { k:"Operadores", v:(k.operadores||0), foot:"con atención evaluada" },
+      ];
+    });
+    const distRows = computed(() => { const d = summary.distribution||{};
+      const max = Math.max(1, ...ORDER.map(l=>d[l]||0));
+      return ORDER.map(l => ({ label:l, stars:RATINGS[l].s, n:d[l]||0, color:cvar(RATINGS[l].c), width:Math.round(88*(d[l]||0)/max) }));
+    });
+    const depByChannel = computed(() => summary.deposit_by_channel||[]);
+    const operators = computed(() => summary.operators||[]);
+    const opsShown = computed(() => opsExpanded.value ? operators.value : operators.value.slice(0, TOP_OPS));
+    const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
+    const accentColor = computed(() => cvar("--accent"));
+    const snapText = computed(() => { const k = summary.kpis||{};
+      return `En vivo desde la BD · cuenta <b>${esc(account.value||"")}</b> · <b>${k.total||0}</b> conversaciones (${k.evaluadas||0} evaluadas), <b>${tickets.total||0}</b> clientes.`;
+    });
+
+    // minibar de un operador: segmentos por bucket (mismo criterio que el front)
+    function miniSegs(o) { const total = o.n||1;
+      return ORDER.map(l => ({ w: 100*(o.dist[ORDER.indexOf(l)]||0)/total, c: cvar(RATINGS[l].c) })).filter(s=>s.w>0);
+    }
+    function chipStyle(r) { const c = ratingColor(r.rating_label); return { background:`color-mix(in srgb, ${c} 15%, transparent)`, color:c }; }
+    const cap = s => s ? s[0].toUpperCase()+s.slice(1) : s;
+
+    // modal helpers
+    function bubClass(role) { return role==="CLIENTE"?"cli":role==="BOT"?"bot":"age"; }
+    function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
+    function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Agente")); }
+    function dimsOnly(dims) { const o={}; for (const [k,v] of Object.entries(dims||{})) if (k!=="errores") o[k]=v; return o; }
+    function dimErrors(dims) { return (dims&&dims.errores)||[]; }
+    function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
+      return m("operador",esc(opName(r)))+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} agente${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
+    }
+
+    // ---- Chart.js (imperativo, sobre los refs) ----
+    function multiLine(el, d, { pct = false } = {}) {
+      if (!el || !window.Chart) return null;
+      const pal=seriesColors(), grid=cvar("--border"), ink=cvar("--muted"), faint=cvar("--faint");
+      const datasets=(d.series||[]).map((s,i)=>{ const c = s.op==="Otros"?faint:pal[i%pal.length];
+        return { label:s.op, data:s.data, borderColor:c, backgroundColor:c, borderWidth:2, borderDash: s.op==="Otros"?[4,3]:[], tension:.25, pointRadius:2, pointHoverRadius:5, spanGaps:false }; });
+      return new Chart(el,{ type:"line", data:{ labels:d.months||[], datasets },
+        options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{ mode:"index", intersect:false },
+          plugins:{ legend:{ position:"bottom", labels:{ color:ink, boxWidth:10, boxHeight:10, usePointStyle:true, font:{size:11} } },
+                    tooltip: pct?{ callbacks:{ label:c=>` ${c.dataset.label}: ${c.parsed.y==null?"—":c.parsed.y+"%"}` } }:{} },
+          scales:{ x:{ grid:{display:false}, ticks:{color:ink} },
+                   y:{ beginAtZero:true, grid:{color:grid}, ticks:{color:ink, precision:0, callback: pct?(v=>v+"%"):undefined } } } } });
+    }
+    function renderNewVsDep() {
+      const el = nvdCombo.value; if(!el||!window.Chart) return;
+      const d=(charts.value&&charts.value.new_vs_deposit_by_month)||{months:[],nuevos:[],pct:[]};
+      const months=d.months||[], nuevos=d.nuevos||[], pct=d.pct||[];
+      const pal=seriesColors(), grid=cvar("--border"), muted=cvar("--muted"), faint=cvar("--faint"), ink=cvar("--ink");
+      if(chartInsts.nvd) chartInsts.nvd.destroy();
+      const valid=pct.map((v,i)=>v==null?-1:i).filter(i=>i>=0);
+      const iMax=valid.length?valid.reduce((a,b)=>pct[b]>pct[a]?b:a,valid[0]):-1;
+      const iMin=valid.length?valid.reduce((a,b)=>pct[b]<pct[a]?b:a,valid[0]):-1;
+      const lineLabels=new Set([valid[0],iMax,iMin,valid[valid.length-1]].filter(i=>i>=0));
+      const iPeak=nuevos.length?nuevos.reduce((a,b,i)=>(b??-1)>(nuevos[a]??-1)?i:a,0):-1;
+      const maxN=Math.max(0,...nuevos.filter(v=>v!=null));
+      const adorn={ id:"nvdAdorn", afterDatasetsDraw(chart){ const {ctx,scales:{x}}=chart, area=chart.chartArea; ctx.save();
+        if(iPeak>=0 && months.length>1){ const bx=x.getPixelForValue(iPeak), half=Math.abs(x.getPixelForValue(1)-x.getPixelForValue(0))/2;
+          ctx.fillStyle=pal[0]+"1a"; ctx.fillRect(bx-half,area.top,half*2,area.bottom-area.top);
+          ctx.font="700 10.5px system-ui"; ctx.fillStyle=faint; ctx.textAlign="center"; ctx.fillText("▲ pico de captación",bx,area.top+11); }
+        const bm=chart.getDatasetMeta(0); ctx.font="600 10px system-ui"; ctx.textAlign="center"; ctx.fillStyle=ink;
+        bm.data.forEach((bar,i)=>{ if(nuevos[i]==null) return; ctx.fillText(Number(nuevos[i]).toLocaleString("es"),bar.x,bar.y-5); });
+        const lm=chart.getDatasetMeta(1); ctx.font="700 10.5px system-ui"; ctx.fillStyle=pal[1];
+        lm.data.forEach((pt,i)=>{ if(!lineLabels.has(i)||pct[i]==null) return; ctx.fillText(pct[i]+"%",pt.x,pt.y+(i===iMin?15:-9)); });
+        ctx.restore(); } };
+      chartInsts.nvd=new Chart(el,{ data:{ labels:months, datasets:[
+          { type:"bar", label:"Nuevos jugadores", data:nuevos, yAxisID:"y", backgroundColor:pal[0], borderRadius:4, maxBarThickness:54, order:2 },
+          { type:"line", label:"% depósito", data:pct, yAxisID:"y1", borderColor:pal[1], backgroundColor:pal[1], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 } ]},
+        options:{ responsive:true, maintainAspectRatio:false, animation:false, layout:{padding:{top:22}}, interaction:{mode:"index",intersect:false},
+          plugins:{ legend:{position:"bottom",labels:{color:muted,boxWidth:10,boxHeight:10,usePointStyle:true,font:{size:11}}},
+            tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` % depósito: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} nuevos` } } },
+          scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},
+            y:{position:"left",beginAtZero:true,suggestedMax:maxN*1.2||10,title:{display:true,text:"Nuevos jugadores",color:faint,font:{size:10}},grid:{color:grid},ticks:{color:muted,precision:0}},
+            y1:{position:"right",beginAtZero:true,max:100,title:{display:true,text:"% depósito",color:pal[1],font:{size:10}},grid:{display:false},ticks:{color:pal[1],callback:v=>v+"%"}} } },
+        plugins:[adorn] });
+    }
+    function renderCharts() {
+      if(!charts.value) return;
+      renderNewVsDep();
+      if(chartInsts.dep) chartInsts.dep.destroy(); chartInsts.dep = multiLine(depPctChart.value, charts.value.deposit_pct_by_operator||{}, {pct:true});
+      if(chartInsts.load) chartInsts.load.destroy(); chartInsts.load = multiLine(loadChart.value, charts.value.load_by_operator||{});
+    }
+    // small-multiples de calidad: data desde summary.quality_evolution (server, filtro-aware)
+    function renderQuality() {
+      chartInsts.qual.forEach(c=>c.destroy()); chartInsts.qual = [];
+      const qe = summary.quality_evolution||{months:[],operators:[]}; const months = qe.months||[];
+      const muted=cvar("--muted"), gridc=cvar("--border");
+      (qe.operators||[]).forEach((op,i)=>{ const el = qualCanvases[i]; if(!el||!window.Chart) return;
+        const valid = op.data.filter(v=>v!=null);
+        const avg = valid.length ? valid.reduce((a,v)=>a+v,0)/valid.length : 3;
+        const col = starColor(avg);
+        chartInsts.qual.push(new Chart(el,{ type:"line", data:{ labels:months, datasets:[
+            { label:"★ promedio", data:op.data, borderColor:col, backgroundColor:col, borderWidth:2, tension:.3, pointRadius:2, pointHoverRadius:5, spanGaps:false } ]},
+          options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:"index",intersect:false},
+            plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ★ ${c.parsed.y==null?"—":c.parsed.y}` } } },
+            scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:4}},
+                     y:{min:0,max:5,grid:{color:gridc},ticks:{color:muted,font:{size:9},stepSize:1,maxTicksLimit:6}} } } })); });
+    }
+
+    // ---- watchers ----
+    watch(() => [filters.estado, filters.segment, filters.canal, filters.op, filters.rating, filters.from, filters.to, filters.search], debouncedFilter);
+    watch(() => filters.sort, () => { tickets.page = 1; fetchTickets(); });
+
+    onMounted(async () => {
+      document.addEventListener("keydown", e => { if(e.key==="Escape") closeModal(); });
+      setInterval(checkNew, 60000);
+      let accts = [];
+      try { accts = await fetchJSON("/api/accounts"); } catch(e) {}
+      accounts.value = accts;
+      if (!accts.length) return;
+      await switchAccount(accts[0].account);
+    });
+
+    return { accounts, account, filters, options, summary, tickets, charts, chartsStatus,
+      loadingSummary, loadingTickets, opsExpanded, openKeys, newCount, modal,
+      nvdCombo, depPctChart, loadChart, qualCanvases,
+      kpiTiles, distRows, depByChannel, operators, opsShown, qualOps, accentColor, snapText,
+      TOP_OPS, SKIP_LABEL,
+      switchAccount, toggleRating, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
+      miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
+      bubClass, bubText, bubAuthor, dimsOnly, dimErrors, metaGrid };
   }
-  if(chartsCache[account] && account===state.account){ CHARTS=chartsCache[account].data; setChartsStatus("",""); renderCharts(); }
-}
-async function load(){
-  $("#snap").textContent="Cargando cuenta "+state.account+"…";
-  try { DATA=await fetchJSON("/api/scores?account="+encodeURIComponent(state.account)); }
-  catch(e){ $("#snap").textContent="Error cargando datos."; DATA=[]; }
-  CHARTS = (chartsCache[state.account] && chartsCache[state.account].data) || null;   // instantáneo si ya se cargó antes
-  state.segment="all"; state.canal="all"; state.op="all"; state.search=""; state.rating="all"; state.from=""; state.to=""; state.page=1; state.openKeys.clear(); setNewBadge(0);
-  if($("#fSearch")) $("#fSearch").value=""; if($("#fFrom")) $("#fFrom").value=""; if($("#fTo")) $("#fTo").value="";
-  renderAll();                 // pinta scores YA (no espera los cuadros)
-  loadCharts(state.account);   // cuadros en segundo plano
-}
-function renderAcctSwitch(accts){
-  $("#acct").innerHTML=accts.map(a=>`<button type="button" data-a="${esc(a.account)}" aria-pressed="${a.account===state.account}">${esc(a.account)} <span style="opacity:.6" class="num">${a.count}</span></button>`).join("");
-  document.querySelectorAll("#acct button").forEach(b=>b.onclick=()=>{ state.account=b.dataset.a; document.querySelectorAll("#acct button").forEach(x=>x.setAttribute("aria-pressed", x===b)); load(); });
-}
-async function init(){
-  $("#fEstado").onchange=e=>{state.estado=e.target.value;state.page=1;renderAll();};
-  $("#fSeg").onchange=e=>{state.segment=e.target.value;state.page=1;renderAll();};
-  $("#fCanal").onchange=e=>{state.canal=e.target.value;state.page=1;renderAll();};
-  $("#fOp").onchange=e=>{state.op=e.target.value;state.page=1;renderAll();};
-  $("#fSort").onchange=e=>{state.sort=e.target.value;state.page=1;renderTickets();};
-  $("#fFrom").onchange=e=>{state.from=e.target.value;state.page=1;renderAll();};
-  $("#fTo").onchange=e=>{state.to=e.target.value;state.page=1;renderAll();};
-  $("#fSearch").oninput=e=>{state.search=e.target.value;state.page=1;renderAll();};
-  $("#fReset").onclick=()=>{ Object.assign(state,{estado:"all",segment:"all",canal:"all",op:"all",sort:"new",search:"",from:"",to:"",rating:"all",page:1});
-    $("#fEstado").value="all"; $("#fSort").value="new"; $("#fSearch").value=""; $("#fFrom").value=""; $("#fTo").value=""; renderAll(); };
-  $("#refreshBtn").onclick=refresh;
-  setInterval(checkNew, 60000);
-  $("#mClose").onclick=closeModal;
-  $("#backdrop").addEventListener("click",e=>{if(e.target===$("#backdrop"))closeModal();});
-  document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal();});
-  $("#themeBtn").onclick=()=>{const cur=document.documentElement.getAttribute("data-theme");const next=cur==="dark"?"light":cur==="light"?"dark":(matchMedia("(prefers-color-scheme: dark)").matches?"light":"dark");document.documentElement.setAttribute("data-theme",next);renderAll();};
-  let accts=[]; try { accts=await fetchJSON("/api/accounts"); } catch(e){}
-  if(!accts.length){ $("#snap").textContent="No hay datos scoreados todavía."; return; }
-  state.account=accts[0].account; renderAcctSwitch(accts); await load();
-}
-init();
+}).mount("#app");
 </script>
 </body>
 </html>
