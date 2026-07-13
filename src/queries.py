@@ -617,6 +617,107 @@ def new_vs_deposit_by_month(cur, account: str,
     return _build_new_vs_deposit(cur.fetchall())
 
 
+# =====================================================================
+# Conversión jugador potencial -> jugador. Agrega la tabla player_conversions
+# (precomputada por el pase determinista de src/conversions.py; 1 fila/persona).
+# Filtrable por canal/segmento/operador/fecha de ENTRADA (first_at = cohorte por
+# mes; la conversión es first-touch). NO usa estado/rating (no aplican al potencial).
+# Operador = user_id (entidad users); NULL = bot/sin asignar.
+# =====================================================================
+_CONV_OP_EXPR = ("CASE WHEN pc.user_id IS NULL THEN 'BOT / sin operador' "
+                 "ELSE coalesce(nullif(u.name, ''), 'Operador sin identificar') END")
+
+
+def _conversion_where(account: str, *, canal="all", segment="all", op="all",
+                      date_from=None, date_to=None, **_ignored) -> tuple[str, dict]:
+    """(where, params) sobre player_conversions. Ignora filtros que no aplican al
+    potencial (estado/rating/búsqueda). fecha = first_at (mes de entrada)."""
+    where = ["pc.account = %(account)s"]
+    params: dict = {"account": account}
+    if canal and canal != "all":
+        where.append("pc.channel = %(canal)s"); params["canal"] = canal
+    if segment and segment != "all":
+        where.append("pc.segment = %(segment)s"); params["segment"] = segment
+    if op and op != "all":
+        where.append(f"({_CONV_OP_EXPR}) = %(op)s"); params["op"] = op
+    if date_from:
+        where.append("pc.first_at >= %(dfrom)s"); params["dfrom"] = date_from
+    if date_to:
+        where.append("pc.first_at <= %(dto)s"); params["dto"] = date_to
+    return " AND ".join(where), params
+
+
+_CONV_BY_OP_SQL = """
+SELECT """ + _CONV_OP_EXPR + """ AS op,
+       count(*) AS potential,
+       count(*) FILTER (WHERE pc.deposited) AS converted
+  FROM player_conversions pc
+  LEFT JOIN users u ON u.id = pc.user_id
+ WHERE {where}
+ GROUP BY 1"""
+
+
+def _build_conversion_ranking(rows, min_potential: int = 8) -> dict:
+    """Ranking por operador (op, potential, converted): tasa desc. Bot en barra
+    aparte; operadores con <min_potential potenciales se agregan en 'Otros' (evita
+    % ruidoso de bajo volumen). Devuelve totales globales para el KPI."""
+    BOT = "BOT / sin operador"
+    pct = lambda p, c: round(100.0 * c / p, 1) if p else 0.0
+    bot = None
+    top = []
+    otros_p = otros_c = 0
+    tot_p = tot_c = 0
+    for op, p, c in rows:
+        p, c = int(p), int(c)
+        tot_p += p; tot_c += c
+        if op == BOT:
+            bot = {"op": op, "potential": p, "converted": c, "pct": pct(p, c)}
+        elif p < min_potential:
+            otros_p += p; otros_c += c
+        else:
+            top.append({"op": op, "potential": p, "converted": c, "pct": pct(p, c)})
+    top.sort(key=lambda x: (-x["pct"], -x["potential"], x["op"]))
+    if otros_p:
+        top.append({"op": "Otros", "potential": otros_p, "converted": otros_c, "pct": pct(otros_p, otros_c)})
+    if bot:
+        top.append(bot)
+    return {"operators": top, "total_potential": tot_p, "total_converted": tot_c, "pct": pct(tot_p, tot_c)}
+
+
+def conversion_by_operator(cur, account: str, **filters) -> dict:
+    """Tasa de conversión por operador (ranking) + totales. Agrega player_conversions."""
+    where, params = _conversion_where(account, **filters)
+    cur.execute(_CONV_BY_OP_SQL.format(where=where), params)
+    return _build_conversion_ranking(cur.fetchall())
+
+
+_CONV_BY_MONTH_SQL = """
+SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
+       count(*) AS potential,
+       count(*) FILTER (WHERE pc.deposited) AS converted
+  FROM player_conversions pc
+  LEFT JOIN users u ON u.id = pc.user_id
+ WHERE {where} AND pc.first_at IS NOT NULL
+ GROUP BY 1"""
+
+
+def _build_conversion_by_month(rows) -> dict:
+    """{months, potential[], converted[], pct[]} ordenado por mes. Puro."""
+    rows = sorted(rows, key=lambda r: r[0])
+    months = [r[0] for r in rows]
+    potential = [int(r[1]) for r in rows]
+    converted = [int(r[2]) for r in rows]
+    pct = [round(100.0 * c / p, 1) if p else 0.0 for p, c in zip(potential, converted)]
+    return {"months": months, "potential": potential, "converted": converted, "pct": pct}
+
+
+def conversion_by_month(cur, account: str, **filters) -> dict:
+    """Jugadores nuevos y convertidos por mes de entrada (cuadro). Agrega player_conversions."""
+    where, params = _conversion_where(account, **filters)
+    cur.execute(_CONV_BY_MONTH_SQL.format(where=where), params)
+    return _build_conversion_by_month(cur.fetchall())
+
+
 def conversation_detail(cur, conversation_id: str) -> dict | None:
     """Una conversacion con su analisis completo + transcript reconstruido."""
     cur.execute(_DETAIL_SQL, {"cid": conversation_id})

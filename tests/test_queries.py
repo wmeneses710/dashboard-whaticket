@@ -5,15 +5,20 @@ from decimal import Decimal
 from src.queries import (
     _build_dep_channel,
     _build_load_series,
+    _build_conversion_by_month,
+    _build_conversion_ranking,
     _build_new_vs_deposit,
     _build_ops,
     _build_pct_series,
     _build_quality_evolution,
+    _conversion_where,
     _dist_from_labels,
     _scores_filters,
     _sort_convs,
     _ticket_cards,
     conversation_detail,
+    conversion_by_month,
+    conversion_by_operator,
     deposit_by_channel,
     distribution,
     filter_options,
@@ -319,6 +324,56 @@ def test_build_new_vs_deposit_ordena_y_calcula_pct():
     assert out["months"] == ["2026-01", "2026-02"]        # ordenado por mes
     assert out["nuevos"] == [57, 30]
     assert out["pct"] == [42.0, 20.0]                      # 42/100 y 10/50
+
+
+def test_conversion_where_solo_filtros_que_aplican_al_potencial():
+    where, params = _conversion_where(
+        "datos", canal="WHATSAPP", segment="jugador", op="Virginia",
+        date_from="2026-01-01", date_to="2026-06-30",
+        estado="evaluated", rating="buena", search="x")  # estos 3 se ignoran
+    assert "pc.channel = %(canal)s" in where and params["canal"] == "WHATSAPP"
+    assert "pc.segment = %(segment)s" in where
+    assert "%(op)s" in where and params["op"] == "Virginia"
+    assert "pc.first_at >= %(dfrom)s" in where and "pc.first_at <= %(dto)s" in where
+    assert "estado" not in params and "rating" not in params and "search" not in params
+
+
+def test_build_conversion_ranking_orden_pct_bot_y_otros():
+    rows = [("Virginia", 100, 30), ("Ana", 100, 5), ("Poco", 3, 3),
+            ("BOT / sin operador", 200, 12)]
+    out = _build_conversion_ranking(rows, min_potential=8)
+    ops = out["operators"]
+    assert [o["op"] for o in ops] == ["Virginia", "Ana", "Otros", "BOT / sin operador"]
+    assert ops[0]["pct"] == 30.0                       # ranking por tasa desc
+    otros = next(o for o in ops if o["op"] == "Otros")
+    assert otros["potential"] == 3 and otros["converted"] == 3   # <8 agregados
+    bot = ops[-1]
+    assert bot["potential"] == 200 and bot["converted"] == 12    # bot aparte, al final
+    assert out["total_potential"] == 403 and out["total_converted"] == 50 and out["pct"] == 12.4
+
+
+def test_build_conversion_by_month_ordena_y_calcula_pct():
+    out = _build_conversion_by_month([("2026-02", 50, 10), ("2026-01", 100, 20)])
+    assert out["months"] == ["2026-01", "2026-02"]
+    assert out["potential"] == [100, 50] and out["converted"] == [20, 10]
+    assert out["pct"] == [20.0, 20.0]
+
+
+def test_conversion_by_operator_sql_agrega_player_conversions():
+    cur = _FakeCursor(rows=[], description=[])
+    conversion_by_operator(cur, "sistemas", canal="WHATSAPP")
+    query, params = cur.executed[0]
+    assert "FROM player_conversions pc" in query
+    assert "FILTER (WHERE pc.deposited)" in query
+    assert "'BOT / sin operador'" in query and "LEFT JOIN users u" in query
+    assert "GROUP BY 1" in query and params["canal"] == "WHATSAPP"
+
+
+def test_conversion_by_month_sql():
+    cur = _FakeCursor(rows=[], description=[])
+    conversion_by_month(cur, "datos")
+    query, _ = cur.executed[0]
+    assert "to_char(pc.first_at, 'YYYY-MM')" in query and "GROUP BY 1" in query
 
 
 def test_conversation_detail_coacciona_decimal_a_numero():
