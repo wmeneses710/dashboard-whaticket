@@ -92,14 +92,22 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
     return counts
 
 
+# Cada cuánto refrescar la tabla de conversión (determinista, sin LLM). No es por
+# ciclo: es un recompute full-scale, alcanza cada tanto (el histórico cambia lento).
+_CONV_REFRESH_SECONDS = 1800
+
+
 def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
     import psycopg
+
+    from src.conversions import refresh_account_conversions
 
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
     log(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
     ok, msg = llm.check_model()  # pre-flight: no aborta, pero avisa fuerte si falta el modelo
     log(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")
+    last_conv = 0.0  # 0 -> corre en el primer ciclo (al arrancar)
     while not (should_stop and should_stop()):
         seen = 0
         try:
@@ -111,6 +119,18 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                     seen += c["seen"]
                     if c["seen"]:
                         log(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} err={c['error']}")
+                # Pase de conversión (determinista): cada ~30min, no cada ciclo.
+                if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
+                    for account in cfg.scoring_accounts:
+                        try:
+                            with conn.cursor() as cur:
+                                n = refresh_account_conversions(cur, account)
+                            conn.commit()
+                            log(f"[worker] conversión {account}: {n} personas")
+                        except Exception as e:  # noqa: BLE001
+                            conn.rollback()
+                            log(f"[worker] conversión {account} error: {type(e).__name__}: {e}")
+                    last_conv = time.time()
         except Exception as e:  # noqa: BLE001 - un fallo de red/DB no debe matar el loop
             log(f"[worker] error de ciclo: {type(e).__name__}: {e}")
         if seen == 0:  # nada pendiente -> dormir en tramos para poder frenar
