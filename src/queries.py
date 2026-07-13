@@ -12,14 +12,19 @@ from src.context import fetch_messages
 
 # Filas para las tarjetas/tablas del dashboard: SIN dimensions ni transcript
 # (esos van en el detalle). Se unen contacts para el nombre del cliente.
+#
+# PAYLOAD: esta lista trae TODA la cuenta (el front filtra en memoria). En sistemas
+# son ~113k filas -> el rating_rationale completo (parrafo del LLM) pesaba el 40% del
+# JSON (~112MB/13s). En la lista solo se usa como snippet -> se trunca a 160 chars; el
+# texto completo lo sirve _DETAIL_SQL al abrir el modal. Los campos que SOLO consume
+# ese modal (metaGrid: *_seconds, *_message_count, was_unassigned, rubric) y los no
+# usados (queue_name, resolved_at) se omiten aca: peso muerto en la lista.
 _SCORES_SQL = """
-SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
+SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
        cs.user_id, COALESCE(u.name, cs.user_name) AS user_name,
-       cs.conversation_created_at, cs.resolved_at,
-       cs.rubric, cs.eval_status, cs.skip_reason, cs.rating_label, cs.stars,
-       cs.rating_rationale, cs.deposit_count, cs.message_count, cs.agent_message_count,
-       cs.bot_message_count, cs.contact_message_count, cs.first_response_seconds,
-       cs.resolution_seconds, cs.was_unassigned,
+       cs.conversation_created_at,
+       cs.eval_status, cs.skip_reason, cs.rating_label, cs.stars,
+       left(cs.rating_rationale, 160) AS rating_rationale, cs.deposit_count,
        t.contact_id AS contact_id,
        ct.name AS customer_name, ct.number AS customer_number, t.channel
   FROM conversation_scores cs

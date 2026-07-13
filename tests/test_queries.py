@@ -78,6 +78,27 @@ def test_scored_rows_incluye_contact_id_para_agrupar_por_cliente():
     assert "AS contact_id" in query
 
 
+def test_scored_rows_aligera_payload_de_la_lista():
+    # /api/scores traia TODA la cuenta sin paginar: sistemas ~112MB/13s. El
+    # rating_rationale (parrafo del LLM) era el 40% del payload y en la lista
+    # solo se usa como snippet -> se trunca. Los campos que solo consume el modal
+    # de detalle (servido aparte por _DETAIL_SQL) no viajan en la lista.
+    cur = _FakeCursor([], description=[])
+    scored_rows(cur, "datos")
+    query, _ = cur.executed[0]
+    # rationale como snippet truncado, con el mismo alias para el front
+    assert "left(cs.rating_rationale" in query.lower()
+    assert "AS rating_rationale" in query
+    # campos de solo-detalle fuera de la lista (peso muerto)
+    for dead in ("cs.queue_name", "cs.resolved_at", "cs.rubric", "cs.message_count",
+                 "cs.agent_message_count", "cs.bot_message_count", "cs.contact_message_count",
+                 "cs.first_response_seconds", "cs.resolution_seconds", "cs.was_unassigned"):
+        assert dead not in query, f"{dead} deberia salir de la lista"
+    # lo que la lista SI usa se mantiene
+    for keep in ("cs.stars", "cs.rating_label", "cs.deposit_count", "cs.segment", "AS user_name"):
+        assert keep in query, f"{keep} no deberia salir de la lista"
+
+
 def test_build_load_series_top_n_y_otros_alineado_a_meses():
     rows = [("2026-01", "A", 5), ("2026-01", "B", 3), ("2026-02", "A", 2),
             ("2026-01", "C", 1), ("2026-02", "C", 1)]
