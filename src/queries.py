@@ -293,8 +293,10 @@ DEFAULT_PAGE_SIZE = 12
 
 # Clave de tarjeta: contact_id (persona) o fallback a ticket/conversación si el score
 # quedó huérfano. Mismo criterio que el front (k = "c"+contact_id : "t"+...).
+# conversation_id y ticket_id son uuid -> hay que castear AMBOS a text: COALESCE
+# exige tipos homogéneos y COALESCE(text, uuid) revienta con "cannot be matched".
 _CARD_KEY = ("CASE WHEN t.contact_id IS NOT NULL THEN 'c' || t.contact_id::text "
-             "ELSE 't' || COALESCE(cs.ticket_id::text, cs.conversation_id) END")
+             "ELSE 't' || COALESCE(cs.ticket_id::text, cs.conversation_id::text) END")
 
 # Orden de tarjetas = tks.sort del front. avg NULL (sin evaluar) siempre al final.
 _TICKET_SORT = {

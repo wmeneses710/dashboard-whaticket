@@ -273,6 +273,9 @@ def test_tickets_page_pagina_ordena_y_agrupa():
     assert "avg_stars DESC NULLS LAST" in query            # sort=best
     assert "LIMIT %(limit)s OFFSET %(offset)s" in query
     assert params["limit"] == 12 and params["offset"] == 12   # página 2
+    # card_key: conversation_id/ticket_id son uuid -> COALESCE exige castear ambos
+    # a text (COALESCE(text, uuid) revienta en Postgres). Regresión del 500.
+    assert "cs.conversation_id::text" in query
     assert out == {"cards": [], "total": 0, "page": 2, "pages": 1, "page_size": 12}
 
 
