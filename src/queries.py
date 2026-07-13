@@ -246,6 +246,113 @@ def summary(cur, account: str, **filters) -> dict:
     }
 
 
+# --- B2 slice 3: lista de tickets paginada en el server. Una tarjeta = una PERSONA
+# (contact_id), con sus conversaciones anidadas (renderTickets). Antes el front
+# agrupaba/ordenaba/paginaba en memoria sobre las 113k filas; ahora la BD agrupa por
+# tarjeta, ordena, y devuelve SOLO la página pedida + sus conversaciones.
+DEFAULT_PAGE_SIZE = 12
+
+# Clave de tarjeta: contact_id (persona) o fallback a ticket/conversación si el score
+# quedó huérfano. Mismo criterio que el front (k = "c"+contact_id : "t"+...).
+_CARD_KEY = ("CASE WHEN t.contact_id IS NOT NULL THEN 'c' || t.contact_id::text "
+             "ELSE 't' || COALESCE(cs.ticket_id::text, cs.conversation_id) END")
+
+# Orden de tarjetas = tks.sort del front. avg NULL (sin evaluar) siempre al final.
+_TICKET_SORT = {
+    "new":   "last_at DESC",
+    "old":   "last_at ASC",
+    "best":  "avg_stars DESC NULLS LAST",
+    "worst": "avg_stars ASC NULLS LAST",
+}
+
+_TICKETS_CARDS_SQL = """
+WITH pop AS (
+  SELECT cs.conversation_id, cs.ticket_id, cs.stars, cs.eval_status,
+         cs.conversation_created_at, t.channel,
+         ct.name AS customer_name, ct.number AS customer_number,
+         """ + _CARD_KEY + """ AS card_key
+    FROM conversation_scores cs
+    LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
+    LEFT JOIN contacts ct ON ct.id = t.contact_id
+    LEFT JOIN users    u  ON u.id  = cs.user_id
+   WHERE {where}
+)
+SELECT card_key,
+       count(*) AS n,
+       count(DISTINCT ticket_id) AS visitas,
+       avg(stars) FILTER (WHERE eval_status = 'evaluated') AS avg_stars,
+       max(conversation_created_at) AS last_at,
+       max(customer_name) AS cust,
+       max(customer_number) AS num,
+       (array_agg(channel ORDER BY conversation_created_at DESC NULLS LAST))[1] AS ch,
+       count(*) OVER () AS total
+  FROM pop
+ GROUP BY card_key
+ ORDER BY {order}
+ LIMIT %(limit)s OFFSET %(offset)s"""
+
+_TICKETS_CONVS_SQL = """
+SELECT """ + _CARD_KEY + """ AS card_key,
+       cs.conversation_id, cs.ticket_id, cs.conversation_created_at, cs.eval_status,
+       cs.skip_reason, cs.rating_label, cs.stars,
+       left(cs.rating_rationale, 160) AS rating_rationale,
+       COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
+  FROM conversation_scores cs
+  LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
+  LEFT JOIN contacts ct ON ct.id = t.contact_id
+  LEFT JOIN users    u  ON u.id  = cs.user_id
+ WHERE {where} AND (""" + _CARD_KEY + """) = ANY(%(keys)s)"""
+
+
+def _sort_convs(convs: list[dict], sort: str) -> list[dict]:
+    """Ordena las conversaciones de una tarjeta como sortConvs del front.
+    Estrella None -> 99 (igual para best y worst, cuirco del front)."""
+    if sort == "old":
+        return sorted(convs, key=lambda c: c["conversation_created_at"] or "")
+    if sort in ("best", "worst"):
+        return sorted(convs, key=lambda c: c["stars"] if c["stars"] is not None else 99,
+                      reverse=(sort == "best"))
+    return sorted(convs, key=lambda c: c["conversation_created_at"] or "", reverse=True)
+
+
+def _ticket_cards(card_rows: list[dict], conv_rows: list[dict], sort: str) -> list[dict]:
+    """Arma las tarjetas (ya ordenadas y paginadas por SQL) con sus conversaciones
+    agrupadas por card_key y ordenadas según el sort activo."""
+    by_key: dict[str, list] = {}
+    for cv in conv_rows:
+        by_key.setdefault(cv["card_key"], []).append(cv)
+    cards = []
+    for cr in card_rows:
+        cards.append({
+            "cust": cr["cust"], "num": cr["num"], "ch": cr["ch"],
+            "n": cr["n"], "visitas": cr["visitas"],
+            "avg": cr["avg_stars"], "last": cr["last_at"],
+            "convs": _sort_convs(by_key.get(cr["card_key"], []), sort),
+        })
+    return cards
+
+
+def tickets_page(cur, account: str, page: int = 1, sort: str = "new",
+                 page_size: int = DEFAULT_PAGE_SIZE, **filters) -> dict:
+    """Una página de tarjetas (persona + conversaciones), agrupada/ordenada/paginada
+    en la BD. Reemplaza renderTickets sobre DATA completo."""
+    where, params = _scores_filters(account, **filters)
+    order = _TICKET_SORT.get(sort, _TICKET_SORT["new"])
+    page = max(1, int(page))
+    cur.execute(_TICKETS_CARDS_SQL.format(where=where, order=order),
+                {**params, "limit": page_size, "offset": (page - 1) * page_size})
+    card_rows = _rows_as_dicts(cur)
+    total = int(card_rows[0]["total"]) if card_rows else 0
+    keys = [c["card_key"] for c in card_rows]
+    conv_rows: list[dict] = []
+    if keys:
+        cur.execute(_TICKETS_CONVS_SQL.format(where=where), {**params, "keys": keys})
+        conv_rows = _rows_as_dicts(cur)
+    pages = max(1, -(-total // page_size))
+    return {"cards": _ticket_cards(card_rows, conv_rows, sort), "total": total,
+            "page": page, "pages": pages, "page_size": page_size}
+
+
 def _transcript(msgs: list[dict]) -> list[dict]:
     out = []
     for m in msgs:

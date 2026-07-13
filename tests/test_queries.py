@@ -10,6 +10,8 @@ from src.queries import (
     _build_pct_series,
     _dist_from_labels,
     _scores_filters,
+    _sort_convs,
+    _ticket_cards,
     conversation_detail,
     deposit_by_channel,
     distribution,
@@ -17,6 +19,7 @@ from src.queries import (
     scored_rows,
     summary,
     summary_kpis,
+    tickets_page,
 )
 
 
@@ -208,6 +211,41 @@ def test_summary_combina_las_cuatro_secciones():
                       one=(0, 0, None, 0, 0, 0))
     out = summary(cur, "datos")
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel"}
+
+
+def test_sort_convs_replica_sortconvs_del_front():
+    convs = [{"conversation_created_at": "2026-03-01", "stars": 2},
+             {"conversation_created_at": "2026-01-01", "stars": 5},
+             {"conversation_created_at": "2026-02-01", "stars": None}]
+    assert [c["conversation_created_at"] for c in _sort_convs(convs, "new")] == ["2026-03-01", "2026-02-01", "2026-01-01"]
+    assert [c["conversation_created_at"] for c in _sort_convs(convs, "old")] == ["2026-01-01", "2026-02-01", "2026-03-01"]
+    # worst = estrella asc, sin evaluar (None->99) al final
+    assert [c["stars"] for c in _sort_convs(convs, "worst")] == [2, 5, None]
+    # best = estrella desc, None->99 va primero (igual que el front: stars??99)
+    assert [c["stars"] for c in _sort_convs(convs, "best")] == [None, 5, 2]
+
+
+def test_ticket_cards_agrupa_convs_por_card_key():
+    card_rows = [{"card_key": "c1", "n": 2, "visitas": 1, "avg_stars": 3.5,
+                  "last_at": "2026-03-01", "cust": "Ana", "num": "593...", "ch": "WHATSAPP", "total": 1}]
+    conv_rows = [{"card_key": "c1", "conversation_id": "x", "conversation_created_at": "2026-01-01", "stars": 3},
+                 {"card_key": "c1", "conversation_id": "y", "conversation_created_at": "2026-03-01", "stars": 4}]
+    cards = _ticket_cards(card_rows, conv_rows, "new")
+    assert len(cards) == 1
+    c = cards[0]
+    assert c["cust"] == "Ana" and c["n"] == 2 and c["visitas"] == 1 and c["avg"] == 3.5
+    assert [cv["conversation_id"] for cv in c["convs"]] == ["y", "x"]   # ordenadas (new = fecha desc)
+
+
+def test_tickets_page_pagina_ordena_y_agrupa():
+    cur = _FakeCursor(rows=[], description=["card_key", "n", "visitas", "avg_stars", "last_at", "cust", "num", "ch", "total"])
+    out = tickets_page(cur, "sistemas", page=2, sort="best", page_size=12)
+    query, params = cur.executed[0]
+    assert "GROUP BY card_key" in query
+    assert "avg_stars DESC NULLS LAST" in query            # sort=best
+    assert "LIMIT %(limit)s OFFSET %(offset)s" in query
+    assert params["limit"] == 12 and params["offset"] == 12   # página 2
+    assert out == {"cards": [], "total": 0, "page": 2, "pages": 1, "page_size": 12}
 
 
 def test_build_load_series_top_n_y_otros_alineado_a_meses():
