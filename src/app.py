@@ -162,6 +162,18 @@ def tickets(account: str = Query(..., description="datos | sistemas"),
         return queries.tickets_page(cur, account, page=page, sort=sort, **filters)
 
 
+@app.get("/api/conversion")
+def conversion(account: str = Query(..., description="datos | sistemas"),
+               filters: dict = Depends(_filters)) -> dict:
+    """Conversión jugador potencial->jugador (agrega player_conversions): ranking por
+    operador + serie mensual. Filtrable por canal/segmento/operador/fecha de entrada."""
+    with _conn() as c, c.cursor() as cur:
+        return {
+            "by_operator": queries.conversion_by_operator(cur, account, **filters),
+            "by_month": queries.conversion_by_month(cur, account, **filters),
+        }
+
+
 @app.get("/api/charts")
 def charts(account: str = Query(..., description="datos | sistemas")) -> dict:
     """Agregados FULL-SCALE para los cuadros del análisis (deterministas, sobre el
