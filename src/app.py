@@ -111,16 +111,10 @@ def accounts() -> list[dict]:
 
 
 @app.get("/api/scores")
-def scores(
-    account: str = Query(..., description="datos | sistemas"),
-    months: int = Query(0, ge=0, description="0 = histórico completo; N = últimos N meses"),
-) -> list[dict]:
-    """Conversaciones scoreadas de una cuenta (sin transcript).
-
-    Por defecto (months=0) trae el histórico completo. El front pide una ventana
-    (months=N) para que la carga inicial no arrastre las ~113k filas de sistemas."""
+def scores(account: str = Query(..., description="datos | sistemas")) -> list[dict]:
+    """Conversaciones scoreadas de una cuenta (sin transcript)."""
     with _conn() as c, c.cursor() as cur:
-        return queries.scored_rows(cur, account, window_months=months or None)
+        return queries.scored_rows(cur, account)
 
 
 @app.get("/api/charts")

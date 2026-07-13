@@ -19,7 +19,7 @@ from src.context import fetch_messages
 # texto completo lo sirve _DETAIL_SQL al abrir el modal. Los campos que SOLO consume
 # ese modal (metaGrid: *_seconds, *_message_count, was_unassigned, rubric) y los no
 # usados (queue_name, resolved_at) se omiten aca: peso muerto en la lista.
-_SCORES_SELECT = """
+_SCORES_SQL = """
 SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
        cs.user_id, COALESCE(u.name, cs.user_name) AS user_name,
        cs.conversation_created_at,
@@ -31,18 +31,9 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
   LEFT JOIN users    u  ON u.id  = cs.user_id
- WHERE cs.account = %(account)s"""
-
-# B1: ventana móvil opcional para la carga inicial. sistemas tiene 113k scoreadas
-# -> traerlas todas es ~112MB/13s. Con ventana, el front pide solo los últimos N
-# meses (con toggle a histórico completo). Anclado al mes MÁS RECIENTE de la cuenta
-# (no now(): el dataset puede estar pausado), igual que los cuadros (_MONTH_WINDOW).
-_SCORES_WINDOW = """
-   AND cs.conversation_created_at >= (SELECT date_trunc('month', max(conversation_created_at))
-                                        FROM conversation_scores WHERE account = %(account)s)
-                                      - make_interval(months => %(months_back)s)"""
-
-_SCORES_ORDER = "\n ORDER BY cs.conversation_created_at DESC"
+ WHERE cs.account = %(account)s
+ ORDER BY cs.conversation_created_at DESC
+"""
 
 _DETAIL_SQL = """
 SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
@@ -83,18 +74,9 @@ def list_accounts(cur) -> list[str]:
     return [{"account": a, "count": n} for a, n in cur.fetchall()]
 
 
-def scored_rows(cur, account: str, window_months: int | None = None) -> list[dict]:
-    """Conversaciones scoreadas de UNA cuenta (sin transcript).
-
-    window_months=None -> histórico completo (backward-compatible).
-    window_months=N    -> solo los últimos N meses (mes más reciente + N-1 previos),
-                          para aligerar la carga inicial del dashboard."""
-    params = {"account": account}
-    sql = _SCORES_SELECT
-    if window_months:
-        sql += _SCORES_WINDOW
-        params["months_back"] = window_months - 1
-    cur.execute(sql + _SCORES_ORDER, params)
+def scored_rows(cur, account: str) -> list[dict]:
+    """Todas las conversaciones scoreadas de UNA cuenta (sin transcript)."""
+    cur.execute(_SCORES_SQL, {"account": account})
     return _rows_as_dicts(cur)
 
 
