@@ -80,6 +80,69 @@ def scored_rows(cur, account: str) -> list[dict]:
     return _rows_as_dicts(cur)
 
 
+# --- B2: agregados server-side. En vez de mandar las ~113k filas al cliente para
+# que agregue en memoria (~112MB/13s), la BD calcula los KPIs/distribución/ops y
+# devuelve unos KB. Los filtros del front (matchBase) se traducen a un WHERE común.
+# 'rating' bucketea por estrella (excelente=5 ... mala=1), igual que bucketOf.
+_RATING_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1}
+
+
+def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
+                    op="all", date_from=None, date_to=None, rating="all",
+                    search="") -> tuple[str, dict]:
+    """(where_sql, params) para conversation_scores, replicando matchBase del front.
+    Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas."""
+    where = ["cs.account = %(account)s"]
+    params: dict = {"account": account}
+    if estado and estado != "all":
+        where.append("cs.eval_status = %(estado)s"); params["estado"] = estado
+    if segment and segment != "all":
+        where.append("cs.segment = %(segment)s"); params["segment"] = segment
+    if canal and canal != "all":
+        where.append("t.channel = %(canal)s"); params["canal"] = canal
+    if op and op != "all":
+        where.append("COALESCE(u.name, cs.user_name) = %(op)s"); params["op"] = op
+    if date_from:
+        where.append("cs.conversation_created_at >= %(dfrom)s"); params["dfrom"] = date_from
+    if date_to:
+        where.append("cs.conversation_created_at <= %(dto)s"); params["dto"] = date_to
+    if rating and rating != "all" and rating in _RATING_STARS:
+        where.append("cs.stars = %(rstars)s"); params["rstars"] = _RATING_STARS[rating]
+    if search:
+        where.append("(ct.name ILIKE %(q)s OR ct.number ILIKE %(q)s "
+                     "OR COALESCE(u.name, cs.user_name) ILIKE %(q)s)")
+        params["q"] = f"%{search}%"
+    return " AND ".join(where), params
+
+
+_SCORES_JOINS = """
+  FROM conversation_scores cs
+  LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
+  LEFT JOIN contacts ct ON ct.id = t.contact_id
+  LEFT JOIN users    u  ON u.id  = cs.user_id
+ WHERE {where}"""
+
+# KPIs = renderKpis del front: total, evaluadas, ★ promedio (solo evaluadas),
+# depósitos (suma), conversaciones con depósito, operadores distintos (evaluadas).
+_SUMMARY_KPIS_SQL = """
+SELECT count(*) AS total,
+       count(*) FILTER (WHERE cs.eval_status = 'evaluated') AS evaluadas,
+       avg(cs.stars) FILTER (WHERE cs.eval_status = 'evaluated') AS avg_stars,
+       coalesce(sum(cs.deposit_count), 0) AS depositos,
+       count(*) FILTER (WHERE cs.deposit_count > 0) AS dep_conv,
+       count(DISTINCT coalesce(nullif(coalesce(u.name, cs.user_name), ''), cs.user_id::text))
+             FILTER (WHERE cs.eval_status = 'evaluated') AS operadores""" + _SCORES_JOINS
+
+
+def summary_kpis(cur, account: str, **filters) -> dict:
+    """KPIs agregados en la BD para el filtro dado (reemplaza el cómputo en memoria)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_SUMMARY_KPIS_SQL.format(where=where), params)
+    cols = [d.name for d in cur.description]
+    row = cur.fetchone()
+    return {c: _coerce(v) for c, v in zip(cols, row)}
+
+
 def _transcript(msgs: list[dict]) -> list[dict]:
     out = []
     for m in msgs:

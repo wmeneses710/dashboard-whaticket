@@ -6,8 +6,10 @@ from src.queries import (
     _build_load_series,
     _build_new_vs_deposit,
     _build_pct_series,
+    _scores_filters,
     conversation_detail,
     scored_rows,
+    summary_kpis,
 )
 
 
@@ -97,6 +99,50 @@ def test_scored_rows_aligera_payload_de_la_lista():
     # lo que la lista SI usa se mantiene
     for keep in ("cs.stars", "cs.rating_label", "cs.deposit_count", "cs.segment", "AS user_name"):
         assert keep in query, f"{keep} no deberia salir de la lista"
+
+
+def test_scores_filters_base_solo_cuenta():
+    where, params = _scores_filters("datos")
+    assert where == "cs.account = %(account)s"
+    assert params == {"account": "datos"}
+
+
+def test_scores_filters_aplica_cada_filtro():
+    where, params = _scores_filters(
+        "sistemas", estado="evaluated", segment="jugador", canal="WHATSAPP",
+        op="Virginia", date_from="2026-01-01", date_to="2026-06-30", search="juan")
+    assert "cs.eval_status = %(estado)s" in where and params["estado"] == "evaluated"
+    assert "cs.segment = %(segment)s" in where and params["segment"] == "jugador"
+    assert "t.channel = %(canal)s" in where and params["canal"] == "WHATSAPP"
+    assert "COALESCE(u.name, cs.user_name) = %(op)s" in where and params["op"] == "Virginia"
+    assert "cs.conversation_created_at >= %(dfrom)s" in where and params["dfrom"] == "2026-01-01"
+    assert "cs.conversation_created_at <= %(dto)s" in where and params["dto"] == "2026-06-30"
+    # búsqueda: mismos campos que matchBase del front (cliente, número, operador)
+    assert "ILIKE %(q)s" in where and params["q"] == "%juan%"
+
+
+def test_scores_filters_rating_mapea_label_a_estrella():
+    # El front bucketea por estrella: 'buena' = 4★. En SQL se filtra por cs.stars.
+    where, params = _scores_filters("datos", rating="buena")
+    assert "cs.stars = %(rstars)s" in where
+    assert params["rstars"] == 4
+
+
+def test_summary_kpis_agrega_server_side_scopeado_por_cuenta():
+    # KPIs calculados en la BD (no mandando 113k filas). Reproduce renderKpis:
+    # total, evaluadas, promedio ★, depósitos, conversaciones con depósito, operadores.
+    cur = _FakeCursor(
+        rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"],
+        one=(120, 100, Decimal("3.20"), 45, 30, 8))
+    out = summary_kpis(cur, "sistemas")
+    query, params = cur.executed[0]
+    assert "cs.account = %(account)s" in query and params["account"] == "sistemas"
+    assert "FILTER (WHERE cs.eval_status = 'evaluated')" in query
+    assert "sum(cs.deposit_count)" in query
+    assert "count(DISTINCT" in query           # operadores distintos
+    # numeric -> float (evita el bug de string en el JSON)
+    assert out["avg_stars"] == 3.2 and isinstance(out["avg_stars"], float)
+    assert out["total"] == 120 and out["evaluadas"] == 100 and out["operadores"] == 8
 
 
 def test_build_load_series_top_n_y_otros_alineado_a_meses():
