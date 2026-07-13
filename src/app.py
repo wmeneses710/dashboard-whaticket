@@ -13,7 +13,7 @@ from pathlib import Path
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from src import queries
@@ -206,6 +206,13 @@ def conversation(cid: str) -> dict:
     if detail is None:
         raise HTTPException(status_code=404, detail="conversacion no encontrada")
     return detail
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots() -> str:
+    """El dashboard es una herramienta interna (datos de clientes/operadores): que
+    los buscadores NO lo indexen. Además saca el 404 de ruido en los logs."""
+    return "User-agent: *\nDisallow: /\n"
 
 
 @app.get("/health")

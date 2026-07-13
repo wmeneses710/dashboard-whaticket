@@ -89,6 +89,11 @@ def test_conversion_cohort_endpoint(monkeypatch):
     assert calls["account"] == "sistemas" and calls["kwargs"]["op"] == "Virginia"
 
 
+def test_robots_txt_no_indexar():
+    r = client.get("/robots.txt")
+    assert r.status_code == 200 and "Disallow: /" in r.text
+
+
 def test_options_endpoint(monkeypatch):
     calls = _stub(monkeypatch, "filter_options")
     r = client.get("/api/options", params={"account": "datos"})
