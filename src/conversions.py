@@ -28,6 +28,8 @@ _CREATE_STMTS = (
         channel               text,
         segment               text,
         deposited             boolean     NOT NULL DEFAULT false,
+        returned              boolean     NOT NULL DEFAULT false,
+        return_session_id     uuid,
         attention             text,
         updated_at            timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (account, contact_id)
@@ -36,6 +38,10 @@ _CREATE_STMTS = (
     # DE SESIÓN (conversation_scores.atencion) de la conversación de ENTRADA; NULL = la
     # sesión aún no fue scoreada. ALTER para tablas ya creadas por una versión previa.
     "ALTER TABLE player_conversions ADD COLUMN IF NOT EXISTS attention text",
+    # returned = re-engagement determinista: la persona VOLVIÓ (tiene >= 2 sesiones).
+    # return_session_id = 2da sesión cronológica. ALTER para tablas ya creadas antes.
+    "ALTER TABLE player_conversions ADD COLUMN IF NOT EXISTS returned boolean NOT NULL DEFAULT false",
+    "ALTER TABLE player_conversions ADD COLUMN IF NOT EXISTS return_session_id uuid",
     "CREATE INDEX IF NOT EXISTS idx_player_conv_op    ON player_conversions (account, user_id)",
     "CREATE INDEX IF NOT EXISTS idx_player_conv_month ON player_conversions (account, first_at)",
 )
@@ -50,7 +56,7 @@ _CREATE_STMTS = (
 # contact_id se castea a text (evita mismatch de tipos uuid/bigint; ver bug card_key).
 _REFRESH_SQL = """
 INSERT INTO player_conversions
-      (account, contact_id, first_at, first_conversation_id, user_id, channel, segment, deposited, attention)
+      (account, contact_id, first_at, first_conversation_id, user_id, channel, segment, deposited, attention, returned, return_session_id)
 WITH jugador_convs AS (
   SELECT c.id AS conv_id, c.created_at, c.is_new_contact,
          t.contact_id::text AS contact_id, t.channel
@@ -92,13 +98,28 @@ person_deposit AS (
     JOIN new_persons np ON np.contact_id = jc.contact_id
     LEFT JOIN conv_dep cd ON cd.conversation_id = jc.conv_id
    GROUP BY jc.contact_id
+),
+-- re-engagement DETERMINISTA (sin LLM): "convirtió a jugador" = VOLVIÓ a interactuar,
+-- medido por SESIÓN. n_sessions cuenta sesiones distintas de la persona (via tickets);
+-- returned = n_sessions > 1. return_session_id = la 2da sesión en orden cronológico
+-- (llave del regreso). El mérito sigue siendo del PRIMER agente (first_op.user_id).
+sessions_per_contact AS (
+  SELECT t.contact_id::text AS contact_id,
+         count(DISTINCT cs.session_id) AS n_sessions,
+         (array_agg(cs.session_id ORDER BY cs.start_at))[2] AS return_session_id
+    FROM conversation_sessions cs
+    JOIN tickets t ON t.id = cs.ticket_id
+   WHERE cs.account = %(account)s AND t.contact_id IS NOT NULL
+   GROUP BY t.contact_id::text
 )
 SELECT %(account)s, fc.contact_id, fc.first_at, fc.first_conversation_id,
-       fo.user_id, fc.channel, 'jugador', coalesce(pd.deposited, false), cs.atencion
+       fo.user_id, fc.channel, 'jugador', coalesce(pd.deposited, false), cs.atencion,
+       coalesce(spc.n_sessions, 0) > 1, spc.return_session_id
   FROM first_conv fc
   LEFT JOIN first_op fo ON fo.conversation_id = fc.first_conversation_id
   LEFT JOIN person_deposit pd ON pd.contact_id = fc.contact_id
   LEFT JOIN conversation_scores cs ON cs.conversation_id = fc.first_conversation_id
+  LEFT JOIN sessions_per_contact spc ON spc.contact_id = fc.contact_id
 ON CONFLICT (account, contact_id) DO UPDATE
    SET deposited = EXCLUDED.deposited, user_id = EXCLUDED.user_id,
        channel = EXCLUDED.channel, first_at = EXCLUDED.first_at,
@@ -107,6 +128,9 @@ ON CONFLICT (account, contact_id) DO UPDATE
        -- todavia no tiene score (post-migracion la tabla fresca esta vacia; sin este
        -- guard el 1er refresh borraria en masa la columna de pasividad del dashboard).
        attention = COALESCE(EXCLUDED.attention, player_conversions.attention),
+       -- returned/return_session_id son HECHOS deterministas (recomputados full-scale):
+       -- se pisan con EXCLUDED, sin COALESCE (distinto de attention, que depende del LLM).
+       returned = EXCLUDED.returned, return_session_id = EXCLUDED.return_session_id,
        updated_at = now()
 """
 

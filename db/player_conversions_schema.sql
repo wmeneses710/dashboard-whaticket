@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS player_conversions (
     channel               text,
     segment               text,                    -- 'jugador' (por ahora único)
     deposited             boolean     NOT NULL DEFAULT false,  -- depósito determinista (comprobante+recarga)
+    returned              boolean     NOT NULL DEFAULT false,  -- re-engagement: VOLVIÓ (>= 2 sesiones)
+    return_session_id     uuid,                    -- 2da sesión cronológica (llave del regreso)
     updated_at            timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (account, contact_id)
 );

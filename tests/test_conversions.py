@@ -31,6 +31,17 @@ def test_ensure_table_crea_tabla_e_indices():
     assert sum("CREATE INDEX IF NOT EXISTS" in q for q in qs) == 2
 
 
+def test_ensure_table_altera_columnas_de_reengagement():
+    # self-healing: tablas creadas por una versión previa reciben returned/return_session_id
+    cur = _FakeCursor()
+    conv.ensure_table(cur)
+    qs = [q for q, _ in cur.executed]
+    assert any(
+        "ADD COLUMN IF NOT EXISTS returned boolean NOT NULL DEFAULT false" in q for q in qs
+    )
+    assert any("ADD COLUMN IF NOT EXISTS return_session_id uuid" in q for q in qs)
+
+
 def test_refresh_sin_colas_jugador_no_computa(monkeypatch):
     monkeypatch.setattr(conv, "_jugador_queue_ids", lambda cur, account: [])
     cur = _FakeCursor()
@@ -61,3 +72,14 @@ def test_refresh_upsert_determinista_scopeado_por_cuenta(monkeypatch):
     assert "cs.atencion" in query
     # COALESCE: no pisar un attention bueno con NULL cuando la sesion aun no tiene score
     assert "attention = COALESCE(EXCLUDED.attention, player_conversions.attention)" in query
+    # re-engagement (PIEZA 5): "convirtió a jugador" = VOLVIÓ = tiene >= 2 sesiones.
+    # CTE sessions_per_contact desde conversation_sessions JOIN tickets, agrupado por
+    # persona; n_sessions = count(DISTINCT session_id); return_session_id = 2da sesión.
+    assert "sessions_per_contact" in query
+    assert "conversation_sessions" in query
+    assert "count(DISTINCT cs.session_id)" in query
+    assert "(array_agg(cs.session_id ORDER BY cs.start_at))[2]" in query
+    # returned es un HECHO determinista -> se pisa con EXCLUDED (sin COALESCE)
+    assert "returned = EXCLUDED.returned" in query
+    assert "return_session_id = EXCLUDED.return_session_id" in query
+    assert "coalesce(spc.n_sessions, 0) > 1" in query
