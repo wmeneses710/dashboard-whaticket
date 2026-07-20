@@ -71,6 +71,15 @@ def test_prompt_prohibe_inventar_contexto():
     assert "explicit" in low  # "explicito/s en los mensajes"
 
 
+def test_prompt_reconoce_respuesta_implicita():
+    # La respuesta al motivo puede estar embebida en el texto del agente (aunque sea
+    # promocional): el modelo debe leerla y no marcar "no respondio" si esta presente.
+    system, _ = build_scorer_prompt("human", MSGS_HUMAN, thread_context="")
+    low = system.lower()
+    assert "implicita" in low or "contenida en lo que dijo el agente" in low
+    assert "informacion pedida" in low or "informacion pedida esta presente" in low
+
+
 def test_prompt_pide_la_forma_json_de_salida():
     system, _ = build_scorer_prompt("bot", MSGS_HUMAN, thread_context="")
     assert "UNICAMENTE" in system

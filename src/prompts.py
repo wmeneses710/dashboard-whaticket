@@ -48,6 +48,12 @@ avanzar? No penalices porque el caso completo del ticket siga abierto.
 - Dar un PASO ACCIONABLE concreto (mandar el formulario/link, pedir los datos, \
 indicar el proceso, ofrecer crear la cuenta) CUENTA como hacer avanzar el motivo, \
 aunque el caso no cierre en esta visita.
+- RESPUESTA IMPLICITA: la respuesta al motivo puede estar CONTENIDA en lo que dijo \
+el agente aunque no sea punto-por-punto ni repita la pregunta. Si el agente EXPLICO \
+lo que el cliente pidio (p. ej. dijo el proceso: "registrate, verifica y con tu \
+primer deposito se activa"), el motivo SE ATENDIO, aunque la info venga dentro de un \
+mensaje promocional o de plantilla. NO marques "no explico" / "no respondio" si la \
+informacion PEDIDA esta presente en los mensajes del agente; leela y reconocela.
 - ABANDONO DEL CLIENTE: si el agente dio una respuesta accionable y el cliente NO \
 respondio o se fue, la falta de cierre es del lado del cliente, NO una falla del \
 agente. No lo bajes de nota por el silencio del cliente.
