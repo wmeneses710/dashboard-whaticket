@@ -62,18 +62,24 @@ dashboard, atribuidas al **primer agente**.
 - Regla de **expansión entre sesiones** (propagar la pausa a episodios solo-cliente):
   descartada. Se verificó que las colas aisladas, scoreadas solas, dan
   *buena/excelente/aceptable*, **cero deficiente** → dejarlas partidas es llevable.
-- Cambiar la ventana global de 6 h: validada (codo de densidad + lectura cualitativa).
+- Ventana de gap: 5 h para fragmentos sin cierre (el cierre del agente corta antes; ver D1).
 - Que el LLM dictamine el depósito: descartado (el depósito es un hecho auditable).
 
 ---
 
 ## 3. Decisiones de diseño
 
-- **D1 — Unidad = sesión.** Sesión = episodios del mismo `ticket_id` con
-  *gap < 6 h* entre `created_at` consecutivos. **Override**: no cortar si
-  *gap ≤ 48 h* **y** el episodio previo cierra con señal de pausa diferida del
-  agente (regex `DEFERRED`). El `session_id` es el `first_conversation_id` de la
-  sesión (uuid estable ya existente).
+- **D1 — Unidad = sesión (regla de CIERRE).** Sesión = episodios del mismo
+  `ticket_id` que NO cortan. Se CORTA (nueva sesión) cuando: el episodio previo
+  **cerró** (su último mensaje del agente matchea `CLOSING` = confirmación de carga /
+  despedida / diferido "me avisás"), **o** cambió el **agente humano**, **o** gap
+  > 5 h, **o** el span de la sesión superaría 12 h. El `session_id` es el
+  `conversation_id` del primer episodio de la sesión (uuid estable).
+  > Corrección post-deploy: la versión inicial usaba *gap<6h + override que EXTENDÍA*
+  > en el cierre diferido — al revés. Encadenaba a los recargadores frecuentes en
+  > blobs multi-día/multi-agente (hasta 151 episodios) que se skipeaban o daban notas
+  > incoherentes y rompían la atribución. El cierre ahora **corta**, no extiende.
+  > Validado en la copia: >20 episodios 104→17, multi-agente 13,8%→0,6%.
 - **D2 — Un solo pase LLM por sesión de entrada.** Reemplaza al scorer por
   conversación **y** al pase separado de pasividad. Lee el transcript **mergeado**
   de la sesión y emite en una sola respuesta: dimensiones + `rating_label` +

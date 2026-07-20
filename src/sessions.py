@@ -1,12 +1,14 @@
 """Sesionizacion: agrupa episodios (conversations) de un mismo ticket en sesiones.
 
 La unidad de evaluacion es la SESION (decision D1 del diseno,
-docs/diseno-evaluacion-unificada.md). Una sesion son los episodios del mismo
-ticket_id con gap < GAP entre created_at consecutivos. OVERRIDE por cierre diferido:
-no se corta si el gap es <= GAP_EXT y el ultimo mensaje del agente del episodio
-previo cierra con una senal de pausa diferida (regex DEFERRED); el agente pauso
-explicitamente y el cliente vuelve a continuar (regla validada durante el analisis;
-ver docs/diseno-evaluacion-unificada.md, decision D1).
+docs/diseno-evaluacion-unificada.md). Recorriendo los episodios de un ticket por
+created_at se CORTA (nueva sesion) cuando el episodio PREVIO CERRO (su ultimo
+mensaje del agente matchea una senal de cierre: confirmacion de carga / despedida
+/ diferido, regex CLOSING), o CAMBIO el agente humano (agentes dominantes no nulos
+y distintos), o el gap entre consecutivos supera GAP, o el span de la sesion
+superaria SPAN_CAP. Se MERGEA solo cuando el previo NO cerro, mismo (o sin) agente,
+gap <= GAP y dentro del span. Un episodio solo-cliente (sin agente, sin cierre)
+mergea con el siguiente -> mata el skip fabricado.
 
 La regla vive entera en la funcion PURA assign_sessions (unit-testeable sin BD).
 refresh_account_sessions la aplica full-scale por cuenta y materializa el resultado
@@ -27,16 +29,21 @@ from datetime import timedelta
 from src.metrics import message_stats
 from src.router import decide_eligibility, decide_rubric
 
-GAP = timedelta(hours=6)
-GAP_EXT = timedelta(hours=48)  # ventana extendida cuando hubo cierre diferido
+GAP = timedelta(hours=5)
+SPAN_CAP = timedelta(hours=12)  # una sesion no puede abarcar mas que esto
 
-# Senal de pausa diferida del agente al final de un episodio (regex validada
-# durante el analisis; no reescribir sin re-validar contra datos reales).
-DEFERRED = re.compile(
-    r"(cuando (puedas|tengas tiempo|gustes|quieras|desees)|apenas puedas|"
-    r"me avis|me escrib|retomamos|continuamos|quedo atent|"
-    r"estamos disponibles|estar[eé] pendiente|estoy pendiente|"
-    r"cualquier (cosa|duda|consulta))",
+# CLOSING: el agente CERRO la interaccion en su ultimo mensaje del episodio
+# (confirmacion de carga, despedida, o diferido "me avisas"). Si matchea, la
+# interaccion termino -> el siguiente episodio arranca sesion nueva. Un episodio
+# solo-cliente no tiene last_agent_body -> None -> NO cierra -> mergea. (regex
+# validada durante el analisis; no reescribir sin re-validar contra datos reales.)
+CLOSING = re.compile(
+    r"(saldo\s+ya\s+est|carga\s+.*acredit|ya\s+(le|te)\s+carg|cargad[oa]|"
+    r"recarga\s+ya\s+est|ya\s+est[aá]\s+tu\s+saldo|"
+    r"[eé]xitos|mucha\s+suerte|a\s+la\s+orden|un\s+(gusto|placer)|"
+    r"cuando\s+(puedas|quieras|tengas\s+tiempo|gustes|desees)|apenas\s+puedas|"
+    r"me\s+avis|me\s+escrib|aqu[ií]\s+est|quedo\s+atent|estamos\s+disponibles|"
+    r"estar[eé]\s+pendiente|estoy\s+pendiente|cualquier\s+(cosa|duda|consulta)|no\s+dudes)",
     re.IGNORECASE,
 )
 
@@ -44,13 +51,18 @@ DEFERRED = re.compile(
 def assign_sessions(episodes: list[dict]) -> list[dict]:
     """Asigna cada episodio de UN ticket a su sesion (regla D1). PURA, sin BD.
 
-    episodes: lista de dicts {conversation_id, created_at, last_agent_body} de un
-    mismo ticket, ordenada por created_at asc. last_agent_body = ultimo mensaje del
-    agente de ese episodio (o None si no hubo).
+    episodes: lista de dicts {conversation_id, created_at, last_agent_body, agent_id}
+    de un mismo ticket. last_agent_body = ultimo mensaje del agente de ese episodio
+    (o None si no hubo); agent_id = agente humano DOMINANTE de ese episodio (o None).
 
     Devuelve lista de dicts {conversation_id, sess_no, session_id}. sess_no arranca en
     0 por ticket; session_id = conversation_id del PRIMER episodio de esa (ticket,
     sess_no).
+
+    Corta (nueva sesion) cuando el episodio PREVIO cerro (CLOSING), o cambio el agente
+    humano dominante (ambos no nulos y distintos), o el gap con el previo supera GAP,
+    o el span desde el inicio de la sesion actual superaria SPAN_CAP. Merge en caso
+    contrario. Un episodio solo-cliente (sin agente, sin cierre) mergea con el siguiente.
 
     Ordena internamente por (created_at, conversation_id): no depende de que el caller
     la pase ordenada y desempata determinísticamente los created_at iguales (mismo
@@ -60,20 +72,24 @@ def assign_sessions(episodes: list[dict]) -> list[dict]:
     result: list[dict] = []
     sess_no = 0
     session_id = None
+    session_start = None
     prev = None
     for ep in episodes:
         if prev is None:
             sess_no = 0
             session_id = ep["conversation_id"]
+            session_start = ep["created_at"]
         else:
             gap = ep["created_at"] - prev["created_at"]
-            if gap > GAP:
-                deferred = bool(DEFERRED.search(prev.get("last_agent_body") or ""))
-                rescatado = deferred and gap <= GAP_EXT
-                if not rescatado:
-                    sess_no += 1
-                    session_id = ep["conversation_id"]
-            # gap <= GAP -> misma sesion (no se toca sess_no ni session_id)
+            prev_closed = bool(CLOSING.search(prev.get("last_agent_body") or ""))
+            a_prev, a_cur = prev.get("agent_id"), ep.get("agent_id")
+            agent_changed = a_prev is not None and a_cur is not None and a_prev != a_cur
+            span_exceeded = (ep["created_at"] - session_start) > SPAN_CAP
+            if prev_closed or agent_changed or gap > GAP or span_exceeded:
+                sess_no += 1
+                session_id = ep["conversation_id"]
+                session_start = ep["created_at"]
+            # merge -> misma sesion (no se toca sess_no, session_id ni session_start)
         result.append({
             "conversation_id": ep["conversation_id"],
             "sess_no": sess_no,
@@ -151,6 +167,22 @@ SELECT DISTINCT ON (conversation_id) conversation_id, body
  ORDER BY conversation_id, created_at DESC, id DESC
 """
 
+# Agente humano DOMINANTE por conversacion (el user_id con mas mensajes propios,
+# sin notas) -> para detectar cambio de agente entre episodios. row_number sobre el
+# conteo por (conversation_id, user_id) y se toma el rn=1 de cada conversacion.
+_PRIMARY_AGENT_SQL = """
+SELECT conversation_id, user_id
+  FROM (
+    SELECT conversation_id, user_id,
+           row_number() OVER (PARTITION BY conversation_id ORDER BY count(*) DESC) AS rn
+      FROM messages
+     WHERE account = %(account)s AND from_me = true AND is_note = false
+       AND user_id IS NOT NULL
+     GROUP BY conversation_id, user_id
+  ) s
+ WHERE rn = 1
+"""
+
 # Episodios de la cuenta ordenados por ticket y created_at. Tiebreaker `id ASC`:
 # garantiza orden estable entre corridas cuando dos conversaciones del mismo ticket
 # comparten created_at (si no, el session_id/sess_no podria variar entre refreshes).
@@ -182,7 +214,7 @@ ON CONFLICT (conversation_id) DO UPDATE
 """
 
 # Limpieza de huerfanas: si al recomputar cambian las fronteras (redeploy que toca
-# GAP/DEFERRED, o datos historicos), un session_id que dejo de ser inicio-de-sesion
+# GAP/CLOSING, o datos historicos), un session_id que dejo de ser inicio-de-sesion
 # quedaria como fila muerta en conversation_sessions (el UPSERT nunca la borra). El
 # mapeo (grano episodio) siempre queda correcto, asi que una sesion sin NINGUN episodio
 # que la apunte es huerfana -> se borra. Quirurgico: en steady-state no borra nada.
@@ -204,14 +236,17 @@ def ensure_sessions_table(cur) -> None:
 def refresh_account_sessions(cur, account: str) -> int:
     """Recomputa TODAS las sesiones de una cuenta (full-scale) y las materializa.
 
-    Trae las conversaciones con ticket_id y el ultimo body del agente por
-    conversacion, arma los episodios por ticket, aplica assign_sessions y hace UPSERT
-    en conversation_sessions (grano sesion) + conversation_session_map (grano
-    episodio). Idempotente. Devuelve la cantidad de sesiones materializadas.
+    Trae las conversaciones con ticket_id, el ultimo body del agente y el agente
+    humano dominante por conversacion, arma los episodios por ticket, aplica
+    assign_sessions y hace UPSERT en conversation_sessions (grano sesion) +
+    conversation_session_map (grano episodio). Idempotente. Devuelve la cantidad de
+    sesiones materializadas.
     """
     ensure_sessions_table(cur)
     cur.execute(_LAST_AGENT_SQL, {"account": account})
     last_agent = {r[0]: r[1] for r in cur.fetchall()}
+    cur.execute(_PRIMARY_AGENT_SQL, {"account": account})
+    primary_agent = {r[0]: r[1] for r in cur.fetchall()}
     cur.execute(_CONVERSATIONS_SQL, {"account": account})
     rows = cur.fetchall()
 
@@ -222,6 +257,7 @@ def refresh_account_sessions(cur, account: str) -> int:
             "conversation_id": conv_id,
             "created_at": created_at,
             "last_agent_body": last_agent.get(conv_id),
+            "agent_id": primary_agent.get(conv_id),
         })
 
     sess_rows: list[tuple] = []
