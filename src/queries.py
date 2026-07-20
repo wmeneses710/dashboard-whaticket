@@ -43,6 +43,7 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.rating_rationale, cs.deposit_count, cs.dimensions, cs.message_count, cs.agent_message_count,
        cs.bot_message_count, cs.contact_message_count, cs.first_response_seconds,
        cs.resolution_seconds, cs.was_unassigned, cs.scoring_version, cs.llm_model,
+       cs.rating_applicable, cs.atencion, cs.deposit_observed,
        ct.name AS customer_name, ct.number AS customer_number, t.channel
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
@@ -134,13 +135,46 @@ SELECT count(*) AS total,
              FILTER (WHERE cs.eval_status = 'evaluated') AS operadores""" + _SCORES_JOINS
 
 
+# "Pendiente de evaluar" = sesión CERRADA (end_at < now-6h, misma condición que el
+# worker en PENDING_SESSIONS_SQL) que todavía NO tiene score al día. Es la señal de
+# "hay backfill en curso": el dashboard escaso no es un agujero, es proceso. Scopeado
+# por cuenta + rango de fechas (sobre start_at); los otros filtros (segmento/rating)
+# no aplican a lo aún-no-scoreado.
+_PENDING_SESSIONS_COUNT_SQL = """
+SELECT count(*) AS pendientes
+  FROM conversation_sessions cs
+ WHERE cs.account = %(account)s
+   AND cs.end_at < now() - interval '6 hours'
+   AND NOT EXISTS (
+     SELECT 1 FROM conversation_scores s
+      WHERE s.session_id = cs.session_id AND s.scored_at >= cs.end_at)
+   {date_clause}"""
+
+
+def pending_sessions_count(cur, account: str, date_from=None, date_to=None) -> int:
+    """Sesiones cerradas de la cuenta que aún no fueron scoreadas (backfill en curso)."""
+    params: dict = {"account": account}
+    clause = ""
+    if date_from:
+        clause += " AND cs.start_at >= %(dfrom)s"; params["dfrom"] = date_from
+    if date_to:
+        clause += " AND cs.start_at <= %(dto)s"; params["dto"] = date_to
+    cur.execute(_PENDING_SESSIONS_COUNT_SQL.format(date_clause=clause), params)
+    return int(cur.fetchone()[0])
+
+
 def summary_kpis(cur, account: str, **filters) -> dict:
-    """KPIs agregados en la BD para el filtro dado (reemplaza el cómputo en memoria)."""
+    """KPIs agregados en la BD para el filtro dado (reemplaza el cómputo en memoria).
+    Incluye `pendientes`: sesiones cerradas aún sin scorear (backfill en curso)."""
     where, params = _scores_filters(account, **filters)
     cur.execute(_SUMMARY_KPIS_SQL.format(where=where), params)
     cols = [d.name for d in cur.description]
     row = cur.fetchone()
-    return {c: _coerce(v) for c, v in zip(cols, row)}
+    kpis = {c: _coerce(v) for c, v in zip(cols, row)}
+    kpis["pendientes"] = pending_sessions_count(
+        cur, account, filters.get("date_from"), filters.get("date_to")
+    )
+    return kpis
 
 
 # Mapeo label->estrella y orden de buckets, igual que RATINGS/ORDER del front.
@@ -337,6 +371,7 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        cs.conversation_id, cs.ticket_id, cs.conversation_created_at, cs.eval_status,
        cs.skip_reason, cs.rating_label, cs.stars,
        left(cs.rating_rationale, 160) AS rating_rationale,
+       cs.rating_applicable, cs.atencion,
        COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id

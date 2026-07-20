@@ -399,9 +399,10 @@
           <div class="conv" v-for="cv in t.convs" :key="cv.conversation_id" role="button" tabindex="0"
                @click="openModal(cv.conversation_id)" @keydown.enter.prevent="openModal(cv.conversation_id)" @keydown.space.prevent="openModal(cv.conversation_id)">
             <span class="when num">{{ fmtDate(cv.conversation_created_at) }}</span>
-            <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
+            <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_applicable===false ? 'Adquisición · atención: '+(ATENCION_LABEL[cv.atencion]||cv.atencion||'sin clasificar') : (cv.rating_rationale||'')) : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
             <span class="op">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
-            <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
+            <span class="chip" v-if="cv.eval_status==='evaluated' && cv.rating_applicable===false" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">sin rating (adquisición)</span>
+            <span class="chip" v-else-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
             <span class="chip skip" v-else>sin evaluar</span>
           </div>
         </div>
@@ -432,6 +433,12 @@
         <div class="pane"><h3>Análisis del modelo</h3>
           <div v-if="modal.detail && modal.detail.eval_status!=='evaluated'">
             <div class="why" style="border-color:var(--faint)">No se evaluó: <b>{{ SKIP_LABEL[modal.detail.skip_reason]||modal.detail.skip_reason }}</b>. Queda registrada para explicar la cobertura sin ensuciar la estadística.</div>
+            <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
+          </div>
+          <div v-else-if="modal.detail && modal.detail.rating_applicable===false">
+            <div class="why" style="border-color:var(--faint)">Interacción de <b>adquisición</b> (pitch a un contacto nuevo): no lleva rating de calidad de soporte, porque esa rúbrica mide "¿resolviste el problema?" y acá el trabajo del agente es otro (impulsar el registro/depósito). Se evalúa por <b>atención</b>, no por resolución.</div>
+            <div style="margin:12px 0"><span class="chip" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">atención: {{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion||'sin clasificar' }}</span>
+              <span class="chip" v-if="modal.detail.deposit_observed!==null" style="margin-left:6px;background:color-mix(in srgb, var(--faint) 15%, transparent)">depósito observado: {{ modal.detail.deposit_observed ? 'sí' : 'no' }}</span></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
           </div>
           <div v-else-if="modal.detail">
@@ -487,6 +494,7 @@ const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
 
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", media_only:"solo multimedia" };
+const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
 const RATINGS = {
   excelente:{s:5,c:"--r-excelente"}, buena:{s:4,c:"--r-buena"}, aceptable:{s:3,c:"--r-aceptable"},
   deficiente:{s:2,c:"--r-deficiente"}, mala:{s:1,c:"--r-mala"},
@@ -663,13 +671,18 @@ createApp({
     // ---- computed para la vista ----
     const kpiTiles = computed(() => { const k = summary.kpis||{};
       const cov = k.total ? Math.round(100*k.evaluadas/k.total) : 0;
-      return [
+      const tiles = [
         { k:"Conversaciones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
         { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
         { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} conversaciones` },
         { k:"Cobertura", v:cov, u:"%", foot:`${(k.total||0)-(k.evaluadas||0)} sin evaluar` },
         { k:"Operadores", v:(k.operadores||0), foot:"con atención evaluada" },
       ];
+      // Solo cuando hay backfill en curso: aclara que el dashboard escaso es proceso,
+      // no un agujero (sesiones cerradas que el worker todavía no scoreó).
+      if (k.pendientes > 0) tiles.push(
+        { k:"Pendientes de evaluar", v:k.pendientes, foot:"sesiones cerradas · backfill en curso" });
+      return tiles;
     });
     const distRows = computed(() => { const d = summary.distribution||{};
       const max = Math.max(1, ...ORDER.map(l=>d[l]||0));

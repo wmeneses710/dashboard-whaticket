@@ -17,6 +17,7 @@ from src.queries import (
     _scores_filters,
     _sort_convs,
     _ticket_cards,
+    _TICKETS_CONVS_SQL,
     conversation_detail,
     conversion_by_month,
     conversion_by_operator,
@@ -26,6 +27,7 @@ from src.queries import (
     distribution,
     filter_options,
     operators_table,
+    pending_sessions_count,
     scored_rows,
     summary,
     summary_kpis,
@@ -163,6 +165,30 @@ def test_summary_kpis_agrega_server_side_scopeado_por_cuenta():
     # numeric -> float (evita el bug de string en el JSON)
     assert out["avg_stars"] == 3.2 and isinstance(out["avg_stars"], float)
     assert out["total"] == 120 and out["evaluadas"] == 100 and out["operadores"] == 8
+    assert "pendientes" in out  # sesiones cerradas aún sin scorear (backfill en curso)
+
+
+def test_pending_sessions_count_gate_6h_y_scope():
+    cur = _FakeCursor(one=(42,))
+    n = pending_sessions_count(cur, "datos", date_from="2026-07-01", date_to="2026-07-20")
+    assert n == 42
+    query, params = cur.executed[0]
+    assert "FROM conversation_sessions cs" in query
+    assert "cs.account = %(account)s" in query and params["account"] == "datos"
+    # mismo gate que el worker: cerrada hace >6h y sin score al día
+    assert "interval '6 hours'" in query
+    assert "s.scored_at >= cs.end_at" in query
+    # respeta el rango de fechas sobre start_at
+    assert "cs.start_at >= %(dfrom)s" in query and "cs.start_at <= %(dto)s" in query
+    assert params["dfrom"] == "2026-07-01" and params["dto"] == "2026-07-20"
+
+
+def test_pending_sessions_count_sin_fechas_no_agrega_clausula():
+    cur = _FakeCursor(one=(7,))
+    n = pending_sessions_count(cur, "sistemas")
+    assert n == 7
+    query, _ = cur.executed[0]
+    assert "start_at >=" not in query and "start_at <=" not in query
 
 
 def test_dist_from_labels_bucketea_por_estrella():
@@ -425,3 +451,19 @@ def test_conversation_detail_filtra_por_id_y_agrega_transcript():
     assert params["cid"] == "c1"
     assert d["conversation_id"] == "c1"
     assert d["transcript"] == []
+
+
+def test_conversation_detail_incluye_rating_applicable_y_atencion():
+    # el front necesita distinguir "sin evaluar" de "sin rating aplicable
+    # (adquisición)": sin estas columnas no puede mostrar el estado correcto.
+    cur = _FakeCursor(rows=[], description=["conversation_id"], one=("c1",))
+    conversation_detail(cur, "c1")
+    query, _ = cur.executed[0]
+    assert "cs.rating_applicable" in query
+    assert "cs.atencion" in query
+    assert "cs.deposit_observed" in query
+
+
+def test_tickets_convs_sql_incluye_rating_applicable_y_atencion():
+    assert "cs.rating_applicable" in _TICKETS_CONVS_SQL
+    assert "cs.atencion" in _TICKETS_CONVS_SQL
