@@ -88,3 +88,33 @@ def test_schema_de_salida_depende_de_la_rubrica():
     ]
     # el LLM NO emite stars: esa se calcula aparte
     assert "stars" not in sch["properties"]
+
+
+def test_schema_incluye_atencion_y_deposit_observed_en_properties_no_required():
+    # PIEZA 3 — pase unificado: el schema suma atencion (pasividad portada) y la
+    # observacion de deposito en properties (el grammar los pide), pero NO en required:
+    # son best-effort, no deben hacer fallar un rating por lo demas valido.
+    sch = build_output_schema("human")
+    props = sch["properties"]
+    assert props["atencion"]["enum"] == ["empujo", "pasivo", "no_respondio"]
+    assert props["deposit_observed"]["type"] == "boolean"
+    assert "atencion" not in sch["required"]
+    assert "deposit_observed" not in sch["required"]
+    assert set(sch["required"]) == {"dimensions", "rating_label", "rating_rationale"}
+
+
+def test_prompt_pide_atencion_y_deposit_observed_en_la_forma_json():
+    system, _ = build_scorer_prompt("human", MSGS_HUMAN, thread_context="")
+    assert '"atencion"' in system
+    assert '"deposit_observed"' in system
+    assert "empujo|pasivo|no_respondio" in system
+
+
+def test_prompt_porta_las_reglas_de_atencion_del_operador():
+    system, _ = build_scorer_prompt("human", MSGS_HUMAN, thread_context="")
+    low = system.lower()
+    # solo juzga al operador humano y describe las tres etiquetas
+    assert "operador" in low
+    assert "empujo" in low and "pasivo" in low and "no_respondio" in low
+    # deposit_observed es OBSERVACION, no decision (el gate determinista manda)
+    assert "determinista" in low

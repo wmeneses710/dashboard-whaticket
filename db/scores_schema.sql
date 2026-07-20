@@ -11,6 +11,10 @@
 --
 -- Toda conversacion queda como una fila (incluidas las no-evaluadas, con su
 -- skip_reason) para que el dashboard explique la cobertura sin dañar estadistica.
+--
+-- FUENTE DE LA FORMA: src/store.py (_CREATE_SCORES_TABLE + _SCORES_INDEXES). La
+-- migracion automatica de arranque crea la tabla fresca desde esa constante;
+-- mantener este archivo en sync con store.py.
 -- =============================================================================
 
 BEGIN;
@@ -68,6 +72,12 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
     is_estimate             boolean NOT NULL DEFAULT true,
     scoring_version         text,               -- version de la rubrica
     scored_at               timestamptz NOT NULL DEFAULT now(),
+
+    -- --- Pase LLM unificado (aditivo) ---
+    atencion                text,               -- empujo|pasivo|no_respondio (LLM); NULL si no aplica/skipped
+    deposit_observed        boolean,            -- observacion LLM del deposito (el gate determinista manda)
+    deposit_mismatch        boolean,            -- (deposit_count>0) != deposit_observed; senal de calidad de dato
+    session_id              uuid,               -- soft ref -> sesion (lo llena el paso 2; NULL en path por-conversacion)
 
     CONSTRAINT chk_rubric      CHECK (rubric IN ('human', 'bot')),
     CONSTRAINT chk_eval_status CHECK (eval_status IN ('evaluated', 'skipped')),

@@ -92,8 +92,9 @@ dashboard, atribuidas al **primer agente**.
   nuevo tuvo **≥ 2 sesiones**. Es un hecho determinista sobre el grano sesión; no
   usa LLM. Monótono (una vez `true`, siempre `true`).
 - **D6 — `SCORING_VERSION` como discriminador.** Deja de ser constante muerta; se
-  bumpea en cada cambio de prompt/rúbrica/unidad. El reproceso escribe la versión
-  nueva; las filas viejas quedan distinguibles (auditoría y rollback).
+  bumpea en cada cambio de prompt/rúbrica/unidad (`2026.07-session-v2`). El reproceso
+  arranca de cero; las filas viejas quedan en el backup `conversation_scores_pre_session`
+  (auditoría y rollback — ver sección 7).
 
 ---
 
@@ -126,7 +127,7 @@ estable = entry `first_conversation_id`.
 - Nueva columna `session_id` (= key lógica de la sesión).
 - Nuevas columnas del pase unificado: `atencion` (enum empujó/pasivo/no_respondió),
   `deposit_observed` (bool, observación LLM), `conversion_intent` (opcional).
-- `scoring_version` pasa a versión nueva (p. ej. `2026.08-session-v2`).
+- `scoring_version` pasa a versión nueva (`2026.07-session-v2`).
 - Las filas viejas (por conversación) se conservan bajo su versión hasta archivar.
 
 ### 4.3 `player_conversions`
@@ -194,21 +195,42 @@ Entrada:  transcript MERGEADO de la sesión de entrada del jugador nuevo
 
 ---
 
-## 7. Plan de reproceso
+## 7. Plan de reproceso — DESDE CERO CON BACKUP (decisión B1a)
 
-1. Deploy del código con migraciones idempotentes (crean/alteran tablas al arrancar,
-   patrón `ensure_indexes`/`ensure_table`).
-2. Bump `SCORING_VERSION` a la versión sesión.
-3. Backfill incremental (worker): re-sesionizar todos los tickets → re-scorear por
-   **sesión de entrada** (~80,9 k unidades vs 130 k conversaciones) → recomputar
-   `player_conversions` con `returned` + reconciliación.
-4. Dashboard lee la versión nueva; filtrar por `scoring_version` permite comparar
-   viejo vs nuevo y **rollback** (las filas viejas se conservan).
+Decisión tomada: **desde cero con backup automático**, NO conservar-por-versión. El
+modo incremental/conservar mezclaría datos viejos (incoherentes: fragmentados, con
+skips fantasma) con nuevos + riesgo de doble-conteo. El "vacío" durante el backfill se
+cubre con el **indicador "pendiente de evaluar"** (decisión A, pieza 6): no es agujero,
+es estado.
 
-**Costo**: ~80,9 k sesiones. Además el pase unificado hace **una** llamada LLM donde
-antes había **dos** (rating + pasividad), así que el trabajo LLM cae de forma neta.
-Estimación gruesa: entre ~3,5 días (a ~16/min, ritmo observado en el backfill inicial)
-y ~10 días (a 5,5/min). Se corre incremental y se monitorea.
+1. Deploy del código. Al arrancar, el worker corre `ensure_session_scoring_migration`:
+   **automática, idempotente, bajo `pg_advisory_xact_lock`** (serializa si arrancan dos
+   instancias en un rolling deploy). Renombra `conversation_scores` →
+   `conversation_scores_pre_session` (backup, con sus índices renombrados a `*_presess`
+   para liberar los nombres canónicos) y crea una `conversation_scores` FRESCA de grano
+   sesión. Gate por existencia del backup → no re-renombra en corridas siguientes.
+2. `SCORING_VERSION` bumpeado a `2026.07-session-v2`.
+3. Backfill incremental (worker): re-scorea por **sesión de entrada** (~80,9 k unidades
+   vs 130 k conversaciones), **newest-first** (`ORDER BY end_at DESC`), y recomputa
+   `player_conversions` con `returned` + reconciliación + `attention` desde el score.
+4. Dashboard lee la tabla fresca; muestra **pendiente de evaluar** para las sesiones
+   cerradas aún sin score (deriva de `conversation_sessions.end_at` + presencia en
+   `conversation_scores`). NO filtra por `scoring_version`.
+
+**Rollback runbook** (manual, si algo sale mal): `DROP TABLE conversation_scores;`
+`ALTER TABLE conversation_scores_pre_session RENAME TO conversation_scores;` y revertir
+los índices `ALTER INDEX <name>_presess RENAME TO <name>`. El backup conserva TODAS las
+filas viejas y sus índices, así que el rollback es completo.
+
+**⚠️ GATE DE DEPLOY**: la migración deja el dashboard **vacío** hasta que el backfill
+avance (~3,5–10 días). NO montar en prod **antes** de la pieza 6 (indicador "pendiente
+de evaluar"); si no, el dashboard se ve roto sin explicación. Deploy ordenado:
+pieza 6 primero (o junto), después el flip/migración.
+
+**Costo**: ~80,9 k sesiones. El pase unificado hace **una** llamada LLM donde antes
+había **dos** (rating + pasividad), así que el trabajo LLM cae de forma neta.
+Estimación gruesa: ~3,5 días (a ~16/min, ritmo del backfill inicial) a ~10 días (a
+5,5/min). Incremental y monitoreado (logger con timing + fast/fallback por ciclo).
 
 ---
 

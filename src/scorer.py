@@ -29,15 +29,20 @@ class ScoreResult:
     rating_rationale: str
     stars: int
     llm_model: str
+    atencion: str | None            # empujo|pasivo|no_respondio; None si el LLM no dio uno valido
+    deposit_observed: bool | None   # observacion LLM del deposito (el gate determinista manda)
 
 
 def _validate(raw: dict, schema: dict) -> None:
-    """Verifica que la salida del LLM tenga las claves requeridas.
+    """Verifica que la salida del LLM tenga las claves del RATING (lo unico duro).
 
     Reemplaza la garantia que daria el schema-grammar (que no usamos): pedimos la
-    forma en el prompt y la validamos aca.
+    forma en el prompt y la validamos aca. `atencion`/`deposit_observed` NO son
+    duros: si el LLM los omite o los manda mal, NO descartamos un rating por lo
+    demas valido (se degradan a None en score_conversation). Un rating sin esos
+    ejes es preferible a dejar la conversacion atascada reintentando para siempre.
     """
-    for key in schema["required"]:
+    for key in ("dimensions", "rating_label", "rating_rationale"):
         if key not in raw:
             raise ValueError(f"salida del LLM sin la clave requerida: {key!r}")
     dims = raw.get("dimensions")
@@ -46,6 +51,25 @@ def _validate(raw: dict, schema: dict) -> None:
     for key in schema["properties"]["dimensions"]["required"]:
         if key not in dims:
             raise ValueError(f"salida del LLM: falta la dimension {key!r}")
+
+
+def _as_bool(v):
+    """Parseo tolerante de deposit_observed: el fast path (format=json) NO garantiza
+    un bool real. bool('false') seria True -> hay que parsear el string.
+    None (no vino) o valor AMBIGUO -> None: no inventamos un False que dispararia un
+    deposit_mismatch falso; degradamos igual que atencion fuera del enum."""
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return v != 0
+    s = str(v).strip().lower()
+    if s in ("true", "1", "si", "sí", "yes"):
+        return True
+    if s in ("false", "0", "no"):
+        return False
+    return None  # ambiguo ("no sé", "", etc.) -> sin observacion
 
 
 def score_conversation(
@@ -63,6 +87,10 @@ def score_conversation(
 
     label = raw["rating_label"]
     stars = label_to_stars(rubric, label)  # valida la etiqueta contra la rubrica
+    # atencion best-effort: si falta o no esta en el enum -> None (no descarta el rating).
+    atencion = raw.get("atencion")
+    if atencion not in schema["properties"]["atencion"]["enum"]:
+        atencion = None
     return ScoreResult(
         rubric=rubric,
         dimensions=raw["dimensions"],
@@ -70,4 +98,6 @@ def score_conversation(
         rating_rationale=raw["rating_rationale"],
         stars=stars,
         llm_model=llm.model,
+        atencion=atencion,
+        deposit_observed=_as_bool(raw.get("deposit_observed")),
     )

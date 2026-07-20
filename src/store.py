@@ -22,7 +22,139 @@ from src.metrics import (
 from src.scorer import ScoreResult
 from src.segments import segment_for_queue
 
-SCORING_VERSION = "2026.07-v1"
+SCORING_VERSION = "2026.07-session-v2"
+
+# =============================================================================
+# Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
+# actuales). store.py es la FUENTE de esta forma; db/scores_schema.sql debe
+# mantenerse en sync con estas sentencias.
+#
+# Sin BEGIN/COMMIT ni ALTER de retrocompat: es la tabla FRESCA que crea la
+# migración "desde cero con backup". No lleva `%` para no colisionar con el
+# paramstyle de psycopg. Idempotente por CREATE ... IF NOT EXISTS.
+# =============================================================================
+_CREATE_SCORES_TABLE = """
+CREATE TABLE IF NOT EXISTS conversation_scores (
+    conversation_id         uuid PRIMARY KEY,
+    account                 text NOT NULL,
+    ticket_id               uuid,
+    segment                 text,
+    queue_name              text,
+    channel                 text,
+    user_id                 uuid,
+    user_name               text,
+    conversation_created_at timestamptz,
+    resolved_at             timestamptz,
+
+    rubric                  text NOT NULL,
+    eval_status             text NOT NULL,
+    skip_reason             text,
+
+    first_response_seconds  numeric,
+    resolution_seconds      numeric,
+    message_count           integer,
+    agent_message_count     integer,
+    bot_message_count       integer,
+    contact_message_count   integer,
+    was_unassigned          boolean,
+
+    dimensions              jsonb,
+    llm_model               text,
+
+    rating_label            text,
+    rating_rationale        text,
+
+    resultado               text,
+    deposit_count           integer,
+
+    stars                   numeric,
+    stars_breakdown         jsonb,
+
+    is_estimate             boolean NOT NULL DEFAULT true,
+    scoring_version         text,
+    scored_at               timestamptz NOT NULL DEFAULT now(),
+
+    atencion                text,
+    deposit_observed        boolean,
+    deposit_mismatch        boolean,
+    session_id              uuid,
+
+    CONSTRAINT chk_rubric      CHECK (rubric IN ('human', 'bot')),
+    CONSTRAINT chk_eval_status CHECK (eval_status IN ('evaluated', 'skipped')),
+    CONSTRAINT chk_eval_coherence CHECK (
+        (eval_status = 'skipped'   AND stars IS NULL     AND skip_reason IS NOT NULL) OR
+        (eval_status = 'evaluated' AND skip_reason IS NULL)
+    ),
+    CONSTRAINT chk_stars_range CHECK (stars IS NULL OR (stars >= 1 AND stars <= 5))
+)"""
+
+# Índices de db/scores_schema.sql + idx por session_id (grano sesión).
+_SCORES_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_scores_account_segment ON conversation_scores (account, segment)",
+    "CREATE INDEX IF NOT EXISTS idx_scores_user            ON conversation_scores (user_id)",
+    "CREATE INDEX IF NOT EXISTS idx_scores_created         ON conversation_scores (conversation_created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_scores_rubric_status   ON conversation_scores (rubric, eval_status)",
+    "CREATE INDEX IF NOT EXISTS idx_scores_session         ON conversation_scores (session_id)",
+)
+
+# Nombre del backup de la tabla previa (grano conversación) que deja la migración.
+_SCORES_BACKUP_TABLE = "conversation_scores_pre_session"
+
+
+def _create_fresh_scores(cur) -> None:
+    """Crea la tabla fresca conversation_scores + índices (idempotente)."""
+    cur.execute(_CREATE_SCORES_TABLE)
+    for stmt in _SCORES_INDEXES:
+        cur.execute(stmt)
+
+
+def ensure_session_scoring_migration(cur) -> dict:
+    """Migración AUTOMÁTICA e IDEMPOTENTE "desde cero con backup".
+
+    Al arrancar el servicio: renombra la tabla vieja conversation_scores a un
+    backup (`conversation_scores_pre_session`) y crea una tabla FRESCA de grano
+    sesión, para empezar el scoring de cero SIN perder lo anterior.
+
+    Idempotente: el gate es la EXISTENCIA del backup.
+      - Sin backup + tabla vieja presente -> RENAME + crea fresca. migrated=True.
+      - Sin backup + sin tabla vieja (install nueva) -> solo crea fresca. migrated=False
+        (no había nada que respaldar, no fue una migración real).
+      - Con backup (ya migrado) -> NO re-renombra (no destruye); solo asegura la
+        fresca (CREATE IF NOT EXISTS). migrated=False.
+
+    Devuelve {"migrated": bool}; True SOLO cuando efectivamente renombró.
+    """
+    # Lock de transacción: dos workers arrancando a la vez (rolling deploy) podrían
+    # competir en el RENAME. El advisory lock serializa la migración; se libera solo
+    # al commit de la transacción del caller. El 2do worker espera y ve el backup ya
+    # creado -> no re-renombra.
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext('conversation_scores_migration'))")
+    cur.execute(f"SELECT to_regclass('{_SCORES_BACKUP_TABLE}')")
+    backup = cur.fetchone()[0]
+    if backup is None:
+        cur.execute("SELECT to_regclass('conversation_scores')")
+        old = cur.fetchone()[0]
+        migrated = old is not None
+        if migrated:
+            cur.execute(
+                f"ALTER TABLE conversation_scores RENAME TO {_SCORES_BACKUP_TABLE}"
+            )
+            # RENAME TABLE NO renombra los indices: quedan con sus nombres canonicos
+            # pegados al backup, y el CREATE INDEX IF NOT EXISTS de la fresca los
+            # saltearia (colision de nombre) dejandola SIN indices -> dashboard lento.
+            # Liberamos los nombres canonicos renombrando los indices del backup.
+            cur.execute(
+                "SELECT indexname FROM pg_indexes WHERE tablename = %s",
+                (_SCORES_BACKUP_TABLE,),
+            )
+            for (idxname,) in cur.fetchall():
+                if not idxname.endswith("_presess"):
+                    cur.execute(f'ALTER INDEX "{idxname}" RENAME TO "{idxname}_presess"')
+        _create_fresh_scores(cur)
+        return {"migrated": migrated}
+    # Ya migrado: no tocar el backup ni la fresca existente, solo asegurar forma.
+    _create_fresh_scores(cur)
+    return {"migrated": False}
 
 _COLUMNS = (
     "conversation_id", "account", "ticket_id", "segment", "queue_name", "channel",
@@ -33,7 +165,26 @@ _COLUMNS = (
     "contact_message_count", "was_unassigned",
     "dimensions", "llm_model", "rating_label", "rating_rationale",
     "stars", "stars_breakdown", "deposit_count", "is_estimate", "scoring_version",
+    "atencion", "deposit_observed", "deposit_mismatch", "session_id",
 )
+
+# Columnas nuevas del pase LLM unificado. ensure_scores_columns() las agrega a una
+# tabla de prod ya creada (el CREATE ... IF NOT EXISTS no agrega columnas). Mismo
+# patron self-healing que conversions.ensure_table.
+_SCORES_COLUMN_TYPES = (
+    ("atencion", "text"),
+    ("deposit_observed", "boolean"),
+    ("deposit_mismatch", "boolean"),
+    ("session_id", "uuid"),
+)
+
+
+def ensure_scores_columns(cur) -> None:
+    """Agrega las columnas del pase LLM unificado si faltan (idempotente)."""
+    for col, coltype in _SCORES_COLUMN_TYPES:
+        cur.execute(
+            f"ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS {col} {coltype}"
+        )
 
 
 def build_score_record(
@@ -47,6 +198,7 @@ def build_score_record(
     operator_id=None,
     operator_name: str | None = None,
     deposit_count: int = 0,
+    session_id=None,
     scoring_version: str = SCORING_VERSION,
 ) -> dict[str, Any]:
     """Arma el dict de columnas para conversation_scores.
@@ -88,6 +240,12 @@ def build_score_record(
         "deposit_count": deposit_count,
         "is_estimate": True,
         "scoring_version": scoring_version,
+        # Pase LLM unificado. En el path por-conversacion session_id llega None (lo
+        # llena el paso 2). atencion/deposit_observed solo si hubo score.
+        "atencion": None,
+        "deposit_observed": None,
+        "deposit_mismatch": _deposit_mismatch(deposit_count, score),
+        "session_id": session_id,
     }
     if score is not None:
         record.update(
@@ -102,8 +260,22 @@ def build_score_record(
                 "stars": score.stars,
                 "scoring_version": scoring_version,
             },
+            atencion=score.atencion,
+            deposit_observed=score.deposit_observed,
         )
     return record
+
+
+def _deposit_mismatch(deposit_count: int, score: ScoreResult | None) -> bool | None:
+    """Reconciliacion determinista vs LLM del deposito (senal de calidad de dato).
+
+    None si no se puede reconciliar (sin score o el LLM no observo el deposito).
+    Si no: True cuando el gate determinista (deposit_count>0) y la observacion del
+    LLM discrepan. El determinista manda; el flag solo marca la discrepancia.
+    """
+    if score is None or score.deposit_observed is None:
+        return None
+    return (deposit_count > 0) != score.deposit_observed
 
 
 # Columnas JSONB que hay que envolver para psycopg.

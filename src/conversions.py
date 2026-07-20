@@ -32,8 +32,9 @@ _CREATE_STMTS = (
         updated_at            timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (account, contact_id)
     )""",
-    # attention = clasificación LLM de pasividad (empujo|pasivo|no_respondio); NULL =
-    # sin clasificar. ALTER para tablas ya creadas por una versión previa del pase.
+    # attention = atención del operador (empujo|pasivo|no_respondio) tomada del SCORE
+    # DE SESIÓN (conversation_scores.atencion) de la conversación de ENTRADA; NULL = la
+    # sesión aún no fue scoreada. ALTER para tablas ya creadas por una versión previa.
     "ALTER TABLE player_conversions ADD COLUMN IF NOT EXISTS attention text",
     "CREATE INDEX IF NOT EXISTS idx_player_conv_op    ON player_conversions (account, user_id)",
     "CREATE INDEX IF NOT EXISTS idx_player_conv_month ON player_conversions (account, first_at)",
@@ -43,10 +44,13 @@ _CREATE_STMTS = (
 #  - first_conv: su conversación de ENTRADA (la más antigua) -> operador/canal/fecha.
 #  - first_op:  operador dominante de esa conversación (más mensajes de negocio humano).
 #  - person_deposit: si CUALQUIER conversación de la persona tiene comprobante+recarga.
+#  - attention: atención del operador tomada del SCORE DE SESIÓN (conversation_scores
+#    .atencion) de la conversación de ENTRADA. Determinista, sin LLM: el pase de sesión
+#    ya la clasificó; acá solo se copia.
 # contact_id se castea a text (evita mismatch de tipos uuid/bigint; ver bug card_key).
 _REFRESH_SQL = """
 INSERT INTO player_conversions
-      (account, contact_id, first_at, first_conversation_id, user_id, channel, segment, deposited)
+      (account, contact_id, first_at, first_conversation_id, user_id, channel, segment, deposited, attention)
 WITH jugador_convs AS (
   SELECT c.id AS conv_id, c.created_at, c.is_new_contact,
          t.contact_id::text AS contact_id, t.channel
@@ -90,14 +94,20 @@ person_deposit AS (
    GROUP BY jc.contact_id
 )
 SELECT %(account)s, fc.contact_id, fc.first_at, fc.first_conversation_id,
-       fo.user_id, fc.channel, 'jugador', coalesce(pd.deposited, false)
+       fo.user_id, fc.channel, 'jugador', coalesce(pd.deposited, false), cs.atencion
   FROM first_conv fc
   LEFT JOIN first_op fo ON fo.conversation_id = fc.first_conversation_id
   LEFT JOIN person_deposit pd ON pd.contact_id = fc.contact_id
+  LEFT JOIN conversation_scores cs ON cs.conversation_id = fc.first_conversation_id
 ON CONFLICT (account, contact_id) DO UPDATE
    SET deposited = EXCLUDED.deposited, user_id = EXCLUDED.user_id,
        channel = EXCLUDED.channel, first_at = EXCLUDED.first_at,
-       first_conversation_id = EXCLUDED.first_conversation_id, updated_at = now()
+       first_conversation_id = EXCLUDED.first_conversation_id,
+       -- COALESCE: no pisar un attention bueno con NULL cuando la sesion de entrada
+       -- todavia no tiene score (post-migracion la tabla fresca esta vacia; sin este
+       -- guard el 1er refresh borraria en masa la columna de pasividad del dashboard).
+       attention = COALESCE(EXCLUDED.attention, player_conversions.attention),
+       updated_at = now()
 """
 
 
@@ -116,38 +126,3 @@ def refresh_account_conversions(cur, account: str) -> int:
         return 0
     cur.execute(_REFRESH_SQL, {"account": account, "qids": qids, "re": RECHARGE_PATTERN})
     return cur.rowcount
-
-
-# Pase LLM de PASIVIDAD: clasifica la conversación de ENTRADA de cada jugador nuevo
-# con operador humano (user_id) que aún no tenga `attention`. Incremental (batch por
-# ciclo, como el scorer): se pone al día con el tiempo. Solo filas con operador humano
-# (los bot no van al cuadro por operador).
-_PENDING_ATTENTION_SQL = """
-SELECT contact_id, first_conversation_id FROM player_conversions
- WHERE account = %(account)s AND attention IS NULL
-   AND first_conversation_id IS NOT NULL AND user_id IS NOT NULL
- LIMIT %(limit)s"""
-
-
-def classify_passivity_batch(conn, llm, account: str, limit: int = 20) -> dict:
-    """Clasifica un batch de conversaciones de entrada sin `attention`. Devuelve
-    {seen, classified}. Usa el LLM (pase con modelo), commit por fila clasificada."""
-    from src.context import fetch_messages
-    from src.passivity import classify_passivity
-
-    with conn.cursor() as cur:
-        cur.execute(_PENDING_ATTENTION_SQL, {"account": account, "limit": limit})
-        pending = cur.fetchall()
-    classified = 0
-    for contact_id, conv_id in pending:
-        with conn.cursor() as cur:
-            msgs = fetch_messages(cur, conv_id)
-        label = classify_passivity(llm, msgs)
-        if not label:
-            continue  # LLM no devolvió válido -> se reintenta en otro ciclo
-        with conn.cursor() as cur:
-            cur.execute("UPDATE player_conversions SET attention = %s, updated_at = now() "
-                        "WHERE account = %s AND contact_id = %s", (label, account, contact_id))
-        conn.commit()
-        classified += 1
-    return {"seen": len(pending), "classified": classified}

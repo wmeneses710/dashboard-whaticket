@@ -1,6 +1,10 @@
 """Clasificación LLM de la ATENCIÓN del operador (empujó vs pasivo) para el cuadro
 conversión vs pasividad del análisis.
 
+SUPERSEDED por el pase LLM unificado (src/prompts.py); ya no se usa en el worker.
+Las reglas de este prompt fueron portadas al pase unificado; este módulo queda como
+documentación/tests de esas reglas.
+
 El detector determinista (CTA-keyword) daba una barra demasiado blanda (1-7% pasivo)
 vs el 20-50% del análisis, porque cuenta como "activo" cualquier mención de embudo.
 El negocio quiere la barra del análisis, que era un JUICIO del modelo. Este es un

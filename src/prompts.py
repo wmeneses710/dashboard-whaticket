@@ -18,6 +18,12 @@ from src.rubrics import RubricSpec, get_rubric
 # Rotulo del lado "negocio" (from_me=True) segun quien atiende esa rubrica.
 _BUSINESS_LABEL = {"human": "Agente", "bot": "Bot"}
 
+# Etiquetas de ATENCION del operador (pasividad portada al pase unificado). ASCII,
+# igual que src/passivity.py (no se importa de alli para no crear un ciclo: passivity
+# ya importa de este modulo). empujo = impulso concreto de la conversion; pasivo =
+# solo saludo/pregunto/informo sin impulsar; no_respondio = casi no atendio.
+ATENCION_LABELS = ("empujo", "pasivo", "no_respondio")
+
 # Truncado de transcripts largos para no reventar num_ctx: si hay mas de
 # TRANSCRIPT_MAX mensajes reales, se conservan la cabeza (el motivo) y la cola
 # (el cierre) con una marca de lo omitido en el medio. El guardarrail duro para
@@ -71,7 +77,28 @@ Dimensiones y criterios:
 Etiquetas permitidas (de mejor a peor): {etiquetas}
 Cada dimension DEBE llevar una nota concreta de 1 frase citando evidencia del \
 chat; no dejes ninguna nota vacia. Devolve tambien la lista de errores concretos \
-(vacia si no hay), la etiqueta elegida y su justificacion.\
+(vacia si no hay), la etiqueta elegida y su justificacion.
+
+ATENCION DEL OPERADOR (campo "atencion"): ademas de la calificacion, clasifica en \
+UNA etiqueta el ESFUERZO del OPERADOR HUMANO (Agente) por impulsar la conversion \
+(registro/deposito/apuesta). Juzga SOLO al operador humano: NO al bot, NO al cliente, \
+y NO juzgues si el cliente termino depositando (eso es otro eje).
+- empujo: el operador IMPULSO CONCRETAMENTE la conversion con una accion real: \
+ofrecer/guiar el registro, pedir datos para crear la cuenta, invitar a \
+depositar/recargar/apostar, mandar un link, o presentar la promo/bono. Si no hay \
+NINGUNA de esas acciones, NO es empujo.
+- pasivo: el operador solo saludo, hizo una pregunta suelta, informo o respondio una \
+duda SIN impulsar la conversion. Un simple "Hola", "en que te ayudo" o una pregunta \
+trivial = pasivo (no ofrecio nada).
+- no_respondio: el operador practicamente no atendio lo que el cliente necesitaba.
+Ejemplos: "Hola" -> pasivo; "te ayudo a crear tu cuenta?" -> empujo; "en que le puedo \
+ayudar?" -> pasivo; "registrate y hace tu primera recarga de $5" -> empujo.
+
+OBSERVACION DE DEPOSITO (campo "deposit_observed"): marca true SOLO si en el \
+transcript aparece un comprobante o recarga reconocida (una captura/imagen de pago o \
+un mensaje que confirme la recarga); en caso contrario false. Es una OBSERVACION, NO \
+una decision: el conteo real de depositos lo dictamina un gate DETERMINISTA aparte y \
+ese manda; vos solo reportas lo que se ve en el texto.\
 """
 
 _USER_TEMPLATE = """\
@@ -127,12 +154,15 @@ def _json_shape_block(spec: RubricSpec) -> str:
     """
     dims = ", ".join(f'"{d.key}": "<nota de 1 frase con evidencia>"' for d in spec.dimensions)
     labels = "|".join(spec.labels_desc)
+    atencion = "|".join(ATENCION_LABELS)
     return (
         "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, "
         "con esta forma EXACTA:\n"
         '{"dimensions": {' + dims + ', "errores": []}, '
         f'"rating_label": "<una de: {labels}>", '
-        '"rating_rationale": "<2-4 frases especificas de esta conversacion>"}'
+        '"rating_rationale": "<2-4 frases especificas de esta conversacion>", '
+        f'"atencion": "<una de: {atencion}>", '
+        '"deposit_observed": <true|false>}'
     )
 
 
@@ -175,6 +205,10 @@ def build_output_schema(rubric: str) -> dict:
             },
             "rating_label": {"type": "string", "enum": list(spec.labels_desc)},
             "rating_rationale": {"type": "string"},
+            "atencion": {"type": "string", "enum": list(ATENCION_LABELS)},
+            "deposit_observed": {"type": "boolean"},
         },
+        # atencion/deposit_observed van en properties (el grammar los pide) pero NO en
+        # required: son best-effort, no deben hacer fallar un rating por lo demas valido.
         "required": ["dimensions", "rating_label", "rating_rationale"],
     }
