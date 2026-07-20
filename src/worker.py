@@ -102,6 +102,7 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     import psycopg
 
     from src.conversions import classify_passivity_batch, refresh_account_conversions
+    from src.sessions import refresh_account_sessions
 
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
     log(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
@@ -130,6 +131,15 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                         except Exception as e:  # noqa: BLE001
                             conn.rollback()
                             log(f"[worker] conversión {account} error: {type(e).__name__}: {e}")
+                        # Sesionización (determinista, grano sesión): aditivo, no toca el scoring.
+                        try:
+                            with conn.cursor() as cur:
+                                s = refresh_account_sessions(cur, account)
+                            conn.commit()
+                            log(f"[worker] sesiones {account}: {s} sesiones")
+                        except Exception as e:  # noqa: BLE001
+                            conn.rollback()
+                            log(f"[worker] sesiones {account} error: {type(e).__name__}: {e}")
                     last_conv = time.time()
                 # Pase de PASIVIDAD (LLM): clasifica un batch de entradas sin attention.
                 # Cuenta como 'seen' para que el loop siga sin dormir mientras haya pendientes.
