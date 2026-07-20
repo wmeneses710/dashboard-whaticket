@@ -58,6 +58,12 @@ class _CtxConn:
         pass
 
 
+def test_conv_fields_incluye_is_new_contact():
+    # necesario para detectar adquisicion (is_new_contact AND segmento jugador) en
+    # build_score_record; sin esta columna la conversacion de ENTRADA no la trae.
+    assert "c.is_new_contact" in worker._CONV_FIELDS
+
+
 def test_fetch_pending_filtra_por_cuenta_y_excluye_ya_scoreadas():
     cur = _FakeCursor([], description=[])
     fetch_pending(cur, "datos", 20)

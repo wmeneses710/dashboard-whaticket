@@ -19,6 +19,7 @@ from src.metrics import (
     resolution_seconds,
     was_unassigned,
 )
+from src.queries import _jugador_queue_ids
 from src.scorer import ScoreResult
 from src.segments import segment_for_queue
 
@@ -78,6 +79,14 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
     deposit_observed        boolean,
     deposit_mismatch        boolean,
     session_id              uuid,
+
+    -- Opción B (adquisición): false cuando la fila es un pitch de venta a un
+    -- contacto NUEVO del segmento jugador. La rúbrica de SOPORTE mide "¿resolviste
+    -- el problema?", y un pitch (registrate+depositá) no es eso: dimensions/
+    -- rating_label/rating_rationale/stars quedan NULL y no deben promediarse en la
+    -- calidad de soporte. atencion/deposit_observed SÍ siguen aplicando (esa es la
+    -- métrica correcta para adquisición). Ver is_acquisition_pitch/build_score_record.
+    rating_applicable       boolean NOT NULL DEFAULT true,
 
     CONSTRAINT chk_rubric      CHECK (rubric IN ('human', 'bot')),
     CONSTRAINT chk_eval_status CHECK (eval_status IN ('evaluated', 'skipped')),
@@ -166,6 +175,7 @@ _COLUMNS = (
     "dimensions", "llm_model", "rating_label", "rating_rationale",
     "stars", "stars_breakdown", "deposit_count", "is_estimate", "scoring_version",
     "atencion", "deposit_observed", "deposit_mismatch", "session_id",
+    "rating_applicable",
 )
 
 # Columnas nuevas del pase LLM unificado. ensure_scores_columns() las agrega a una
@@ -176,6 +186,7 @@ _SCORES_COLUMN_TYPES = (
     ("deposit_observed", "boolean"),
     ("deposit_mismatch", "boolean"),
     ("session_id", "uuid"),
+    ("rating_applicable", "boolean NOT NULL DEFAULT true"),
 )
 
 
@@ -185,6 +196,15 @@ def ensure_scores_columns(cur) -> None:
         cur.execute(
             f"ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS {col} {coltype}"
         )
+
+
+def is_acquisition_pitch(conversation: dict, segment: str) -> bool:
+    """True si la sesión es un pitch de venta a un contacto NUEVO del segmento
+    jugador (Opción B). is_new_contact viene de la conversación de ENTRADA de la
+    sesión; las sesiones de RETORNO del mismo contacto (recargas/retiros) tienen
+    is_new_contact=False y NO son adquisición: son transaccionales, la rúbrica de
+    soporte las mide bien."""
+    return bool(conversation.get("is_new_contact")) and segment == "jugador"
 
 
 def build_score_record(
@@ -208,11 +228,13 @@ def build_score_record(
     asignacion de whaticket (conversations.user_id).
     """
     c = conversation
+    segment = segment_for_queue(c.get("queue_name"))
+    acquisition = is_acquisition_pitch(c, segment)
     record: dict[str, Any] = {
         "conversation_id": c["id"],
         "account": c.get("account"),
         "ticket_id": c.get("ticket_id"),
-        "segment": segment_for_queue(c.get("queue_name")),
+        "segment": segment,
         "queue_name": c.get("queue_name"),
         "channel": c.get("channel"),
         "user_id": operator_id,
@@ -246,23 +268,30 @@ def build_score_record(
         "deposit_observed": None,
         "deposit_mismatch": _deposit_mismatch(deposit_count, score),
         "session_id": session_id,
+        # Opción B: la rúbrica de SOPORTE ("¿resolviste el problema?") no aplica a un
+        # pitch de venta a un contacto nuevo. atencion/deposit_observed sí aplican
+        # siempre (se calculan más abajo desde `score` como hoy).
+        "rating_applicable": not acquisition,
     }
     if score is not None:
         record.update(
-            dimensions=score.dimensions,
             llm_model=score.llm_model,
-            rating_label=score.rating_label,
-            rating_rationale=score.rating_rationale,
-            stars=score.stars,
-            stars_breakdown={
-                "rubric": score.rubric,
-                "label": score.rating_label,
-                "stars": score.stars,
-                "scoring_version": scoring_version,
-            },
             atencion=score.atencion,
             deposit_observed=score.deposit_observed,
         )
+        if not acquisition:
+            record.update(
+                dimensions=score.dimensions,
+                rating_label=score.rating_label,
+                rating_rationale=score.rating_rationale,
+                stars=score.stars,
+                stars_breakdown={
+                    "rubric": score.rubric,
+                    "label": score.rating_label,
+                    "stars": score.stars,
+                    "scoring_version": scoring_version,
+                },
+            )
     return record
 
 
@@ -276,6 +305,36 @@ def _deposit_mismatch(deposit_count: int, score: ScoreResult | None) -> bool | N
     if score is None or score.deposit_observed is None:
         return None
     return (deposit_count > 0) != score.deposit_observed
+
+
+# Corrección "Opción B" de UNA SOLA PASADA (SQL puro, sin LLM) para filas de
+# conversation_scores que el backfill ya escribió ANTES de este fix: limpia el
+# rating de soporte de las sesiones de adquisición (contacto nuevo + segmento
+# jugador) ya persistidas. Reusa _jugador_queue_ids (misma fuente de colas
+# jugador que conversions.py) en vez de reimplementar la clasificación.
+_FIX_ACQUISITION_RATINGS_SQL = """
+UPDATE conversation_scores cs
+   SET dimensions=NULL, rating_label=NULL, rating_rationale=NULL, stars=NULL,
+       stars_breakdown=NULL, rating_applicable=false
+  FROM conversations c
+ WHERE cs.conversation_id = c.id
+   AND cs.account = %(account)s
+   AND c.is_new_contact
+   AND c.queue_id = ANY(%(qids)s)
+   AND cs.rating_applicable IS DISTINCT FROM false
+"""
+
+
+def fix_acquisition_ratings(cur, account: str) -> int:
+    """Corrige filas YA persistidas cuyo rating de soporte no debía aplicar
+    (Opción B, ver is_acquisition_pitch). Idempotente: el guard
+    `rating_applicable IS DISTINCT FROM false` evita re-tocar filas ya
+    corregidas. Devuelve la cantidad de filas afectadas."""
+    qids = _jugador_queue_ids(cur, account)
+    if not qids:
+        return 0
+    cur.execute(_FIX_ACQUISITION_RATINGS_SQL, {"account": account, "qids": qids})
+    return cur.rowcount
 
 
 # Columnas JSONB que hay que envolver para psycopg.

@@ -2,13 +2,17 @@
 import re
 from datetime import datetime, timedelta, timezone
 
+import src.store as store
 from src.metrics import message_stats
 from src.scorer import ScoreResult
 from src.store import (
     SCORING_VERSION,
+    _CREATE_SCORES_TABLE,
     build_score_record,
     ensure_scores_columns,
     ensure_session_scoring_migration,
+    fix_acquisition_ratings,
+    is_acquisition_pitch,
 )
 
 
@@ -17,6 +21,7 @@ class _FakeCursor:
 
     def __init__(self):
         self.executed = []
+        self.rowcount = 0
 
     def execute(self, query, params=None):
         self.executed.append((query, params))
@@ -287,3 +292,123 @@ def test_migracion_idempotente_segunda_corrida_no_renombra():
 
 def test_scoring_version_bumped_a_session_v2():
     assert SCORING_VERSION == "2026.07-session-v2"
+
+
+# --- Opción B: adquisición (contacto nuevo, segmento jugador) no lleva rating ----
+# de SOPORTE (mide "¿resolviste el problema?"), porque un pitch de venta no es
+# eso. Sigue llevando atencion/deposit_observed (esos SÍ son la métrica correcta).
+
+
+def test_is_acquisition_pitch_true_si_nuevo_y_jugador():
+    assert is_acquisition_pitch({"is_new_contact": True}, "jugador") is True
+
+
+def test_is_acquisition_pitch_false_si_no_es_contacto_nuevo():
+    # retorno (recarga/retiro) del mismo contacto: transaccional, la rúbrica lo maneja bien
+    assert is_acquisition_pitch({"is_new_contact": False}, "jugador") is False
+
+
+def test_is_acquisition_pitch_false_si_segmento_no_es_jugador():
+    assert is_acquisition_pitch({"is_new_contact": True}, "agente") is False
+
+
+def test_is_acquisition_pitch_false_sin_is_new_contact():
+    assert is_acquisition_pitch({}, "jugador") is False
+
+
+def test_adquisicion_con_score_no_lleva_rating_pero_si_atencion_y_deposito():
+    score = _score(atencion="empujo", deposit_observed=True)
+    r = _record(
+        conversation={**CONV, "is_new_contact": True}, score=score, deposit_count=1,
+    )
+    assert r["dimensions"] is None
+    assert r["rating_label"] is None
+    assert r["rating_rationale"] is None
+    assert r["stars"] is None
+    assert r["atencion"] == "empujo"        # SÍ aplica a adquisición
+    assert r["deposit_observed"] is True    # SÍ aplica a adquisición
+    assert r["rating_applicable"] is False
+
+
+def test_retorno_con_score_lleva_rating_normal_como_hoy():
+    score = _score()
+    r = _record(conversation={**CONV, "is_new_contact": False}, score=score)
+    assert r["rating_label"] == "buena"
+    assert r["stars"] == 4
+    assert r["dimensions"] is not None
+    assert r["rating_applicable"] is True
+
+
+def test_no_jugador_con_score_lleva_rating_normal_aunque_sea_contacto_nuevo():
+    other_queue_conv = {**CONV, "queue_name": "Agente", "is_new_contact": True}
+    score = _score()
+    r = _record(conversation=other_queue_conv, score=score)
+    assert r["segment"] == "agente"
+    assert r["rating_label"] == "buena"
+    assert r["rating_applicable"] is True
+
+
+def test_adquisicion_skipped_rating_applicable_false_igual():
+    r = _record(
+        conversation={**CONV, "is_new_contact": True},
+        eval_status="skipped", skip_reason="no_customer_reply", score=None,
+    )
+    assert r["rating_applicable"] is False
+    assert r["rating_label"] is None
+
+
+def test_create_table_incluye_rating_applicable():
+    assert "rating_applicable" in _CREATE_SCORES_TABLE
+
+
+def test_ensure_scores_columns_incluye_rating_applicable():
+    cur = _FakeCursor()
+    ensure_scores_columns(cur)
+    qs = [q for q, _ in cur.executed]
+    assert any(
+        "ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS" in q
+        and "rating_applicable" in q
+        for q in qs
+    ), "falta ALTER para rating_applicable"
+
+
+# --- fix_acquisition_ratings: corrección de una sola pasada (SQL puro, sin LLM) --
+
+
+def test_fix_acquisition_ratings_qids_vacio_no_ejecuta_update(monkeypatch):
+    monkeypatch.setattr(store, "_jugador_queue_ids", lambda cur, account: [])
+    cur = _FakeCursor()
+    n = fix_acquisition_ratings(cur, "sistemas")
+    assert n == 0
+    assert not any("UPDATE conversation_scores" in q for q, _ in cur.executed)
+
+
+def test_fix_acquisition_ratings_arma_el_update_correcto(monkeypatch):
+    monkeypatch.setattr(store, "_jugador_queue_ids", lambda cur, account: ["q1", "q2"])
+    cur = _FakeCursor()
+    cur.rowcount = 5
+    n = fix_acquisition_ratings(cur, "sistemas")
+    assert n == 5
+    upd = [(q, p) for q, p in cur.executed if "UPDATE conversation_scores" in q]
+    assert len(upd) == 1
+    query, params = upd[0]
+    assert "SET dimensions=NULL" in query or "SET dimensions = NULL" in query
+    # stars_breakdown es JSONB derivado de rating_label/stars; si no se limpia junto,
+    # el rating manchado quedaria filtrando por ahi aunque rating_label sea NULL.
+    assert "stars_breakdown=NULL" in query or "stars_breakdown = NULL" in query
+    assert "rating_applicable=false" in query or "rating_applicable = false" in query
+    assert "c.is_new_contact" in query
+    assert "c.queue_id = ANY(%(qids)s)" in query
+    assert "rating_applicable IS DISTINCT FROM false" in query
+    assert "cs.account = %(account)s" in query
+    assert params == {"account": "sistemas", "qids": ["q1", "q2"]}
+
+
+def test_fix_acquisition_ratings_es_idempotente_por_el_guard(monkeypatch):
+    # el guard IS DISTINCT FROM false evita re-tocar filas ya corregidas: se valida
+    # con la presencia del guard en el SQL (la corrección real es contra la copia).
+    monkeypatch.setattr(store, "_jugador_queue_ids", lambda cur, account: ["q1"])
+    cur = _FakeCursor()
+    fix_acquisition_ratings(cur, "datos")
+    query, _ = cur.executed[-1]
+    assert "rating_applicable IS DISTINCT FROM false" in query

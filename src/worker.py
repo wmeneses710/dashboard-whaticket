@@ -21,11 +21,13 @@ from src.store import (
     build_score_record,
     ensure_scores_columns,
     ensure_session_scoring_migration,
+    fix_acquisition_ratings,
     upsert_score,
 )
 
 _CONV_FIELDS = """c.id, c.account, c.ticket_id, c.user_id, c.created_at,
-       c.first_sent_message_at, c.resolved_at, q.name AS queue_name, conn.channel AS channel"""
+       c.first_sent_message_at, c.resolved_at, c.is_new_contact,
+       q.name AS queue_name, conn.channel AS channel"""
 
 PENDING_SQL = f"""
 SELECT {_CONV_FIELDS}
@@ -229,6 +231,18 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
         emit("[worker] ensure_scores_columns ok")
     except Exception as e:  # noqa: BLE001 - no aborta el arranque del loop
         emit(f"[worker] ensure_scores_columns error: {type(e).__name__}: {e}")
+    # Opción B (una vez, por cuenta): corrige filas de conversation_scores que el
+    # backfill YA escribió con rating de soporte en sesiones de adquisición (contacto
+    # nuevo + segmento jugador). SQL puro, sin LLM; idempotente (ver fix_acquisition_ratings).
+    for account in cfg.scoring_accounts:
+        try:
+            with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
+                with conn.cursor() as cur:
+                    n = fix_acquisition_ratings(cur, account)
+                conn.commit()
+            emit(f"[worker] fix acquisition ratings {account}: {n} filas")
+        except Exception as e:  # noqa: BLE001 - no aborta el arranque del loop
+            emit(f"[worker] fix acquisition ratings {account} error: {type(e).__name__}: {e}")
     # Sesionización inicial (una vez, antes del loop): asegura que el PRIMER ciclo tenga
     # sesiones para scorear (score_sessions_batch lee conversation_sessions).
     try:

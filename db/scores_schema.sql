@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
     deposit_mismatch        boolean,            -- (deposit_count>0) != deposit_observed; senal de calidad de dato
     session_id              uuid,               -- soft ref -> sesion (lo llena el paso 2; NULL en path por-conversacion)
 
+    -- Opcion B (adquisicion): false cuando la fila es un pitch de venta a un
+    -- contacto NUEVO del segmento jugador. La rubrica de SOPORTE ("resolviste el
+    -- problema?") no aplica a un pitch (registrate+depositá): dimensions/
+    -- rating_label/rating_rationale/stars quedan NULL. atencion/deposit_observed
+    -- SI siguen aplicando. Ver src/store.py: is_acquisition_pitch/build_score_record.
+    rating_applicable       boolean NOT NULL DEFAULT true,
+
     CONSTRAINT chk_rubric      CHECK (rubric IN ('human', 'bot')),
     CONSTRAINT chk_eval_status CHECK (eval_status IN ('evaluated', 'skipped')),
     -- coherencia: skipped => sin estrella y con razon; evaluated => con estrella y sin razon
@@ -91,6 +98,7 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
 
 -- Idempotente para BD ya creada (el CREATE ... IF NOT EXISTS no agrega columnas).
 ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS deposit_count integer;
+ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS rating_applicable boolean NOT NULL DEFAULT true;
 
 CREATE INDEX IF NOT EXISTS idx_scores_account_segment ON conversation_scores (account, segment);
 CREATE INDEX IF NOT EXISTS idx_scores_user            ON conversation_scores (user_id);
