@@ -24,6 +24,9 @@ import re
 from collections import defaultdict
 from datetime import timedelta
 
+from src.metrics import message_stats
+from src.router import decide_eligibility, decide_rubric
+
 GAP = timedelta(hours=6)
 GAP_EXT = timedelta(hours=48)  # ventana extendida cuando hubo cierre diferido
 
@@ -78,6 +81,35 @@ def assign_sessions(episodes: list[dict]) -> list[dict]:
         })
         prev = ep
     return result
+
+
+def evaluate_session(messages: list[dict]):
+    """Stats + rubrica + elegibilidad sobre el transcript MERGEADO de la sesion. PURA.
+
+    Espeja los pasos deterministas del scorer por conversacion (src/worker.py
+    score_and_store) pero a grano SESION: recibe TODOS los mensajes de todos los
+    episodios (ya mergeados en orden cronologico global) y reusa TAL CUAL las
+    funciones puras existentes -> no las reimplementa.
+
+    Devuelve (stats, rubric, eval_status, skip_reason). Es lo que elimina los skips
+    fabricados: si el agente respondio en un episodio hermano, el transcript
+    mergeado tiene agent_message_count>0 y decide_eligibility devuelve 'evaluated'
+    en vez de un falso 'no_agent_reply'.
+
+    No calcula deposito ni operador ni corre el LLM: eso es la pieza 3.
+    """
+    stats = message_stats(messages)
+    rubric = decide_rubric(
+        agent_message_count=stats.agent_message_count,
+        bot_message_count=stats.bot_message_count,
+    )
+    eval_status, skip_reason = decide_eligibility(
+        real_message_count=stats.message_count,
+        customer_message_count=stats.contact_message_count,
+        business_message_count=stats.agent_message_count + stats.bot_message_count,
+        customer_text_count=stats.contact_text_message_count,
+    )
+    return stats, rubric, eval_status, skip_reason
 
 
 # Idempotente + self-healing (como conversions.ensure_table): el pase las asegura al

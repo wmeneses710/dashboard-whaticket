@@ -29,6 +29,32 @@ def fetch_messages(cur, conversation_id) -> list[dict]:
     ]
 
 
+def fetch_session_messages(cur, session_id) -> list[dict]:
+    """Mensajes de TODOS los episodios de la SESION, en orden cronologico GLOBAL.
+
+    Une messages con conversation_session_map (grano episodio) por session_id, de
+    modo que los mensajes de las varias conversaciones de la sesion quedan mergeados
+    en un solo transcript. Mismo shape de dict que fetch_messages (incluye notas; el
+    transcript las excluye despues).
+
+    ORDER BY con tiebreaker determinista (created_at, id): LECCION DE LA PIEZA 1, sin
+    el tiebreaker dos mensajes con el mismo created_at (comun en cargas por lote)
+    ordenan no-determinista y el merge cronologico global se vuelve inestable.
+    """
+    cur.execute(
+        "SELECT m.from_me, m.is_note, m.body, m.sent_from, m.user_id, m.media_type "
+        "FROM messages m "
+        "JOIN conversation_session_map map ON map.conversation_id = m.conversation_id "
+        "WHERE map.session_id=%s ORDER BY m.created_at, m.id",
+        (session_id,),
+    )
+    return [
+        {"from_me": r[0], "is_note": r[1], "body": r[2], "sent_from": r[3],
+         "user_id": r[4], "media_type": r[5]}
+        for r in cur.fetchall()
+    ]
+
+
 def format_thread_digest(visits: list[dict], max_visits: int = MAX_THREAD_VISITS) -> str:
     """Arma el digest (una linea por visita), capado a las mas recientes.
 
