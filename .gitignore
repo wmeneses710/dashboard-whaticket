@@ -22,3 +22,5 @@ output/
 .atl/
 
 docs/latex/
+# Artefactos de analisis/exploracion (no versionar)
+scratchpad/
