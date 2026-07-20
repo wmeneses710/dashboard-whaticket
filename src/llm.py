@@ -74,6 +74,11 @@ class OllamaClient:
         # Auth para un Ollama detras de proxy (p. ej. el compartido via Cloudflare).
         # Sin token, headers vacio y se comporta como antes (Ollama local sin auth).
         self._headers = {"Authorization": f"Bearer {token}"} if token else {}
+        # Contadores de observabilidad (los lee el worker para loguear por ciclo):
+        # fast = resuelto por el camino rapido; fallback = necesito el grammar lento
+        # (~10-20x mas lento -> un fallback alto delata un prompt que el modelo no
+        # devuelve bien al primer intento); empty = ni fast ni fallback dieron JSON.
+        self.calls = {"fast": 0, "fallback": 0, "empty": 0}
 
     def _chat(self, system, user, *, response_format, num_predict, think) -> str:
         payload = {
@@ -138,6 +143,7 @@ class OllamaClient:
                            num_predict=num_predict, think=False)
             )
             if parsed is not None:
+                self.calls["fast"] += 1
                 return parsed
 
         # Nivel 2: fallback con grammar del schema (thinking activo, lento).
@@ -147,8 +153,10 @@ class OllamaClient:
                            num_predict=self.fallback_num_predict, think=None)
             )
             if parsed is not None:
+                self.calls["fallback"] += 1
                 return parsed
 
+        self.calls["empty"] += 1
         raise EmptyCompletionError(
             "el modelo no devolvio JSON parseable ni en el camino rapido "
             f"({FAST_ATTEMPTS} intentos) ni en el fallback grammar"

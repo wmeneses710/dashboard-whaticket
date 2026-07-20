@@ -104,22 +104,31 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     from src.conversions import classify_passivity_batch, refresh_account_conversions
     from src.sessions import refresh_account_sessions
 
+    def emit(msg):
+        """Log con timestamp (para leer la hora y el ritmo del goteo en prod)."""
+        log(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}")
+
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
-    log(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
+    emit(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
     ok, msg = llm.check_model()  # pre-flight: no aborta, pero avisa fuerte si falta el modelo
-    log(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")
+    emit(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")
     last_conv = 0.0  # 0 -> corre en el primer ciclo (al arrancar)
     while not (should_stop and should_stop()):
         seen = 0
+        llm_before = dict(llm.calls)  # snapshot para el delta fast/fallback del ciclo
         try:
             with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
                 with conn.cursor() as cur:
                     op_map = build_operator_map(cur)
                 for account in cfg.scoring_accounts:
+                    t0 = time.time()
                     c = score_batch(conn, llm, account, cfg.scoring_batch_size, op_map)
+                    dt = time.time() - t0
                     seen += c["seen"]
                     if c["seen"]:
-                        log(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} err={c['error']}")
+                        rate = (c["evaluated"] / dt * 60) if dt > 0 else 0.0
+                        emit(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} "
+                             f"err={c['error']} · {dt:.0f}s ({rate:.1f} eval/min)")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
                     for account in cfg.scoring_accounts:
@@ -127,19 +136,19 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                             with conn.cursor() as cur:
                                 n = refresh_account_conversions(cur, account)
                             conn.commit()
-                            log(f"[worker] conversión {account}: {n} personas")
+                            emit(f"[worker] conversión {account}: {n} personas")
                         except Exception as e:  # noqa: BLE001
                             conn.rollback()
-                            log(f"[worker] conversión {account} error: {type(e).__name__}: {e}")
+                            emit(f"[worker] conversión {account} error: {type(e).__name__}: {e}")
                         # Sesionización (determinista, grano sesión): aditivo, no toca el scoring.
                         try:
                             with conn.cursor() as cur:
                                 s = refresh_account_sessions(cur, account)
                             conn.commit()
-                            log(f"[worker] sesiones {account}: {s} sesiones")
+                            emit(f"[worker] sesiones {account}: {s} sesiones")
                         except Exception as e:  # noqa: BLE001
                             conn.rollback()
-                            log(f"[worker] sesiones {account} error: {type(e).__name__}: {e}")
+                            emit(f"[worker] sesiones {account} error: {type(e).__name__}: {e}")
                     last_conv = time.time()
                 # Pase de PASIVIDAD (LLM): clasifica un batch de entradas sin attention.
                 # Cuenta como 'seen' para que el loop siga sin dormir mientras haya pendientes.
@@ -148,15 +157,23 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                         p = classify_passivity_batch(conn, llm, account, cfg.scoring_batch_size)
                         seen += p["seen"]
                         if p["seen"]:
-                            log(f"[worker] pasividad {account}: clasificadas={p['classified']}/{p['seen']}")
+                            emit(f"[worker] pasividad {account}: clasificadas={p['classified']}/{p['seen']}")
                     except Exception as e:  # noqa: BLE001
                         conn.rollback()
-                        log(f"[worker] pasividad {account} error: {type(e).__name__}: {e}")
+                        emit(f"[worker] pasividad {account} error: {type(e).__name__}: {e}")
         except Exception as e:  # noqa: BLE001 - un fallo de red/DB no debe matar el loop
-            log(f"[worker] error de ciclo: {type(e).__name__}: {e}")
-        if seen == 0:  # nada pendiente -> dormir en tramos para poder frenar
+            emit(f"[worker] error de ciclo: {type(e).__name__}: {e}")
+        # Delta LLM del ciclo: cuanto se resolvio por camino rapido vs fallback lento
+        # (fallback alto = el modelo no devuelve el JSON al primer intento -> mas costo).
+        d_fast = llm.calls["fast"] - llm_before["fast"]
+        d_fb = llm.calls["fallback"] - llm_before["fallback"]
+        d_empty = llm.calls["empty"] - llm_before["empty"]
+        if d_fast or d_fb or d_empty:
+            emit(f"[worker] llm ciclo: fast={d_fast} fallback={d_fb} empty={d_empty}")
+        if seen == 0:  # nada pendiente -> goteo en calma; heartbeat y dormir en tramos
+            emit(f"[worker] sin pendientes · durmiendo {cfg.scoring_poll_seconds}s")
             for _ in range(max(1, cfg.scoring_poll_seconds)):
                 if should_stop and should_stop():
                     break
                 time.sleep(1)
-    log("[worker] detenido")
+    emit("[worker] detenido")

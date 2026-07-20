@@ -110,6 +110,39 @@ def test_chat_json_propaga_error_http():
         llm.chat_json("s", "u")
 
 
+def test_contador_fast_incrementa_en_camino_rapido():
+    captured = {}
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", client=_client_capturando(captured))
+    assert llm.calls == {"fast": 0, "fallback": 0, "empty": 0}
+    llm.chat_json("s", "u")
+    llm.chat_json("s", "u")
+    assert llm.calls == {"fast": 2, "fallback": 0, "empty": 0}
+
+
+def test_contador_fallback_incrementa_cuando_cae_al_grammar():
+    def handler(request):
+        p = json.loads(request.content)
+        if p["format"] == "json":
+            return httpx.Response(200, json={"message": {"content": "prosa no parseable"}})
+        return httpx.Response(200, json={"message": {"content": '{"ok": true}'}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=512,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    llm.chat_json("s", "u", schema={"type": "object"})
+    assert llm.calls == {"fast": 0, "fallback": 1, "empty": 0}
+
+
+def test_contador_empty_incrementa_cuando_no_hay_salida():
+    def handler(request):
+        return httpx.Response(200, json={"message": {"content": ""}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=512,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(EmptyCompletionError):
+        llm.chat_json("s", "u")
+    assert llm.calls == {"fast": 0, "fallback": 0, "empty": 1}
+
+
 def test_check_model_presente():
     def handler(request):
         assert request.url.path == "/api/tags"
