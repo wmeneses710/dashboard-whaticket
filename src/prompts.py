@@ -222,6 +222,17 @@ cada mensaje a quien lo dijo (Cliente vs Agente/Bot).
 PASO 1 - MOTIVO. Clasifica la interaccion en UNO de estos motivos (campo "motivo"):
 {tabla}
 
+Elegi el motivo por la NECESIDAD PRINCIPAL del cliente (lo que vino a resolver), NO por si
+se menciona plata, saldo o un comprobante (un comprobante puede aparecer en CUALQUIER motivo).
+Guia rapida de desambiguacion:
+- pregunta por saldo / comisiones / como-cuando-cuanto / duda -> info
+- interes en un bono o promocion -> promo
+- manda un comprobante/recarga para que le ACREDITEN saldo -> deposito
+- datos de agencia + monto a retirar + cuenta bancaria -> retiro
+- contrasena / cambio de cuenta o nombre / verificacion de identidad -> soporte_cuenta
+- quiere crear/activar una cuenta nueva -> registro
+- algo no funciona / no se le acredito / reclamo -> problema
+
 PASO 2 - CALIFICACION (modelo de DOS CAPAS, segun el motivo elegido):
 - PISO: si el agente ATENDIO el motivo (columna PISO) correctamente, aunque sea minimo o \
 templateado, la etiqueta es "aceptable". La plantilla NO baja la nota.
@@ -250,9 +261,10 @@ lo dicta un gate DETERMINISTA aparte.{hint}
 {json_shape}"""
 
 _MOTIVO_HINT = (
-    "\n\nHINT DETERMINISTA: se detecto un comprobante de deposito/recarga en el "
-    'transcript. El motivo muy probablemente sea "deposito" (salvo que el texto indique '
-    "claramente otra cosa)."
+    "\n\nHINT DETERMINISTA: se detecto un comprobante de pago en el transcript. Es una "
+    'PISTA de que PODRIA ser "deposito", pero NO decide: clasifica por la necesidad '
+    "PRINCIPAL del cliente. Si vino por otra cosa (consulta, promo, retiro, soporte) y solo "
+    "adjunto un comprobante, usa ESE otro motivo."
 )
 
 _MOTIVO_JSON_SHAPE = (
