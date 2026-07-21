@@ -310,16 +310,43 @@ def quality_evolution(cur, account: str, **filters) -> dict:
     return _build_quality_evolution(cur.fetchall())
 
 
+# Calidad por MOTIVO (v2). Clave tras el refactor: el ★ promedio GLOBAL mezcla motivos
+# con varas distintas (un depósito en su piso=3 y un info bien=3-4) y se aplana hacia 3
+# por el volumen transaccional. Segmentar por motivo devuelve una lectura honesta.
+_MOTIVO_STATS_SQL = """
+SELECT coalesce(cs.motivo, 'sin_motivo') AS motivo,
+       count(*) AS n,
+       count(*) FILTER (WHERE cs.eval_status = 'evaluated') AS evaluadas,
+       avg(cs.stars) FILTER (WHERE cs.eval_status = 'evaluated') AS avg_stars""" + _SCORES_JOINS + """
+ GROUP BY 1"""
+
+
+def _build_motivo_stats(rows) -> list[dict]:
+    """[{motivo, n, evaluadas, avg}] ordenado por volumen. avg None si no hay evaluadas."""
+    out = [{"motivo": m, "n": int(n), "evaluadas": int(ev), "avg": _coerce(avg)}
+           for m, n, ev, avg in rows]
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
+def motivo_stats(cur, account: str, **filters) -> list[dict]:
+    """Volumen + ★ promedio por MOTIVO (respeta filtros). Agrega conversation_scores."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_MOTIVO_STATS_SQL.format(where=where), params)
+    return _build_motivo_stats(cur.fetchall())
+
+
 def summary(cur, account: str, **filters) -> dict:
     """Todos los agregados de las tarjetas/cuadros filtro-aware en una llamada: KPIs,
-    distribución, tabla de operadores, % depósito por canal y evolución de calidad.
-    Reemplaza el cómputo en memoria sobre las ~113k filas de /api/scores."""
+    distribución, tabla de operadores, % depósito por canal, evolución de calidad y
+    calidad por motivo (v2). Reemplaza el cómputo en memoria sobre /api/scores."""
     return {
         "kpis": summary_kpis(cur, account, **filters),
         "distribution": distribution(cur, account, **filters),
         "operators": operators_table(cur, account, **filters),
         "deposit_by_channel": deposit_by_channel(cur, account, **filters),
         "quality_evolution": quality_evolution(cur, account, **filters),
+        "motivo_stats": motivo_stats(cur, account, **filters),
     }
 
 

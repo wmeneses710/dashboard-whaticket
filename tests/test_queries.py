@@ -5,6 +5,7 @@ from decimal import Decimal
 from src.queries import (
     _build_dep_channel,
     _build_load_series,
+    _build_motivo_stats,
     _build_conversion_by_month,
     _build_conversion_passivity,
     _build_conversion_ranking,
@@ -242,11 +243,25 @@ def test_deposit_by_channel_sql():
     assert "GROUP BY 1" in query
 
 
-def test_summary_combina_las_cuatro_secciones():
+def test_build_motivo_stats_ordena_por_volumen_y_avg_none_sin_evaluadas():
+    # (motivo, n, evaluadas, avg_stars) -> ordenado por n desc; avg None si 0 evaluadas.
+    rows = [
+        ("info", 5, 4, 3.5),
+        ("deposito", 20, 20, 3.0),
+        ("sin_motivo", 2, 0, None),
+    ]
+    out = _build_motivo_stats(rows)
+    assert [o["motivo"] for o in out] == ["deposito", "info", "sin_motivo"]
+    assert out[0] == {"motivo": "deposito", "n": 20, "evaluadas": 20, "avg": 3.0}
+    assert out[2]["avg"] is None
+
+
+def test_summary_combina_las_secciones():
     cur = _FakeCursor(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"],
                       one=(0, 0, None, 0, 0, 0))
     out = summary(cur, "datos")
-    assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel", "quality_evolution"}
+    assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel",
+                        "quality_evolution", "motivo_stats"}
 
 
 def test_build_quality_evolution_top_n_avg_y_umbral_min():

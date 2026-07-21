@@ -300,6 +300,17 @@
           <div v-if="!depByChannel.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
         </div>
       </div>
+      <div class="card">
+        <h2>Calidad por motivo <small>· ★ promedio segmentado · el global mezcla varas distintas</small></h2>
+        <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(90-n*10)+'%'}"></div></div>
+        <div v-else>
+          <div class="distrow static" v-for="m in motivoStats" :key="m.motivo">
+            <span class="lbl">{{ MOTIVO_LABEL[m.motivo]||m.motivo }} <span style="color:var(--faint)">{{ m.n }}</span></span>
+            <span class="barrow"><span class="fill" :style="{width:(m.avg?m.avg/5*100:0)+'%', background:m.avg?starColor(m.avg):'var(--faint)'}"></span><span class="val num">{{ m.avg!=null ? m.avg.toFixed(2)+'★' : '—' }}</span></span>
+          </div>
+          <div v-if="!motivoStats.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
+        </div>
+      </div>
     </div>
     <div class="card">
       <h2>Operadores <small>· los más activos primero</small></h2>
@@ -528,7 +539,7 @@ createApp({
     const account = ref(null);
     const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
     const options = reactive({ segments:[], channels:[], operators:[] });
-    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]} });
+    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[] });
     const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0}, by_month:{months:[],potential:[],converted:[],pct:[]}, evolution:{months:[],operators:[]} });
     const tickets = reactive({ cards:[], total:0, page:1, pages:1 });
     const charts = ref(null);
@@ -700,6 +711,7 @@ createApp({
     });
     const depByChannel = computed(() => summary.deposit_by_channel||[]);
     const operators = computed(() => summary.operators||[]);
+    const motivoStats = computed(() => summary.motivo_stats||[]);
     const opsShown = computed(() => opsExpanded.value ? operators.value : operators.value.slice(0, TOP_OPS));
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const convPasvOps = computed(() => (conversion.evolution&&conversion.evolution.operators)||[]);
@@ -851,7 +863,7 @@ createApp({
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
       loadingSummary, loadingTickets, loadingConversion, opsExpanded, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, convMonth, convPasvCanvases,
-      kpiTiles, distRows, depByChannel, operators, opsShown, qualOps, convPasvOps, accentColor, snapText,
+      kpiTiles, distRows, depByChannel, operators, motivoStats, opsShown, qualOps, convPasvOps, accentColor, snapText,
       convOps, convMaxPct, convByOp, convGlobal,
       TOP_OPS, SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
       switchAccount, toggleRating, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
