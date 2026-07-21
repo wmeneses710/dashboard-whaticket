@@ -119,6 +119,30 @@ def test_prompt_pide_atencion_y_deposit_observed_en_la_forma_json():
     assert "empujo|pasivo|no_respondio" in system
 
 
+def test_prompt_de_motivo_porta_reglas_de_dos_capas():
+    # Una rubrica de MOTIVO (uplift set) suma el modelo de 2 capas: piso 'aceptable'
+    # si atendio el motivo (aunque templateado), uplift para superar aceptable.
+    system, _ = build_scorer_prompt("deposito", MSGS_HUMAN, thread_context="")
+    low = system.lower()
+    assert "piso" in low
+    assert "aceptable" in low
+    assert "uplift" in low
+    assert "plantilla no" in low or "templateado" in low  # templateado != peor nota
+
+
+def test_prompt_legacy_human_no_incluye_dos_capas():
+    # human/bot (sin uplift) NO llevan las reglas de 2 capas: comportamiento previo.
+    system, _ = build_scorer_prompt("human", MSGS_HUMAN, thread_context="")
+    assert "UPLIFT" not in system
+
+
+def test_transcript_motivo_rotula_negocio_como_agente():
+    # format_transcript no debe romper con una rubrica de motivo (no esta en
+    # _BUSINESS_LABEL); rotula el lado negocio como 'Agente'.
+    t = format_transcript(MSGS_HUMAN, "deposito")
+    assert "Agente:" in t and "Cliente:" in t
+
+
 def test_prompt_porta_las_reglas_de_atencion_del_operador():
     system, _ = build_scorer_prompt("human", MSGS_HUMAN, thread_context="")
     low = system.lower()

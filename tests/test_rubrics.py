@@ -26,7 +26,7 @@ def test_cada_motivo_tiene_piso_uplift_y_atencion():
     for m in MOTIVOS:
         spec = get_rubric(m)
         keys = {d.key for d in spec.dimensions}
-        assert {"resolucion", "iniciativa", "atencion"} <= keys
+        assert {"resolucion", "iniciativa", "cortesia"} <= keys
         assert spec.dominant == "resolucion"
         assert spec.uplift == "iniciativa"
         assert spec.label_to_stars["aceptable"] == 3  # piso eficiente

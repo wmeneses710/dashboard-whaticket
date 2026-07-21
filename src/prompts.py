@@ -68,7 +68,7 @@ interpretalo a la luz del contexto del ticket.
 - Regla de techo: si la dimension dominante ({dominante}) falla, la etiqueta no \
 puede superar "{techo}".
 - Regla de piso: un error grave (info equivocada con dano, o maltrato) fuerza la \
-etiqueta a {piso}.
+etiqueta a {piso}.{dos_capas}
 - El rating_rationale debe ser ESPECIFICO de esta conversacion (que paso, quien, \
 por que). Prohibido generico o de plantilla.
 - No inventes emociones, quejas, urgencias ni contexto: evalua SOLO lo que esta \
@@ -122,7 +122,9 @@ def format_transcript(messages: list[dict], rubric: str) -> str:
     `from_me=True` = lado negocio (Agente o Bot segun la rubrica); False = Cliente.
     Los mensajes sin texto (solo media) se marcan para que el LLM lo sepa.
     """
-    biz = _BUSINESS_LABEL[get_rubric(rubric).name]
+    # Las rubricas de MOTIVO (deposito/retiro/...) no estan en _BUSINESS_LABEL: el
+    # lado negocio se rotula 'Agente' (el motivo evalua al operador humano).
+    biz = _BUSINESS_LABEL.get(get_rubric(rubric).name, "Agente")
     lines: list[str] = []
     for m in messages:
         if m.get("is_note"):
@@ -138,6 +140,27 @@ def format_transcript(messages: list[dict], rubric: str) -> str:
             *lines[-TRANSCRIPT_TAIL:],
         ]
     return "\n".join(lines)
+
+
+def _dos_capas_block(spec: RubricSpec) -> str:
+    """Reglas de las DOS CAPAS (solo rubricas de motivo, con `uplift`). El PISO
+    (dimension dominante = resolucion) da 'aceptable' si atendio el motivo aunque sea
+    templateado; el UPLIFT (dimension `uplift` + cortesia) permite superarlo. Las
+    rubricas legacy (human/bot, sin uplift) NO llevan estas reglas."""
+    if not spec.uplift:
+        return ""
+    upl = next(d for d in spec.dimensions if d.key == spec.uplift)
+    return (
+        "\n- MODELO DE DOS CAPAS (calibracion de la etiqueta):\n"
+        f"  PISO: si el agente ATENDIO el motivo (dimension {spec.dominant}) de forma "
+        'correcta, aunque sea minima o con PLANTILLA, la etiqueta es "aceptable". '
+        "La plantilla NO baja la nota (ver regla de tono).\n"
+        "  DEBAJO DEL PISO: si NO atendio el motivo (no resolvio, dato erroneo, maltrato, "
+        'o cerro muy rapido sin resolver), la etiqueta no supera "deficiente".\n'
+        '  UPLIFT: para superar "aceptable" (llegar a "buena"/"excelente") el agente debe '
+        f"ADEMAS {upl.bien}, y/o mostrar una cortesia destacada (saludo, personalizacion). "
+        'Sin eso, el techo es "aceptable".'
+    )
 
 
 def _criterios_block(spec: RubricSpec) -> str:
@@ -186,6 +209,7 @@ def build_scorer_prompt(
         piso=piso,
         criterios=_criterios_block(spec),
         etiquetas=_etiquetas_block(spec),
+        dos_capas=_dos_capas_block(spec),
     )
     system = f"{system}\n\n{_json_shape_block(spec)}"
     contexto = (thread_context or "").strip() or "(sin visitas previas)"

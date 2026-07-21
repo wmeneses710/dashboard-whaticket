@@ -90,22 +90,24 @@ MOTIVOS: tuple[Motivo, ...] = (
 _V2_LABELS = ("excelente", "buena", "aceptable", "deficiente", "mala")
 _V2_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1}
 
-# Atencion: eje transversal del UPLIFT (mismo en todos los motivos).
-_ATENCION_DIM = Dimension(
-    "atencion",
+# Cortesia: eje transversal del UPLIFT (mismo en todos los motivos). Se llama
+# 'cortesia' y NO 'atencion' para no colisionar con el campo top-level `atencion`
+# (empujo/pasivo/no_respondio), que es la clasificacion del esfuerzo del operador.
+_CORTESIA_DIM = Dimension(
+    "cortesia",
     "saluda, cordial, buena eleccion de palabras, personaliza (usa el nombre)",
     "seco, sin saludo, cortante o robotico",
 )
 
 
 def _motivo_rubric(name, res_bien, res_mal, upl_bien, upl_mal) -> RubricSpec:
-    """Arma una RubricSpec de motivo: resolucion (piso) + iniciativa (uplift) + atencion."""
+    """Arma una RubricSpec de motivo: resolucion (piso) + iniciativa (uplift) + cortesia."""
     return RubricSpec(
         name=name, dominant="resolucion", uplift="iniciativa",
         dimensions=(
             Dimension("resolucion", res_bien, res_mal),
             Dimension("iniciativa", upl_bien, upl_mal),
-            _ATENCION_DIM,
+            _CORTESIA_DIM,
         ),
         labels_desc=_V2_LABELS, label_to_stars=dict(_V2_STARS),
     )
