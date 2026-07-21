@@ -167,12 +167,13 @@ def test_entrada_desordenada_se_ordena_internamente():
 class _FakeCursor:
     """Cursor falso que despacha fetchall por el ultimo query ejecutado."""
 
-    def __init__(self, msg_rows=(), primary_rows=(), conv_rows=()):
+    def __init__(self, msg_rows=(), primary_rows=(), conv_rows=(), msg_time_rows=()):
         self.executed = []
         self.executed_many = []
         self._msg_rows = msg_rows
         self._primary_rows = primary_rows
         self._conv_rows = conv_rows
+        self._msg_time_rows = msg_time_rows
         self._last = ""
 
     def __enter__(self):
@@ -189,9 +190,14 @@ class _FakeCursor:
         self.executed_many.append((query, list(seq)))
 
     def fetchall(self):
-        # _PRIMARY_AGENT_SQL tambien lee FROM messages, se distingue por row_number.
+        # Tres queries leen FROM messages; se distinguen por su forma:
+        #  - _PRIMARY_AGENT_SQL: row_number() (agente dominante)
+        #  - _LAST_MSG_SQL: max(created_at) (ventana de actividad de la sesion)
+        #  - _LAST_AGENT_SQL: el resto (ultimo body del agente)
         if "row_number()" in self._last:
             return self._primary_rows
+        if "max(created_at)" in self._last:
+            return self._msg_time_rows
         if "FROM messages" in self._last:
             return self._msg_rows
         if "FROM conversations" in self._last:
@@ -294,6 +300,41 @@ def test_refresh_corta_por_cambio_de_agente():
     _, map_rows = [(q, seq) for q, seq in cur.executed_many
                    if "INSERT INTO conversation_session_map" in q][0]
     assert set(map_rows) == {("c1", "datos", "c1"), ("c2", "datos", "c2")}
+
+
+def test_refresh_end_at_es_ultimo_mensaje_no_created_at():
+    # BUG FIX (freshness): end_at debe reflejar el ULTIMO MENSAJE de la sesion, no el
+    # created_at de la conversacion. c1 nace en BASE pero su ultimo mensaje es BASE+5h
+    # (el agente respondio tarde). Sin el fix, end_at quedaba congelado en BASE y la
+    # sesion nunca se re-abria para re-scorear -> falso 'no_agent_reply' permanente.
+    cur = _FakeCursor(
+        msg_rows=[("c1", "listo")],
+        primary_rows=[("c1", "op1")],
+        conv_rows=[("t1", "c1", BASE)],
+        msg_time_rows=[("c1", BASE, BASE + timedelta(hours=5))],
+    )
+    sess.refresh_account_sessions(cur, "sistemas")
+    _, sess_rows = [(q, seq) for q, seq in cur.executed_many
+                    if "INSERT INTO conversation_sessions" in q][0]
+    _, _, _, _, start_at, end_at, _ = sess_rows[0]
+    assert start_at == BASE
+    assert end_at == BASE + timedelta(hours=5)
+
+
+def test_refresh_end_at_fallback_a_created_at_sin_mensajes():
+    # Si una conversacion no tiene mensajes reales (solo notas/vacia), end_at cae al
+    # created_at de la conversacion (comportamiento previo, sin romper).
+    cur = _FakeCursor(
+        msg_rows=[("c1", "hola")],
+        primary_rows=[("c1", "op1")],
+        conv_rows=[("t1", "c1", BASE)],
+        msg_time_rows=[],  # sin tiempos de mensaje
+    )
+    sess.refresh_account_sessions(cur, "datos")
+    _, sess_rows = [(q, seq) for q, seq in cur.executed_many
+                    if "INSERT INTO conversation_sessions" in q][0]
+    _, _, _, _, start_at, end_at, _ = sess_rows[0]
+    assert start_at == BASE and end_at == BASE
 
 
 def test_refresh_sin_conversaciones_devuelve_cero():

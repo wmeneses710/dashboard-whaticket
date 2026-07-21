@@ -193,6 +193,21 @@ SELECT ticket_id, id, created_at
  ORDER BY ticket_id, created_at ASC, id ASC
 """
 
+# Ventana REAL de actividad por conversacion: primer y ultimo mensaje (sin notas).
+# El start_at/end_at materializado sale de ACA, NO de conversations.created_at.
+# POR QUE: conversations.created_at es cuando NACIO la conversacion; no se mueve cuando
+# llegan mensajes nuevos. Si end_at fuera ese valor, el gate del worker
+# (end_at < now()-6h + re-open por scored_at) (1) scorearia conversaciones aun ACTIVAS
+# 6h despues de su inicio, con transcript parcial, y (2) nunca las re-abriria al llegar
+# la respuesta del agente -> falso 'no_agent_reply' permanente. Con el ultimo mensaje,
+# end_at avanza y la sesion se re-abre para re-scorear (auto-sanante).
+_LAST_MSG_SQL = """
+SELECT conversation_id, min(created_at) AS first_at, max(created_at) AS last_at
+  FROM messages
+ WHERE account = %(account)s AND is_note = false
+ GROUP BY conversation_id
+"""
+
 _SESS_UPSERT = """
 INSERT INTO conversation_sessions
       (account, ticket_id, session_id, sess_no, start_at, end_at, episode_count)
@@ -247,6 +262,9 @@ def refresh_account_sessions(cur, account: str) -> int:
     last_agent = {r[0]: r[1] for r in cur.fetchall()}
     cur.execute(_PRIMARY_AGENT_SQL, {"account": account})
     primary_agent = {r[0]: r[1] for r in cur.fetchall()}
+    cur.execute(_LAST_MSG_SQL, {"account": account})
+    # conv_id -> (primer_msg, ultimo_msg). Falta la conv si no tiene mensajes reales.
+    msg_times = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
     cur.execute(_CONVERSATIONS_SQL, {"account": account})
     rows = cur.fetchall()
 
@@ -268,12 +286,22 @@ def refresh_account_sessions(cur, account: str) -> int:
         for ep, a in zip(episodes, assigned):
             sid = a["session_id"]
             map_rows.append((a["conversation_id"], account, sid))
+            # Ventana de actividad del episodio = primer/ultimo MENSAJE real (no el
+            # created_at de la conversacion). Fallback al created_at si la conversacion
+            # no tiene mensajes reales. min(start)/max(end) sobre los episodios, sin
+            # depender del orden (el ultimo episodio no siempre trae el ultimo mensaje).
+            first_at, last_at = msg_times.get(
+                ep["conversation_id"], (ep["created_at"], ep["created_at"])
+            )
             g = agg.get(sid)
             if g is None:
-                agg[sid] = {"sess_no": a["sess_no"], "start_at": ep["created_at"],
-                            "end_at": ep["created_at"], "count": 1}
-            else:  # episodios asc: el ultimo visto es el end_at
-                g["end_at"] = ep["created_at"]
+                agg[sid] = {"sess_no": a["sess_no"], "start_at": first_at,
+                            "end_at": last_at, "count": 1}
+            else:
+                if first_at < g["start_at"]:
+                    g["start_at"] = first_at
+                if last_at > g["end_at"]:
+                    g["end_at"] = last_at
                 g["count"] += 1
         for sid, g in agg.items():
             sess_rows.append((account, ticket_id, sid, g["sess_no"],
