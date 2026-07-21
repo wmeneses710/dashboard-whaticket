@@ -326,8 +326,8 @@ def test_migracion_idempotente_segunda_corrida_no_renombra():
     assert not _has(cur2, "RENAME TO")
 
 
-def test_scoring_version_bumped_a_session_v2():
-    assert SCORING_VERSION == "2026.07-session-v2"
+def test_scoring_version_bumped_a_motivo_v2():
+    assert SCORING_VERSION == "2026.07-motivo-v2"
 
 
 # --- Opción B: adquisición (contacto nuevo, segmento jugador) no lleva rating ----

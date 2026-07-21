@@ -23,7 +23,7 @@ from src.queries import _jugador_queue_ids
 from src.scorer import ScoreResult
 from src.segments import segment_for_queue
 
-SCORING_VERSION = "2026.07-session-v2"
+SCORING_VERSION = "2026.07-motivo-v2"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

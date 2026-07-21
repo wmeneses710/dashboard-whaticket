@@ -434,8 +434,9 @@
           </div>
         </div>
         <div class="pane"><h3>Análisis del modelo</h3>
-          <div v-if="modal.detail && (modal.detail.deposit_count>0 || modal.detail.conversion_returned)"
+          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned)"
                style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
+            <span class="chip" v-if="modal.detail.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
             <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
             <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
           </div>
@@ -503,6 +504,7 @@ const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error
 
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
+const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo" };
 const RATINGS = {
   excelente:{s:5,c:"--r-excelente"}, buena:{s:4,c:"--r-buena"}, aceptable:{s:3,c:"--r-aceptable"},
   deficiente:{s:2,c:"--r-deficiente"}, mala:{s:1,c:"--r-mala"},
@@ -851,7 +853,7 @@ createApp({
       nvdCombo, depPctChart, loadChart, qualCanvases, convMonth, convPasvCanvases,
       kpiTiles, distRows, depByChannel, operators, opsShown, qualOps, convPasvOps, accentColor, snapText,
       convOps, convMaxPct, convByOp, convGlobal,
-      TOP_OPS, SKIP_LABEL, ATENCION_LABEL,
+      TOP_OPS, SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
       switchAccount, toggleRating, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
