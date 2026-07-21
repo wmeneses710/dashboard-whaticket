@@ -84,11 +84,16 @@
   .btn-reset:hover { color:var(--ink); border-color:var(--accent); }
 
   /* KPI stat tiles */
-  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(165px,1fr)); gap:14px; margin-bottom:24px; }
+  /* Columnas = ceil(total/2) via --kpi-cols (lo setea el front) -> reparte los KPIs
+     parejo en DOS filas (10 -> 5+5, 8 -> 4+4), en vez de llenar la 1ra y dejar 2 sueltos.
+     minmax(0,1fr) evita overflow horizontal cuando achica. Mobile: 2 columnas. */
+  .kpis { display:grid; grid-template-columns:repeat(var(--kpi-cols,5),minmax(0,1fr)); gap:14px; margin-bottom:24px; }
   @media (max-width:760px){ .kpis{ grid-template-columns:repeat(2,1fr);} }
-  .tile { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:17px 18px; box-shadow:var(--shadow); }
+  .tile { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:17px 18px; box-shadow:var(--shadow); min-width:0; }
   .tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
   .tile .v { font-size:34px; font-weight:700; letter-spacing:-.025em; margin-top:8px; line-height:1.05; }
+  /* Valores de TEXTO (Canal top, Tendencia): más chicos y con elipsis, no se cortan. */
+  .tile .v.sm { font-size:21px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .tile .v small { font-size:16px; font-weight:600; color:var(--faint); margin-left:1px; }
   .tile .foot { font-size:11.5px; color:var(--faint); margin-top:6px; }
 
@@ -275,7 +280,7 @@
     <button class="btn-reset" type="button" @click="resetFilters">Limpiar filtros</button>
   </div>
 
-  <section class="kpis">
+  <section class="kpis" :style="{'--kpi-cols': Math.max(1, Math.ceil(kpiTiles.length/2))}">
     <template v-if="loadingSummary">
       <div class="tile" v-for="n in 5" :key="'sk'+n">
         <div class="skel" style="height:11px;width:55%"></div>
@@ -286,7 +291,7 @@
     <template v-else>
       <div class="tile" v-for="t in kpiTiles" :key="t.k">
         <div class="k">{{ t.k }}</div>
-        <div class="v">{{ t.v }}<small v-if="t.u">{{ t.u }}</small></div>
+        <div class="v" :class="{sm: t.sm}">{{ t.v }}<small v-if="t.u">{{ t.u }}</small></div>
         <div class="foot">{{ t.foot }}</div>
       </div>
     </template>
@@ -769,8 +774,8 @@ createApp({
         ] : []),
         { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} sesiones` },
         { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
-        ...(topCh ? [{ k:"Canal top", v:topCh.canal, foot:`${topCh.pct}% depósito · ${topCh.n} sesiones` }] : []),
-        ...(hasTrend ? [{ k:"Tendencia conversión", v:`${trend>0?'▲ +':trend<0?'▼ ':'→ '}${trend}pp`, foot:"vs mes anterior" }] : []),
+        ...(topCh ? [{ k:"Canal top", v:topCh.canal, sm:true, foot:`${topCh.pct}% depósito · ${topCh.n} sesiones` }] : []),
+        ...(hasTrend ? [{ k:"Tendencia conversión", v:`${trend>0?'▲ +':trend<0?'▼ ':'→ '}${trend}pp`, sm:true, foot:"vs mes anterior" }] : []),
         { k:"Operadores", v:(k.operadores||0), foot:"con atención evaluada" },
       ];
       // Cobertura + Pendientes: SOLO durante el backfill (post-backfill quedan obsoletos;
