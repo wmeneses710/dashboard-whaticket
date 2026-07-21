@@ -11,12 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from src.prompts import (
-    build_motivo_prompt,
-    build_motivo_schema,
-    build_output_schema,
-    build_scorer_prompt,
-)
+from src.prompts import build_motivo_prompt, build_motivo_schema
 from src.rubrics import MOTIVOS, label_to_stars
 
 
@@ -76,37 +71,6 @@ def _as_bool(v):
     if s in ("false", "0", "no"):
         return False
     return None  # ambiguo ("no sé", "", etc.) -> sin observacion
-
-
-def score_conversation(
-    *,
-    rubric: str,
-    target_messages: list[dict],
-    thread_context: str,
-    llm: LLM,
-) -> ScoreResult:
-    """Puntua una conversacion y devuelve el resultado con la estrella aplicada."""
-    system, user = build_scorer_prompt(rubric, target_messages, thread_context)
-    schema = build_output_schema(rubric)
-    raw = llm.chat_json(system, user, schema)  # schema habilita el fallback grammar
-    _validate(raw, schema)
-
-    label = raw["rating_label"]
-    stars = label_to_stars(rubric, label)  # valida la etiqueta contra la rubrica
-    # atencion best-effort: si falta o no esta en el enum -> None (no descarta el rating).
-    atencion = raw.get("atencion")
-    if atencion not in schema["properties"]["atencion"]["enum"]:
-        atencion = None
-    return ScoreResult(
-        rubric=rubric,
-        dimensions=raw["dimensions"],
-        rating_label=label,
-        rating_rationale=raw["rating_rationale"],
-        stars=stars,
-        llm_model=llm.model,
-        atencion=atencion,
-        deposit_observed=_as_bool(raw.get("deposit_observed")),
-    )
 
 
 def score_by_motivo(

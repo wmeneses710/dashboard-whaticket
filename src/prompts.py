@@ -195,31 +195,6 @@ def _json_shape_block(spec: RubricSpec) -> str:
     )
 
 
-def build_scorer_prompt(
-    rubric: str, target_messages: list[dict], thread_context: str
-) -> tuple[str, str]:
-    """Devuelve (system, user) listos para el LLM."""
-    spec = get_rubric(rubric)
-    techo = spec.labels_desc[3]            # p. ej. "deficiente"
-    piso = f'"{spec.labels_desc[4]}" o "{spec.labels_desc[3]}"'  # peor o anteultima
-    system = _SYSTEM_TEMPLATE.format(
-        rubric=spec.name,
-        dominante=spec.dominant,
-        techo=techo,
-        piso=piso,
-        criterios=_criterios_block(spec),
-        etiquetas=_etiquetas_block(spec),
-        dos_capas=_dos_capas_block(spec),
-    )
-    system = f"{system}\n\n{_json_shape_block(spec)}"
-    contexto = (thread_context or "").strip() or "(sin visitas previas)"
-    user = _USER_TEMPLATE.format(
-        contexto=contexto,
-        transcript=format_transcript(target_messages, rubric),
-    )
-    return system, user
-
-
 # ============================================================================
 # Pase v2: el LLM clasifica el MOTIVO (tabla de motivos) y califica en 2 capas.
 # Reemplaza la eleccion de rubrica por handler (human/bot). El determinista quedo
@@ -344,28 +319,4 @@ def build_motivo_schema() -> dict:
         },
         # atencion/deposit_observed best-effort (no en required), igual que el pase viejo.
         "required": ["motivo", "dimensions", "rating_label", "rating_rationale"],
-    }
-
-
-def build_output_schema(rubric: str) -> dict:
-    """Esquema JSON para forzar la salida estructurada de Ollama (format=schema)."""
-    spec = get_rubric(rubric)
-    dim_props: dict = {d.key: {"type": "string"} for d in spec.dimensions}
-    dim_props["errores"] = {"type": "array", "items": {"type": "string"}}
-    return {
-        "type": "object",
-        "properties": {
-            "dimensions": {
-                "type": "object",
-                "properties": dim_props,
-                "required": [d.key for d in spec.dimensions],
-            },
-            "rating_label": {"type": "string", "enum": list(spec.labels_desc)},
-            "rating_rationale": {"type": "string"},
-            "atencion": {"type": "string", "enum": list(ATENCION_LABELS)},
-            "deposit_observed": {"type": "boolean"},
-        },
-        # atencion/deposit_observed van en properties (el grammar los pide) pero NO en
-        # required: son best-effort, no deben hacer fallar un rating por lo demas valido.
-        "required": ["dimensions", "rating_label", "rating_rationale"],
     }

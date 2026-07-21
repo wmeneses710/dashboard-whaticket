@@ -15,7 +15,7 @@ from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
 from src.router import decide_eligibility, decide_rubric
-from src.scorer import score_by_motivo, score_conversation
+from src.scorer import score_by_motivo
 from src.sessions import evaluate_session
 from src.store import (
     build_score_record,
@@ -68,8 +68,10 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
     )
     score = None
     if eval_status == "evaluated":
-        score = score_conversation(
-            rubric=rubric, target_messages=msgs, thread_context=ctx, llm=llm
+        # Unificado con el path de sesión: el LLM clasifica el MOTIVO y califica en 2
+        # capas (score_by_motivo). rubric (human/bot) queda solo para la columna legacy.
+        score = score_by_motivo(
+            target_messages=msgs, thread_context=ctx, llm=llm, deposit_hint=deposit_count > 0
         )
     record = build_score_record(
         conversation=conv, stats=stats, rubric=rubric,
