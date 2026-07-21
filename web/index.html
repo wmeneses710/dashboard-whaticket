@@ -146,8 +146,6 @@
   .ops-card { display:flex; flex-direction:column; }
   .ops-card .ops-body { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
   .ops-card .ops-scroll { flex:1 1 0; min-height:0; overflow-y:auto; }
-  .ops-more { margin-top:12px; width:100%; border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px; font-size:12px; font-weight:600; font-family:inherit; cursor:pointer; transition:border-color .12s,color .12s; }
-  .ops-more:hover { color:var(--accent); border-color:var(--accent); }
 
   /* Client cards (grouped by contact) */
   .tk { border:1px solid var(--border); border-radius:var(--radius); margin-bottom:11px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow); transition:border-color .12s; }
@@ -359,22 +357,19 @@
       <h2>Operadores <small>· los más activos primero</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
       <div v-else class="ops-body">
-        <div class="ops-scroll" :class="{exp: opsExpanded}">
+        <div class="ops-scroll">
           <table><thead><tr><th>Operador</th><th class="r" title="Sesiones evaluadas del operador">Vol.</th><th class="r" title="★ promedio de sus sesiones evaluadas (todas los motivos mezclados)">★ prom</th><th>Distribución</th></tr></thead>
             <tbody>
-              <tr class="op" v-for="o in opsShown" :key="o.name">
+              <tr class="op" v-for="o in operators" :key="o.name">
                 <td style="font-weight:600">{{ o.name }}</td>
                 <td class="r num">{{ o.n }}</td>
                 <td class="r num" style="font-weight:600" :style="{color:starColor(o.avg)}" :title="'Promedia motivos con varas distintas — ver la matriz ★ por operador y motivo para la lectura justa'">{{ o.avg.toFixed(2) }}</td>
                 <td><span class="minibar" :title="'Distribución de calificaciones: '+o.dist.join(' · ')"><span v-for="(seg,i) in miniSegs(o)" :key="i" :style="{width:seg.w+'%', background:seg.c}"></span></span></td>
               </tr>
-              <tr v-if="!opsShown.length"><td colspan="4" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>
+              <tr v-if="!operators.length"><td colspan="4" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>
             </tbody>
           </table>
         </div>
-        <button class="ops-more" v-if="operators.length>TOP_OPS" type="button" @click="opsExpanded=!opsExpanded">
-          {{ opsExpanded ? 'Ver menos' : 'Ver todos ('+operators.length+')' }}
-        </button>
       </div>
     </div>
   </div>
@@ -581,7 +576,7 @@ const RATINGS = {
   optima:{s:5,c:"--r-excelente"}, funcional:{s:4,c:"--r-buena"}, mejorable:{s:3,c:"--r-aceptable"}, falla:{s:1,c:"--r-mala"},
 };
 const ORDER = ["excelente","buena","aceptable","deficiente","mala"];
-const TOP_OPS = 8, PAGE_SIZE = 12;
+const PAGE_SIZE = 12;
 const ratingColor = l => RATINGS[l] ? cvar(RATINGS[l].c) : cvar("--faint");
 const starColor = a => { const l=a>=4.5?"excelente":a>=3.5?"buena":a>=2.5?"aceptable":a>=1.5?"deficiente":"mala"; return cvar(RATINGS[l].c); };
 
@@ -604,7 +599,6 @@ createApp({
     const charts = ref(null);
     const chartsStatus = ref(null);
     const loadingSummary = ref(false), loadingTickets = ref(false), loadingConversion = ref(false);
-    const opsExpanded = ref(false);
     const openKeys = reactive(new Set());
     const updating = ref(false);
     let loadedCount = 0;
@@ -685,7 +679,7 @@ createApp({
     async function switchAccount(acc) {
       account.value = acc;
       Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
-      tickets.page = 1; openKeys.clear(); opsExpanded.value = false;
+      tickets.page = 1; openKeys.clear();
       const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0;
       charts.value = chartsCache[acc]?.data || null;
       await Promise.all([fetchOptions(), fetchSummary(), fetchTickets(), fetchConversion()]);
@@ -787,7 +781,6 @@ createApp({
     const operators = computed(() => summary.operators||[]);
     const motivoStats = computed(() => summary.motivo_stats||[]);
     const opsMotivo = computed(() => summary.ops_motivo||{motivos:[],operators:[]});
-    const opsShown = computed(() => opsExpanded.value ? operators.value : operators.value.slice(0, TOP_OPS));
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.operators)||[]);
     const convPasvOps = computed(() => (conversion.evolution&&conversion.evolution.operators)||[]);
@@ -955,11 +948,11 @@ createApp({
     });
 
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
-      loadingSummary, loadingTickets, loadingConversion, opsExpanded, openKeys, updating, modal, drill,
+      loadingSummary, loadingTickets, loadingConversion, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, qualMotivoCanvases, convMonth, convPasvCanvases,
-      kpiTiles, distRows, depByChannel, operators, motivoStats, opsMotivo, opsShown, qualOps, qualMotivoOps, convPasvOps, accentColor, snapText,
+      kpiTiles, distRows, depByChannel, operators, motivoStats, opsMotivo, qualOps, qualMotivoOps, convPasvOps, accentColor, snapText,
       convOps, convMaxPct, convByOp, convGlobal,
-      TOP_OPS, SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
+      SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
