@@ -278,7 +278,7 @@ def test_summary_combina_las_secciones():
                       one=(0, 0, None, 0, 0, 0))
     out = summary(cur, "datos")
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel",
-                        "quality_evolution", "motivo_stats", "ops_motivo"}
+                        "quality_evolution", "motivo_stats", "ops_motivo", "quality_motivo"}
 
 
 def test_build_quality_evolution_top_n_avg_y_umbral_min():

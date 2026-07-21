@@ -344,6 +344,25 @@ def quality_evolution(cur, account: str, **filters) -> dict:
     return _build_quality_evolution(cur.fetchall())
 
 
+# Evolución de la ★ por MOTIVO (no por operador): responde "¿la calidad de depósito
+# baja?, ¿soporte mejora?" en el tiempo. Reusa _build_quality_evolution (la 2da columna
+# pasa a ser el motivo en vez del operador). Solo evaluadas.
+_QUALITY_MOTIVO_SQL = """
+SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
+       coalesce(cs.motivo, 'sin_motivo') AS motivo,
+       count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
+ GROUP BY 1, 2"""
+
+
+def quality_by_motivo_month(cur, account: str, **filters) -> dict:
+    """Evolución mensual de la ★ promedio por MOTIVO (respeta filtros). {months, operators}
+    donde cada 'operator' es en realidad un motivo (reusa _build_quality_evolution)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_QUALITY_MOTIVO_SQL.format(where=where), params)
+    return _build_quality_evolution(cur.fetchall())
+
+
 # Calidad por MOTIVO (v2). Clave tras el refactor: el ★ promedio GLOBAL mezcla motivos
 # con varas distintas (un depósito en su piso=3 y un info bien=3-4) y se aplana hacia 3
 # por el volumen transaccional. Segmentar por motivo devuelve una lectura honesta.
@@ -382,6 +401,7 @@ def summary(cur, account: str, **filters) -> dict:
         "quality_evolution": quality_evolution(cur, account, **filters),
         "motivo_stats": motivo_stats(cur, account, **filters),
         "ops_motivo": operators_by_motivo(cur, account, **filters),
+        "quality_motivo": quality_by_motivo_month(cur, account, **filters),
     }
 
 
