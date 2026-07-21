@@ -404,7 +404,7 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        cs.conversation_id, cs.ticket_id, cs.conversation_created_at, cs.eval_status,
        cs.skip_reason, cs.rating_label, cs.stars,
        left(cs.rating_rationale, 160) AS rating_rationale,
-       cs.rating_applicable, cs.atencion,
+       cs.rating_applicable, cs.atencion, cs.motivo,
        COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id

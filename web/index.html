@@ -170,6 +170,11 @@
   /* Hechos duros de la conversacion (deterministas, no LLM): recarga y re-engagement */
   .chip.deposit { background:color-mix(in srgb, var(--r-excelente) 15%, transparent); color:var(--r-excelente); }
   .chip.player  { background:color-mix(in srgb, var(--accent) 15%, transparent); color:var(--accent); }
+  /* Atencion del operador (empujo/pasivo/no_respondio): el eje del uplift */
+  .chips { display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+  .chip.at-empujo       { background:color-mix(in srgb, var(--r-buena) 18%, transparent); color:var(--r-buena); }
+  .chip.at-pasivo       { background:color-mix(in srgb, var(--faint) 15%, transparent); color:var(--muted); }
+  .chip.at-no_respondio { background:color-mix(in srgb, var(--r-mala) 15%, transparent); color:var(--r-mala); }
 
   /* Modal */
   .backdrop { position:fixed; inset:0; background:rgba(10,12,10,.55); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; padding:24px; z-index:50; }
@@ -416,11 +421,14 @@
           <div class="conv" v-for="cv in t.convs" :key="cv.conversation_id" role="button" tabindex="0"
                @click="openModal(cv.conversation_id)" @keydown.enter.prevent="openModal(cv.conversation_id)" @keydown.space.prevent="openModal(cv.conversation_id)">
             <span class="when num">{{ fmtDate(cv.conversation_created_at) }}</span>
-            <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_applicable===false ? 'Adquisición · atención: '+(ATENCION_LABEL[cv.atencion]||cv.atencion||'sin clasificar') : (cv.rating_rationale||'')) : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
+            <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
             <span class="op">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
-            <span class="chip" v-if="cv.eval_status==='evaluated' && cv.rating_applicable===false" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">sin rating (adquisición)</span>
-            <span class="chip" v-else-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
-            <span class="chip skip" v-else>sin evaluar</span>
+            <span class="chips">
+              <span class="chip" v-if="cv.eval_status==='evaluated' && cv.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[cv.motivo]||cv.motivo }}</span>
+              <span class="chip at" :class="'at-'+cv.atencion" v-if="cv.eval_status==='evaluated' && cv.atencion">{{ ATENCION_LABEL[cv.atencion]||cv.atencion }}</span>
+              <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
+              <span class="chip skip" v-else>sin evaluar</span>
+            </span>
           </div>
         </div>
       </div>
@@ -458,14 +466,12 @@
             <div class="why" style="border-color:var(--faint)">No se evaluó: <b>{{ SKIP_LABEL[modal.detail.skip_reason]||modal.detail.skip_reason }}</b>. Queda registrada para explicar la cobertura sin ensuciar la estadística.</div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
           </div>
-          <div v-else-if="modal.detail && modal.detail.rating_applicable===false">
-            <div class="why" style="border-color:var(--faint)">Interacción de <b>adquisición</b> (pitch a un contacto nuevo): no lleva rating de calidad de soporte, porque esa rúbrica mide "¿resolviste el problema?" y acá el trabajo del agente es otro (impulsar el registro/depósito). Se evalúa por <b>atención</b>, no por resolución.</div>
-            <div style="margin:12px 0"><span class="chip" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">atención: {{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion||'sin clasificar' }}</span>
-              <span class="chip" v-if="modal.detail.deposit_observed!==null" style="margin-left:6px;background:color-mix(in srgb, var(--faint) 15%, transparent)">depósito observado: {{ modal.detail.deposit_observed ? 'sí' : 'no' }}</span></div>
-            <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
-          </div>
           <div v-else-if="modal.detail">
-            <div style="margin-bottom:12px"><span class="chip" :style="chipStyle(modal.detail)"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span></div>
+            <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <span class="chip" :style="chipStyle(modal.detail)"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span>
+              <span class="chip at" :class="'at-'+modal.detail.atencion" v-if="modal.detail.atencion">{{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion }}</span>
+              <span class="chip" v-if="modal.detail.deposit_observed!==null" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">depósito observado: {{ modal.detail.deposit_observed ? 'sí' : 'no' }}</span>
+            </div>
             <div class="why">{{ modal.detail.rating_rationale }}</div>
             <div class="dims">
               <div class="dim" v-for="(v,k) in dimsOnly(modal.detail.dimensions)" :key="k"><div class="dh">{{ k }}</div><p>{{ v }}</p></div>
@@ -473,7 +479,7 @@
             <div class="errs" v-if="dimErrors(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Errores detectados</div>
               <div class="err" v-for="(e,i) in dimErrors(modal.detail.dimensions)" :key="i">{{ e }}</div></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
-            <div class="est">★ estimada por LLM (rúbrica {{ modal.detail.rubric }}) — no es un dato de la plataforma.</div>
+            <div class="est">★ estimada por LLM — no es un dato de la plataforma.</div>
           </div>
         </div>
       </div>
