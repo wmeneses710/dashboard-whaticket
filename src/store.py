@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
     deposit_observed        boolean,
     deposit_mismatch        boolean,
     session_id              uuid,
+    -- Pase v2: motivo de la interaccion clasificado por el LLM (deposito, retiro,
+    -- soporte_cuenta, info, promo, registro, problema). NULL en filas skipped o del
+    -- pase viejo. Sin CHECK: la validez la garantiza el enum del schema del scorer.
+    motivo                  text,
 
     -- Opción B (adquisición): false cuando la fila es un pitch de venta a un
     -- contacto NUEVO del segmento jugador. La rúbrica de SOPORTE mide "¿resolviste
@@ -175,7 +179,7 @@ _COLUMNS = (
     "dimensions", "llm_model", "rating_label", "rating_rationale",
     "stars", "stars_breakdown", "deposit_count", "is_estimate", "scoring_version",
     "atencion", "deposit_observed", "deposit_mismatch", "session_id",
-    "rating_applicable",
+    "rating_applicable", "motivo",
 )
 
 # Columnas nuevas del pase LLM unificado. ensure_scores_columns() las agrega a una
@@ -187,6 +191,7 @@ _SCORES_COLUMN_TYPES = (
     ("deposit_mismatch", "boolean"),
     ("session_id", "uuid"),
     ("rating_applicable", "boolean NOT NULL DEFAULT true"),
+    ("motivo", "text"),
 )
 
 
@@ -268,6 +273,8 @@ def build_score_record(
         "deposit_observed": None,
         "deposit_mismatch": _deposit_mismatch(deposit_count, score),
         "session_id": session_id,
+        # Motivo v2: lo llena el score (score_by_motivo). None en skipped / pase viejo.
+        "motivo": None,
         # Opción B: la rúbrica de SOPORTE ("¿resolviste el problema?") no aplica a un
         # pitch de venta a un contacto nuevo. atencion/deposit_observed sí aplican
         # siempre (se calculan más abajo desde `score` como hoy).
@@ -278,6 +285,7 @@ def build_score_record(
             llm_model=score.llm_model,
             atencion=score.atencion,
             deposit_observed=score.deposit_observed,
+            motivo=score.motivo,  # v2: el motivo aplica aunque sea adquisicion (rating suprimido)
         )
         if not acquisition:
             record.update(

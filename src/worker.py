@@ -161,10 +161,10 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict):
             target_messages=msgs, thread_context="", llm=llm,
             deposit_hint=deposit_count > 0,
         )
-    # El motivo (clasificado por el LLM) queda como rubrica de la fila evaluada; en las
-    # skipped no hay motivo -> cae al rubric legacy (human/bot) de evaluate_session.
+    # rubric queda como el legacy human/bot (satisface chk_rubric); el motivo del LLM
+    # se persiste en su propia columna dentro de build_score_record (desde el score).
     record = build_score_record(
-        conversation=sess, stats=stats, rubric=(score.motivo if score else rubric),
+        conversation=sess, stats=stats, rubric=rubric,
         eval_status=eval_status, skip_reason=skip_reason, score=score,
         operator_id=operator_id, operator_name=op_name, deposit_count=deposit_count,
         session_id=sess["session_id"],

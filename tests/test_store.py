@@ -186,6 +186,42 @@ def test_session_id_pasa_al_record():
     assert r["session_id"] == "sess-42"
 
 
+def _score_v2(motivo="deposito"):
+    return ScoreResult(
+        rubric=motivo, dimensions={"resolucion": "ok", "iniciativa": "x", "cortesia": "y", "errores": []},
+        rating_label="buena", rating_rationale="ok", stars=4, llm_model="qwen3:14b",
+        atencion="empujo", deposit_observed=False, motivo=motivo,
+    )
+
+
+def test_motivo_del_score_se_persiste():
+    r = _record(conversation={**CONV, "is_new_contact": False}, score=_score_v2("retiro"))
+    assert r["motivo"] == "retiro"
+
+
+def test_motivo_es_none_en_skipped():
+    r = _record(eval_status="skipped", skip_reason="no_customer_reply", score=None)
+    assert r["motivo"] is None
+
+
+def test_motivo_se_persiste_aunque_sea_adquisicion():
+    # En adquisición el rating se suprime, pero el MOTIVO igual se guarda.
+    r = _record(conversation={**CONV, "is_new_contact": True}, score=_score_v2("promo"))
+    assert r["rating_label"] is None      # rating suprimido (Opción B)
+    assert r["motivo"] == "promo"         # motivo igual persiste
+
+
+def test_ensure_scores_columns_incluye_motivo():
+    cur = _FakeCursor()
+    ensure_scores_columns(cur)
+    qs = [q for q, _ in cur.executed]
+    assert any("ADD COLUMN IF NOT EXISTS" in q and "motivo" in q for q in qs)
+
+
+def test_create_table_incluye_motivo():
+    assert "motivo" in _CREATE_SCORES_TABLE
+
+
 def test_ensure_scores_columns_emite_alters():
     cur = _FakeCursor()
     ensure_scores_columns(cur)
