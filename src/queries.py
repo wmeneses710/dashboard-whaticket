@@ -253,6 +253,38 @@ def operators_table(cur, account: str, **filters) -> list[dict]:
     return _build_ops(cur.fetchall())
 
 
+# ★ por operador Y motivo (matriz): la vara JUSTA tras el refactor. El ★ global de un
+# operador mezcla motivos con pisos distintos (transaccional=3 vs soporte); segmentado
+# por motivo se compara peras con peras. Solo evaluadas y con operador.
+_OPS_MOTIVO_SQL = """
+SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+       coalesce(cs.motivo, 'sin_motivo') AS motivo,
+       count(*) AS n, avg(cs.stars) AS avg_stars""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated'
+   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+ GROUP BY 1, 2"""
+
+
+def _build_ops_motivo(rows, top_n: int = 10) -> dict:
+    """{motivos:[...], operators:[{name, n, cells:{motivo:{n,avg}}}]}. Top-N por volumen.
+    Filas: (op, motivo, n, avg_stars)."""
+    by: dict = {}
+    for op, motivo, n, avg in rows:
+        o = by.setdefault(op, {"name": op, "n": 0, "cells": {}})
+        o["n"] += int(n)
+        o["cells"][motivo] = {"n": int(n), "avg": _coerce(avg)}
+    ops = sorted(by.values(), key=lambda x: (-x["n"], x["name"]))[:top_n]
+    motivos = sorted({m for o in ops for m in o["cells"]})
+    return {"motivos": motivos, "operators": ops}
+
+
+def operators_by_motivo(cur, account: str, **filters) -> dict:
+    """Matriz ★ por operador y motivo (respeta filtros). Agrega conversation_scores."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_OPS_MOTIVO_SQL.format(where=where), params)
+    return _build_ops_motivo(cur.fetchall())
+
+
 def _build_dep_channel(rows) -> list[dict]:
     """% depósito por canal (renderDepByChannel) desde filas (canal, n, dep)."""
     out = [{"canal": c, "n": int(n), "dep": int(dep), "pct": round(100 * int(dep) / int(n)) if n else 0}
@@ -349,6 +381,7 @@ def summary(cur, account: str, **filters) -> dict:
         "deposit_by_channel": deposit_by_channel(cur, account, **filters),
         "quality_evolution": quality_evolution(cur, account, **filters),
         "motivo_stats": motivo_stats(cur, account, **filters),
+        "ops_motivo": operators_by_motivo(cur, account, **filters),
     }
 
 

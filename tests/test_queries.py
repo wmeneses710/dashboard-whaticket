@@ -6,6 +6,7 @@ from src.queries import (
     _build_dep_channel,
     _build_load_series,
     _build_motivo_stats,
+    _build_ops_motivo,
     _build_conversion_by_month,
     _build_conversion_passivity,
     _build_conversion_ranking,
@@ -258,12 +259,26 @@ def test_build_motivo_stats_ordena_por_volumen_y_avg_none_sin_evaluadas():
     assert out[2]["avg"] is None
 
 
+def test_build_ops_motivo_matriz_top_y_celdas():
+    # filas (op, motivo, n, avg_stars) -> matriz operador x motivo, top por volumen.
+    rows = [
+        ("Ana", "deposito", 30, 3.1), ("Ana", "info", 5, 4.0),
+        ("Luis", "retiro", 10, 2.8),
+    ]
+    out = _build_ops_motivo(rows, top_n=10)
+    assert out["motivos"] == ["deposito", "info", "retiro"]
+    ana = next(o for o in out["operators"] if o["name"] == "Ana")
+    assert ana["n"] == 35 and out["operators"][0]["name"] == "Ana"   # más volumen primero
+    assert ana["cells"]["deposito"] == {"n": 30, "avg": 3.1}
+    assert "retiro" not in ana["cells"]
+
+
 def test_summary_combina_las_secciones():
     cur = _FakeCursor(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"],
                       one=(0, 0, None, 0, 0, 0))
     out = summary(cur, "datos")
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel",
-                        "quality_evolution", "motivo_stats"}
+                        "quality_evolution", "motivo_stats", "ops_motivo"}
 
 
 def test_build_quality_evolution_top_n_avg_y_umbral_min():

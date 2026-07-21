@@ -93,9 +93,12 @@
   .tile .foot { font-size:11.5px; color:var(--faint); margin-top:6px; }
 
   /* Cards */
-  .cols { display:grid; grid-template-columns:1.05fr 1fr; gap:16px; margin-bottom:16px; }
+  .cols { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:16px; align-items:start; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .col-stack{ display:flex; flex-direction:column; gap:16px; }
+  /* Fila de 3 cuadros chicos (distribución · % depósito · calidad por motivo) */
+  .trio { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:16px; align-items:start; }
+  @media (max-width:900px){ .trio{ grid-template-columns:1fr;} }
   .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .charts{ grid-template-columns:1fr;} }
   .charts .card { margin:0; }
@@ -282,8 +285,7 @@
     </template>
   </section>
 
-  <div class="cols">
-    <div class="col-stack">
+  <div class="trio">
       <div class="card">
         <h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
@@ -322,7 +324,9 @@
           <div v-if="!motivoStats.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
         </div>
       </div>
-    </div>
+  </div>
+
+  <div class="cols">
     <div class="card">
       <h2>Operadores <small>· los más activos primero</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
@@ -346,9 +350,7 @@
         </button>
       </div>
     </div>
-  </div>
-
-  <div class="card" style="margin-bottom:16px">
+    <div class="card">
     <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · cohorte histórica</small></h2>
     <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
     <div v-else>
@@ -362,6 +364,25 @@
         <div v-if="!convOps.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos de conversión todavía (¿corrió el pase del worker?).</div>
       </div>
     </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:16px">
+    <h2>★ por operador y motivo <small>· la vara justa: cada motivo con su propio piso · top 10 · respeta filtros</small></h2>
+    <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
+    <div v-else-if="opsMotivo.operators.length" class="ops-scroll" style="max-height:none">
+      <table><thead><tr><th>Operador</th><th class="r" v-for="m in opsMotivo.motivos" :key="m">{{ MOTIVO_LABEL[m]||m }}</th></tr></thead>
+        <tbody>
+          <tr class="op" v-for="o in opsMotivo.operators" :key="o.name">
+            <td style="font-weight:600">{{ o.name }} <span style="color:var(--faint);font-weight:400">{{ o.n }}</span></td>
+            <td class="r num" v-for="m in opsMotivo.motivos" :key="m"
+                :style="{color: (o.cells[m] && o.cells[m].avg!=null) ? starColor(o.cells[m].avg) : 'var(--faint)', fontWeight: o.cells[m]?600:400}"
+                :title="o.cells[m] ? o.cells[m].n+' sesiones' : 'sin sesiones'">{{ (o.cells[m] && o.cells[m].avg!=null) ? o.cells[m].avg.toFixed(1) : '·' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div v-else style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
   </div>
 
   <div class="charts-status" v-if="chartsStatus" :class="chartsStatus.kind+'-state'">
@@ -554,7 +575,7 @@ createApp({
     const account = ref(null);
     const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", motivo:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
     const options = reactive({ segments:[], channels:[], operators:[] });
-    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[] });
+    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]} });
     const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0,total_returned:0,ret_pct:0}, by_month:{months:[],potential:[],converted:[],pct:[],returned:[],ret_pct:[]}, evolution:{months:[],operators:[]} });
     const tickets = reactive({ cards:[], total:0, page:1, pages:1 });
     const charts = ref(null);
@@ -729,6 +750,7 @@ createApp({
     const depByChannel = computed(() => summary.deposit_by_channel||[]);
     const operators = computed(() => summary.operators||[]);
     const motivoStats = computed(() => summary.motivo_stats||[]);
+    const opsMotivo = computed(() => summary.ops_motivo||{motivos:[],operators:[]});
     const opsShown = computed(() => opsExpanded.value ? operators.value : operators.value.slice(0, TOP_OPS));
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const convPasvOps = computed(() => (conversion.evolution&&conversion.evolution.operators)||[]);
@@ -881,7 +903,7 @@ createApp({
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
       loadingSummary, loadingTickets, loadingConversion, opsExpanded, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, convMonth, convPasvCanvases,
-      kpiTiles, distRows, depByChannel, operators, motivoStats, opsShown, qualOps, convPasvOps, accentColor, snapText,
+      kpiTiles, distRows, depByChannel, operators, motivoStats, opsMotivo, opsShown, qualOps, convPasvOps, accentColor, snapText,
       convOps, convMaxPct, convByOp, convGlobal,
       TOP_OPS, SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
