@@ -333,16 +333,15 @@
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
       <div v-else>
         <div class="ops-scroll" :class="{exp: opsExpanded}">
-          <table><thead><tr><th>Operador</th><th class="r">Vol.</th><th class="r">★ prom</th><th class="r">Conv.</th><th>Distribución</th></tr></thead>
+          <table><thead><tr><th>Operador</th><th class="r">Vol.</th><th class="r">★ prom</th><th>Distribución</th></tr></thead>
             <tbody>
               <tr class="op" v-for="o in opsShown" :key="o.name">
                 <td style="font-weight:600">{{ o.name }}</td>
                 <td class="r num">{{ o.n }}</td>
                 <td class="r num" style="font-weight:600" :style="{color:starColor(o.avg)}">{{ o.avg.toFixed(2) }}</td>
-                <td class="r num" :title="convByOp[o.name] ? convByOp[o.name].converted+' de '+convByOp[o.name].potential+' jugadores nuevos' : 'sin jugadores nuevos atribuidos'">{{ convByOp[o.name] ? convByOp[o.name].pct + '% (' + convByOp[o.name].converted + ')' : '—' }}</td>
                 <td><span class="minibar"><span v-for="(seg,i) in miniSegs(o)" :key="i" :style="{width:seg.w+'%', background:seg.c}"></span></span></td>
               </tr>
-              <tr v-if="!opsShown.length"><td colspan="5" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>
+              <tr v-if="!opsShown.length"><td colspan="4" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>
             </tbody>
           </table>
         </div>
