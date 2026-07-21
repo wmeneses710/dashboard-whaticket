@@ -235,7 +235,7 @@
       <span v-if="updating" class="upd-text" role="status" aria-live="polite">
         <span class="spin"></span>Datos nuevos · actualizando, por favor espere…</span>
       <button v-else class="toggle" id="refreshBtn" type="button"
-              title="Traer las conversaciones scoreadas desde la última carga" @click="refresh">
+              title="Traer las sesiones scoreadas desde la última carga" @click="refresh">
         ↻ Actualizar</button>
       <button class="toggle" type="button" @click="toggleTheme">Tema</button>
     </div>
@@ -414,7 +414,7 @@
           <h4>{{ op.name.length>18?short(op.name):op.name }}</h4>
           <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualCanvases[i]=el }"></canvas></div>
         </div>
-        <div v-if="!qualOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin conversaciones evaluadas en este filtro.</div>
+        <div v-if="!qualOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin sesiones evaluadas en este filtro.</div>
       </div>
     </div>
   </div>
@@ -733,7 +733,7 @@ createApp({
       const tiles = [
         { k:"Conversaciones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
         { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
-        { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} conversaciones` },
+        { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} sesiones` },
         { k:"Cobertura", v:cov, u:"%", foot:`${(k.total||0)-(k.evaluadas||0)} sin evaluar` },
         { k:"Operadores", v:(k.operadores||0), foot:"con atención evaluada" },
       ];
@@ -763,7 +763,7 @@ createApp({
     const convByOp = computed(() => { const m = {}; convOps.value.forEach(o => { m[o.op] = o; }); return m; });
     const convGlobal = computed(() => conversion.by_operator || { total_potential:0, total_converted:0, pct:0, total_returned:0, ret_pct:0 });
     const snapText = computed(() => { const k = summary.kpis||{};
-      return `En vivo desde la BD · cuenta <b>${esc(account.value||"")}</b> · <b>${k.total||0}</b> conversaciones (${k.evaluadas||0} evaluadas), <b>${tickets.total||0}</b> clientes.`;
+      return `En vivo desde la BD · cuenta <b>${esc(account.value||"")}</b> · <b>${k.total||0}</b> sesiones (${k.evaluadas||0} evaluadas), <b>${tickets.total||0}</b> clientes.`;
     });
 
     // minibar de un operador: segmentos por bucket (mismo criterio que el front)
