@@ -15,7 +15,7 @@ from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
 from src.router import decide_eligibility, decide_rubric
-from src.scorer import score_conversation
+from src.scorer import score_by_motivo, score_conversation
 from src.sessions import evaluate_session
 from src.store import (
     build_score_record,
@@ -154,13 +154,17 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict):
     op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
     score = None
     if eval_status == "evaluated":
-        # thread_context vacio: la sesion YA mergea todos los episodios del ticket
-        # dentro de la ventana; no se le agrega el digest de otras visitas.
-        score = score_conversation(
-            rubric=rubric, target_messages=msgs, thread_context="", llm=llm
+        # Pase v2: el LLM clasifica el MOTIVO y califica en 2 capas. thread_context
+        # vacio: la sesion YA mergea todos los episodios del ticket. deposit_hint pasa
+        # la senal determinista de comprobante para anclar el motivo 'deposito'.
+        score = score_by_motivo(
+            target_messages=msgs, thread_context="", llm=llm,
+            deposit_hint=deposit_count > 0,
         )
+    # El motivo (clasificado por el LLM) queda como rubrica de la fila evaluada; en las
+    # skipped no hay motivo -> cae al rubric legacy (human/bot) de evaluate_session.
     record = build_score_record(
-        conversation=sess, stats=stats, rubric=rubric,
+        conversation=sess, stats=stats, rubric=(score.motivo if score else rubric),
         eval_status=eval_status, skip_reason=skip_reason, score=score,
         operator_id=operator_id, operator_name=op_name, deposit_count=deposit_count,
         session_id=sess["session_id"],

@@ -121,9 +121,9 @@ def _evaluated_session_messages():
 def _fake_score():
     from src.scorer import ScoreResult
     return ScoreResult(
-        rubric="human", dimensions={"d": "x"}, rating_label="bueno",
+        rubric="deposito", dimensions={"d": "x"}, rating_label="buena",
         rating_rationale="ok", stars=4, llm_model="fake",
-        atencion="empujo", deposit_observed=False,
+        atencion="empujo", deposit_observed=False, motivo="deposito",
     )
 
 
@@ -150,7 +150,7 @@ def _params_of_upsert(conn):
 def test_score_session_and_store_evaluated_persiste_con_session_id(monkeypatch):
     monkeypatch.setattr(worker, "fetch_session_messages",
                         lambda cur, sid: _evaluated_session_messages())
-    monkeypatch.setattr(worker, "score_conversation", lambda **kw: _fake_score())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
     conn = _CtxConn()
     sess = _session_row("sess1")
     eval_status, skip_reason, score = score_session_and_store(conn, sess, llm=None, op_map={})
@@ -174,7 +174,7 @@ def test_score_session_and_store_evaluated_corre_el_llm_por_sesion(monkeypatch):
         seen["ctx"] = kw["thread_context"]
         return _fake_score()
 
-    monkeypatch.setattr(worker, "score_conversation", spy_score)
+    monkeypatch.setattr(worker, "score_by_motivo", spy_score)
     score_session_and_store(_CtxConn(), _session_row(), llm=None, op_map={})
     # scorea el transcript MERGEADO de la sesion, sin contexto de hilo por-conversacion.
     assert len(seen["target"]) == 2
@@ -191,7 +191,7 @@ def test_score_session_and_store_skipped_no_scorea(monkeypatch):
     def boom(**kw):
         raise AssertionError("no debe correr el LLM en una sesion skipped")
 
-    monkeypatch.setattr(worker, "score_conversation", boom)
+    monkeypatch.setattr(worker, "score_by_motivo", boom)
     conn = _CtxConn()
     eval_status, skip_reason, score = score_session_and_store(
         conn, _session_row(), llm=None, op_map={})
