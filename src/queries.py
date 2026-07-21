@@ -400,6 +400,7 @@ def _ticket_cards(card_rows: list[dict], conv_rows: list[dict], sort: str) -> li
     cards = []
     for cr in card_rows:
         cards.append({
+            "key": cr["card_key"],
             "cust": cr["cust"], "num": cr["num"], "ch": cr["ch"],
             "n": cr["n"], "visitas": cr["visitas"],
             "avg": cr["avg_stars"], "last": cr["last_at"],
