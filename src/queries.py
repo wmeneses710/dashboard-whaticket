@@ -724,7 +724,8 @@ def _conversion_where(account: str, *, canal="all", segment="all", op="all",
 _CONV_BY_OP_SQL = """
 SELECT """ + _CONV_OP_EXPR + """ AS op,
        count(*) AS potential,
-       count(*) FILTER (WHERE pc.deposited) AS converted
+       count(*) FILTER (WHERE pc.deposited) AS converted,
+       count(*) FILTER (WHERE pc.returned) AS returned
   FROM player_conversions pc
   LEFT JOIN users u ON u.id = pc.user_id
  WHERE {where}
@@ -732,30 +733,36 @@ SELECT """ + _CONV_OP_EXPR + """ AS op,
 
 
 def _build_conversion_ranking(rows, min_potential: int = 8) -> dict:
-    """Ranking por operador (op, potential, converted): tasa desc. Bot en barra
-    aparte; operadores con <min_potential potenciales se agregan en 'Otros' (evita
-    % ruidoso de bajo volumen). Devuelve totales globales para el KPI."""
+    """Ranking por operador (op, potential, converted, returned): tasa de DEPÓSITO desc.
+    `converted` = depositó; `returned` = re-engagement (volvió, >=2 sesiones). Bot en
+    barra aparte; operadores con <min_potential se agregan en 'Otros'. Totales globales."""
     BOT = "BOT / sin operador"
     pct = lambda p, c: round(100.0 * c / p, 1) if p else 0.0
     bot = None
     top = []
-    otros_p = otros_c = 0
-    tot_p = tot_c = 0
-    for op, p, c in rows:
-        p, c = int(p), int(c)
-        tot_p += p; tot_c += c
+    otros_p = otros_c = otros_r = 0
+    tot_p = tot_c = tot_r = 0
+
+    def _row(op, p, c, r):
+        return {"op": op, "potential": p, "converted": c, "pct": pct(p, c),
+                "returned": r, "ret_pct": pct(p, r)}
+
+    for op, p, c, r in rows:
+        p, c, r = int(p), int(c), int(r)
+        tot_p += p; tot_c += c; tot_r += r
         if op == BOT:
-            bot = {"op": op, "potential": p, "converted": c, "pct": pct(p, c)}
+            bot = _row(op, p, c, r)
         elif p < min_potential:
-            otros_p += p; otros_c += c
+            otros_p += p; otros_c += c; otros_r += r
         else:
-            top.append({"op": op, "potential": p, "converted": c, "pct": pct(p, c)})
+            top.append(_row(op, p, c, r))
     top.sort(key=lambda x: (-x["pct"], -x["potential"], x["op"]))
     if otros_p:
-        top.append({"op": "Otros", "potential": otros_p, "converted": otros_c, "pct": pct(otros_p, otros_c)})
+        top.append(_row("Otros", otros_p, otros_c, otros_r))
     if bot:
         top.append(bot)
-    return {"operators": top, "total_potential": tot_p, "total_converted": tot_c, "pct": pct(tot_p, tot_c)}
+    return {"operators": top, "total_potential": tot_p, "total_converted": tot_c,
+            "pct": pct(tot_p, tot_c), "total_returned": tot_r, "ret_pct": pct(tot_p, tot_r)}
 
 
 def conversion_by_operator(cur, account: str, **filters) -> dict:
@@ -768,7 +775,8 @@ def conversion_by_operator(cur, account: str, **filters) -> dict:
 _CONV_BY_MONTH_SQL = """
 SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
        count(*) AS potential,
-       count(*) FILTER (WHERE pc.deposited) AS converted
+       count(*) FILTER (WHERE pc.deposited) AS converted,
+       count(*) FILTER (WHERE pc.returned) AS returned
   FROM player_conversions pc
   LEFT JOIN users u ON u.id = pc.user_id
  WHERE {where} AND pc.first_at IS NOT NULL
@@ -776,13 +784,17 @@ SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
 
 
 def _build_conversion_by_month(rows) -> dict:
-    """{months, potential[], converted[], pct[]} ordenado por mes. Puro."""
+    """{months, potential[], converted[], pct[], returned[], ret_pct[]} por mes. Puro.
+    converted/pct = depósito; returned/ret_pct = re-engagement (volvió)."""
     rows = sorted(rows, key=lambda r: r[0])
+    _pct = lambda n, p: round(100.0 * n / p, 1) if p else 0.0
     months = [r[0] for r in rows]
     potential = [int(r[1]) for r in rows]
     converted = [int(r[2]) for r in rows]
-    pct = [round(100.0 * c / p, 1) if p else 0.0 for p, c in zip(potential, converted)]
-    return {"months": months, "potential": potential, "converted": converted, "pct": pct}
+    returned = [int(r[3]) for r in rows]
+    return {"months": months, "potential": potential,
+            "converted": converted, "pct": [_pct(c, p) for p, c in zip(potential, converted)],
+            "returned": returned, "ret_pct": [_pct(r, p) for p, r in zip(potential, returned)]}
 
 
 def conversion_by_month(cur, account: str, **filters) -> dict:

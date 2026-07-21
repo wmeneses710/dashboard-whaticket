@@ -384,25 +384,30 @@ def test_conversion_where_solo_filtros_que_aplican_al_potencial():
     assert "estado" not in params and "rating" not in params and "search" not in params
 
 
-def test_build_conversion_ranking_orden_pct_bot_y_otros():
-    rows = [("Virginia", 100, 30), ("Ana", 100, 5), ("Poco", 3, 3),
-            ("BOT / sin operador", 200, 12)]
+def test_build_conversion_ranking_orden_pct_bot_otros_y_returned():
+    # filas: (op, potential, converted[depósito], returned[re-engagement])
+    rows = [("Virginia", 100, 30, 40), ("Ana", 100, 5, 10), ("Poco", 3, 3, 2),
+            ("BOT / sin operador", 200, 12, 20)]
     out = _build_conversion_ranking(rows, min_potential=8)
     ops = out["operators"]
     assert [o["op"] for o in ops] == ["Virginia", "Ana", "Otros", "BOT / sin operador"]
-    assert ops[0]["pct"] == 30.0                       # ranking por tasa desc
+    assert ops[0]["pct"] == 30.0                              # ranking por tasa de depósito desc
+    assert ops[0]["returned"] == 40 and ops[0]["ret_pct"] == 40.0
     otros = next(o for o in ops if o["op"] == "Otros")
-    assert otros["potential"] == 3 and otros["converted"] == 3   # <8 agregados
+    assert otros["converted"] == 3 and otros["returned"] == 2   # <8 agregados
     bot = ops[-1]
-    assert bot["potential"] == 200 and bot["converted"] == 12    # bot aparte, al final
+    assert bot["converted"] == 12 and bot["returned"] == 20     # bot aparte, al final
     assert out["total_potential"] == 403 and out["total_converted"] == 50 and out["pct"] == 12.4
+    assert out["total_returned"] == 72 and out["ret_pct"] == 17.9
 
 
-def test_build_conversion_by_month_ordena_y_calcula_pct():
-    out = _build_conversion_by_month([("2026-02", 50, 10), ("2026-01", 100, 20)])
+def test_build_conversion_by_month_ordena_pct_y_returned():
+    out = _build_conversion_by_month([("2026-02", 50, 10, 15), ("2026-01", 100, 20, 30)])
     assert out["months"] == ["2026-01", "2026-02"]
     assert out["potential"] == [100, 50] and out["converted"] == [20, 10]
     assert out["pct"] == [20.0, 20.0]
+    assert out["returned"] == [30, 15]
+    assert out["ret_pct"] == [30.0, 30.0]
 
 
 def test_conversion_by_operator_sql_agrega_player_conversions():

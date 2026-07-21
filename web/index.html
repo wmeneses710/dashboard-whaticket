@@ -349,12 +349,12 @@
     <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · cohorte histórica</small></h2>
     <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
     <div v-else>
-      <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Tasa global <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> · <b style="color:var(--ink)">{{ convGlobal.total_converted }}</b> convertidos de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
+      <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Depósito <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_converted }}</b>) · re-engagement <b style="color:var(--ink)">{{ convGlobal.ret_pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_returned }}</b> volvieron) · de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
       <div>
         <div class="distrow" :class="o.op==='Otros'||o.op.startsWith('BOT')?'static':''" v-for="o in convOps" :key="o.op"
              :role="o.drillable?'button':null" :tabindex="o.drillable?0:null" @click="o.drillable && openDrill(o.op)" @keydown.enter.prevent="o.drillable && openDrill(o.op)">
           <span class="lbl" :title="o.op">{{ o.op }} <span style="color:var(--faint)">{{ o.potential }}</span></span>
-          <span class="barrow"><span class="fill" :style="{width: Math.round(88*o.pct/convMaxPct)+'%', background: accentColor}"></span><span class="val num">{{ o.pct }}% · {{ o.converted }}</span></span>
+          <span class="barrow"><span class="fill" :style="{width: Math.round(88*o.pct/convMaxPct)+'%', background: accentColor}"></span><span class="val num">{{ o.pct }}% · {{ o.converted }} <span style="color:var(--faint)">· ↩{{ o.ret_pct }}%</span></span></span>
         </div>
         <div v-if="!convOps.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos de conversión todavía (¿corrió el pase del worker?).</div>
       </div>
@@ -549,7 +549,7 @@ createApp({
     const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", motivo:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
     const options = reactive({ segments:[], channels:[], operators:[] });
     const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[] });
-    const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0}, by_month:{months:[],potential:[],converted:[],pct:[]}, evolution:{months:[],operators:[]} });
+    const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0,total_returned:0,ret_pct:0}, by_month:{months:[],potential:[],converted:[],pct:[],returned:[],ret_pct:[]}, evolution:{months:[],operators:[]} });
     const tickets = reactive({ cards:[], total:0, page:1, pages:1 });
     const charts = ref(null);
     const chartsStatus = ref(null);
@@ -732,7 +732,7 @@ createApp({
       .map(o => ({ ...o, drillable: o.op !== "Otros" })));   // 'Otros' agrega varios -> no drill
     const convMaxPct = computed(() => Math.max(1, ...convOps.value.map(o => o.pct || 0)));
     const convByOp = computed(() => { const m = {}; convOps.value.forEach(o => { m[o.op] = o; }); return m; });
-    const convGlobal = computed(() => conversion.by_operator || { total_potential:0, total_converted:0, pct:0 });
+    const convGlobal = computed(() => conversion.by_operator || { total_potential:0, total_converted:0, pct:0, total_returned:0, ret_pct:0 });
     const snapText = computed(() => { const k = summary.kpis||{};
       return `En vivo desde la BD · cuenta <b>${esc(account.value||"")}</b> · <b>${k.total||0}</b> conversaciones (${k.evaluadas||0} evaluadas), <b>${tickets.total||0}</b> clientes.`;
     });
@@ -831,11 +831,12 @@ createApp({
       if(chartInsts.conv) chartInsts.conv.destroy();
       const maxN=Math.max(0,...(d.converted||[]));
       chartInsts.conv=new Chart(el,{ data:{ labels:d.months||[], datasets:[
-          { type:"bar", label:"Conversiones", data:d.converted||[], yAxisID:"y", backgroundColor:pal[1], borderRadius:4, maxBarThickness:54, order:2 },
-          { type:"line", label:"% conversión", data:d.pct||[], yAxisID:"y1", borderColor:pal[0], backgroundColor:pal[0], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 } ]},
+          { type:"bar", label:"Conversiones", data:d.converted||[], yAxisID:"y", backgroundColor:pal[1], borderRadius:4, maxBarThickness:54, order:3 },
+          { type:"line", label:"% conversión", data:d.pct||[], yAxisID:"y1", borderColor:pal[0], backgroundColor:pal[0], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 },
+          { type:"line", label:"% re-engagement", data:d.ret_pct||[], yAxisID:"y1", borderColor:pal[2], backgroundColor:pal[2], borderWidth:2, borderDash:[5,3], tension:.35, pointRadius:2, pointHoverRadius:5, spanGaps:false, order:2 } ]},
         options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:"index",intersect:false},
           plugins:{ legend:{position:"bottom",labels:{color:muted,boxWidth:10,boxHeight:10,usePointStyle:true,font:{size:11}}},
-            tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` % conversión: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} conversiones` } } },
+            tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` ${c.dataset.label}: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} conversiones` } } },
           scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},
             y:{position:"left",beginAtZero:true,suggestedMax:maxN*1.2||10,title:{display:true,text:"Conversiones",color:faint,font:{size:10}},grid:{color:grid},ticks:{color:muted,precision:0}},
             y1:{position:"right",beginAtZero:true,max:100,title:{display:true,text:"% conversión",color:pal[0],font:{size:10}},grid:{display:false},ticks:{color:pal[0],callback:v=>v+"%"}} } } });
