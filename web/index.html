@@ -95,7 +95,7 @@
   /* Cards */
   /* align-items:stretch (default) -> tarjetas de la misma fila con IGUAL altura (bottoms
      alineados), en vez de top-alineadas con fondos desparejos. */
-  .cols { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:16px; }
+  .cols { display:grid; grid-template-columns:1.7fr 1fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .col-stack{ display:flex; flex-direction:column; gap:16px; }
   /* Fila de 3 cuadros chicos (distribución · % depósito · calidad por motivo) */
@@ -296,6 +296,7 @@
           <div v-for="row in distRows" :key="row.label"
                :class="['distrow', {active: filters.rating===row.label, dim: filters.rating!=='all' && filters.rating!==row.label, static: row.n===0}]"
                :role="row.n>0?'button':null" :tabindex="row.n>0?0:null" :aria-pressed="filters.rating===row.label"
+               :title="row.n+' sesiones evaluadas con '+row.label+' ('+row.stars+'★). La estrella la fija la rúbrica desde la etiqueta del LLM. Clic para filtrar.'"
                @click="row.n>0 && toggleRating(row.label)" @keydown.enter.prevent="row.n>0 && toggleRating(row.label)" @keydown.space.prevent="row.n>0 && toggleRating(row.label)">
             <span class="lbl"><span class="swatch" :style="{background:row.color}"></span>{{ row.label }} <span style="color:var(--faint)">{{ row.stars }}★</span></span>
             <span class="barrow"><span class="fill" :style="{width:row.width+'%', background:row.color}"></span><span class="val num">{{ row.n }}</span></span>
@@ -306,7 +307,8 @@
         <h2>% depósito por canal <small>· el resultado de negocio, no la estrella · respeta filtros</small></h2>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 3" :key="n" :style="{width:(85-n*15)+'%'}"></div></div>
         <div v-else>
-          <div class="distrow static" v-for="r in depByChannel" :key="r.canal">
+          <div class="distrow static" v-for="r in depByChannel" :key="r.canal"
+               :title="r.dep+' de '+r.n+' sesiones de '+r.canal+' tuvieron depósito (comprobante+recarga, gate determinista) = '+r.pct+'%'">
             <span class="lbl">{{ r.canal }} <span style="color:var(--faint)">{{ r.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:r.pct+'%', background:accentColor}"></span><span class="val num">{{ r.pct }}%</span></span>
           </div>
@@ -320,6 +322,7 @@
           <div v-for="m in motivoStats" :key="m.motivo"
                :class="['distrow', {active: filters.motivo===m.motivo, dim: filters.motivo!=='all' && filters.motivo!==m.motivo, static: m.motivo==='sin_motivo'}]"
                :role="m.motivo!=='sin_motivo'?'button':null" :tabindex="m.motivo!=='sin_motivo'?0:null" :aria-pressed="filters.motivo===m.motivo"
+               :title="(m.avg!=null ? '★ promedio '+m.avg.toFixed(2)+' sobre '+m.evaluadas+' sesiones evaluadas de '+(MOTIVO_LABEL[m.motivo]||m.motivo)+'. Piso 3 = atendió el motivo (mínimo correcto); sube a 4-5 con acción extra + cortesía.' : 'sin sesiones evaluadas')+' Clic para filtrar.'"
                @click="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.enter.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.space.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)">
             <span class="lbl">{{ MOTIVO_LABEL[m.motivo]||m.motivo }} <span style="color:var(--faint)">{{ m.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:(m.avg?m.avg/5*100:0)+'%', background:m.avg?starColor(m.avg):'var(--faint)'}"></span><span class="val num">{{ m.avg!=null ? m.avg.toFixed(2)+'★' : '—' }}</span></span>
@@ -331,17 +334,33 @@
 
   <div class="cols">
     <div class="card">
+    <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · cohorte histórica</small></h2>
+    <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
+    <div v-else>
+      <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Depósito <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_converted }}</b>) · re-engagement <b style="color:var(--ink)">{{ convGlobal.ret_pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_returned }}</b> volvieron) · de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
+      <div>
+        <div class="distrow" :class="o.op==='Otros'||o.op.startsWith('BOT')?'static':''" v-for="o in convOps" :key="o.op"
+             :role="o.drillable?'button':null" :tabindex="o.drillable?0:null" @click="o.drillable && openDrill(o.op)" @keydown.enter.prevent="o.drillable && openDrill(o.op)"
+             :title="'Depósito: '+o.pct+'% ('+o.converted+' de '+o.potential+' jugadores nuevos que tocó primero). Re-engagement: '+o.ret_pct+'% (volvieron a interactuar).'">
+          <span class="lbl" :title="o.op">{{ o.op }} <span style="color:var(--faint)">{{ o.potential }}</span></span>
+          <span class="barrow"><span class="fill" :style="{width: Math.round(88*o.pct/convMaxPct)+'%', background: accentColor}"></span><span class="val num">{{ o.pct }}% · {{ o.converted }} <span style="color:var(--faint)">· ↩{{ o.ret_pct }}%</span></span></span>
+        </div>
+        <div v-if="!convOps.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos de conversión todavía (¿corrió el pase del worker?).</div>
+      </div>
+    </div>
+    </div>
+    <div class="card">
       <h2>Operadores <small>· los más activos primero</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
       <div v-else>
         <div class="ops-scroll" :class="{exp: opsExpanded}">
-          <table><thead><tr><th>Operador</th><th class="r">Vol.</th><th class="r">★ prom</th><th>Distribución</th></tr></thead>
+          <table><thead><tr><th>Operador</th><th class="r" title="Sesiones evaluadas del operador">Vol.</th><th class="r" title="★ promedio de sus sesiones evaluadas (todas los motivos mezclados)">★ prom</th><th>Distribución</th></tr></thead>
             <tbody>
               <tr class="op" v-for="o in opsShown" :key="o.name">
                 <td style="font-weight:600">{{ o.name }}</td>
                 <td class="r num">{{ o.n }}</td>
-                <td class="r num" style="font-weight:600" :style="{color:starColor(o.avg)}">{{ o.avg.toFixed(2) }}</td>
-                <td><span class="minibar"><span v-for="(seg,i) in miniSegs(o)" :key="i" :style="{width:seg.w+'%', background:seg.c}"></span></span></td>
+                <td class="r num" style="font-weight:600" :style="{color:starColor(o.avg)}" :title="'Promedia motivos con varas distintas — ver la matriz ★ por operador y motivo para la lectura justa'">{{ o.avg.toFixed(2) }}</td>
+                <td><span class="minibar" :title="'Distribución de calificaciones: '+o.dist.join(' · ')"><span v-for="(seg,i) in miniSegs(o)" :key="i" :style="{width:seg.w+'%', background:seg.c}"></span></span></td>
               </tr>
               <tr v-if="!opsShown.length"><td colspan="4" style="color:var(--faint);padding:14px">Sin operadores.</td></tr>
             </tbody>
@@ -351,21 +370,6 @@
           {{ opsExpanded ? 'Ver menos' : 'Ver todos ('+operators.length+')' }}
         </button>
       </div>
-    </div>
-    <div class="card">
-    <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · cohorte histórica</small></h2>
-    <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
-    <div v-else>
-      <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Depósito <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_converted }}</b>) · re-engagement <b style="color:var(--ink)">{{ convGlobal.ret_pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_returned }}</b> volvieron) · de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
-      <div>
-        <div class="distrow" :class="o.op==='Otros'||o.op.startsWith('BOT')?'static':''" v-for="o in convOps" :key="o.op"
-             :role="o.drillable?'button':null" :tabindex="o.drillable?0:null" @click="o.drillable && openDrill(o.op)" @keydown.enter.prevent="o.drillable && openDrill(o.op)">
-          <span class="lbl" :title="o.op">{{ o.op }} <span style="color:var(--faint)">{{ o.potential }}</span></span>
-          <span class="barrow"><span class="fill" :style="{width: Math.round(88*o.pct/convMaxPct)+'%', background: accentColor}"></span><span class="val num">{{ o.pct }}% · {{ o.converted }} <span style="color:var(--faint)">· ↩{{ o.ret_pct }}%</span></span></span>
-        </div>
-        <div v-if="!convOps.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos de conversión todavía (¿corrió el pase del worker?).</div>
-      </div>
-    </div>
     </div>
   </div>
 
