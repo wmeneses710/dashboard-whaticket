@@ -94,13 +94,15 @@ _RATING_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "m
 
 def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
                     op="all", date_from=None, date_to=None, rating="all",
-                    search="") -> tuple[str, dict]:
+                    search="", motivo="all") -> tuple[str, dict]:
     """(where_sql, params) para conversation_scores, replicando matchBase del front.
     Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas."""
     where = ["cs.account = %(account)s"]
     params: dict = {"account": account}
     if estado and estado != "all":
         where.append("cs.eval_status = %(estado)s"); params["estado"] = estado
+    if motivo and motivo != "all":
+        where.append("cs.motivo = %(motivo)s"); params["motivo"] = motivo
     if segment and segment != "all":
         where.append("cs.segment = %(segment)s"); params["segment"] = segment
     if canal and canal != "all":
@@ -481,7 +483,12 @@ def filter_options(cur, account: str) -> dict:
                 "OR cs.user_id IS NOT NULL) ORDER BY 1",
                 {"account": account})
     operators = [r[0] for r in cur.fetchall()]
-    return {"segments": segments, "channels": channels, "operators": operators}
+    cur.execute("SELECT DISTINCT motivo FROM conversation_scores "
+                "WHERE account = %(account)s AND motivo IS NOT NULL ORDER BY 1",
+                {"account": account})
+    motivos = [r[0] for r in cur.fetchall()]
+    return {"segments": segments, "channels": channels, "operators": operators,
+            "motivos": motivos}
 
 
 def _transcript(msgs: list[dict]) -> list[dict]:

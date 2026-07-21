@@ -126,11 +126,13 @@ def _filters(
     date_to: str | None = Query(None, alias="to"),
     rating: str = "all",
     search: str = "",
+    motivo: str = "all",
 ) -> dict:
     """Filtros del dashboard (matchBase del front) como dependencia común. `from`/`to`
     llegan como alias porque `from` es palabra reservada en Python."""
     return {"estado": estado, "segment": segment, "canal": canal, "op": op,
-            "date_from": date_from, "date_to": date_to, "rating": rating, "search": search}
+            "date_from": date_from, "date_to": date_to, "rating": rating,
+            "search": search, "motivo": motivo}
 
 
 @app.get("/api/options")

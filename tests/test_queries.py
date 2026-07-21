@@ -133,8 +133,10 @@ def test_scores_filters_base_solo_cuenta():
 def test_scores_filters_aplica_cada_filtro():
     where, params = _scores_filters(
         "sistemas", estado="evaluated", segment="jugador", canal="WHATSAPP",
-        op="Virginia", date_from="2026-01-01", date_to="2026-06-30", search="juan")
+        op="Virginia", date_from="2026-01-01", date_to="2026-06-30", search="juan",
+        motivo="retiro")
     assert "cs.eval_status = %(estado)s" in where and params["estado"] == "evaluated"
+    assert "cs.motivo = %(motivo)s" in where and params["motivo"] == "retiro"
     assert "cs.segment = %(segment)s" in where and params["segment"] == "jugador"
     assert "t.channel = %(canal)s" in where and params["canal"] == "WHATSAPP"
     assert "COALESCE(u.name, cs.user_name) = %(op)s" in where and params["op"] == "Virginia"
@@ -281,10 +283,10 @@ def test_filter_options_devuelve_listas_por_cuenta():
     # del server, sin filtrar y scopeado por cuenta.
     cur = _FakeCursor(rows=[("a",), ("b",)], description=[])
     out = filter_options(cur, "datos")
-    assert set(out) == {"segments", "channels", "operators"}
+    assert set(out) == {"segments", "channels", "operators", "motivos"}
     assert out["segments"] == ["a", "b"]
-    # las 3 consultas: DISTINCT, ORDER, scopeadas por cuenta
-    assert len(cur.executed) == 3
+    # las 4 consultas: DISTINCT, ORDER, scopeadas por cuenta (segmento/canal/operador/motivo)
+    assert len(cur.executed) == 4
     for query, params in cur.executed:
         assert "DISTINCT" in query and "ORDER BY" in query
         assert params["account"] == "datos"

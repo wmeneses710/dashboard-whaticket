@@ -247,6 +247,9 @@
     <div><label>Operador</label>
       <select v-model="filters.op"><option value="all">Todos</option>
         <option v-for="o in options.operators" :key="o" :value="o">{{ o.length>16?short(o):o }}</option></select></div>
+    <div><label>Motivo</label>
+      <select v-model="filters.motivo"><option value="all">Todos</option>
+        <option v-for="m in (options.motivos||[])" :key="m" :value="m">{{ MOTIVO_LABEL[m]||m }}</option></select></div>
     <div><label>Orden</label>
       <select v-model="filters.sort"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
     <div class="dr-group">
@@ -537,7 +540,7 @@ createApp({
   setup() {
     const accounts = ref([]);
     const account = ref(null);
-    const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
+    const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", motivo:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
     const options = reactive({ segments:[], channels:[], operators:[] });
     const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[] });
     const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0}, by_month:{months:[],potential:[],converted:[],pct:[]}, evolution:{months:[],operators:[]} });
@@ -566,6 +569,7 @@ createApp({
       if (filters.segment!=="all") p.set("segment", filters.segment);
       if (filters.canal!=="all") p.set("canal", filters.canal);
       if (filters.op!=="all") p.set("op", filters.op);
+      if (filters.motivo!=="all") p.set("motivo", filters.motivo);
       if (filters.rating!=="all") p.set("rating", filters.rating);
       if (filters.from) p.set("from", filters.from);
       if (filters.to) p.set("to", filters.to);
@@ -847,7 +851,7 @@ createApp({
     }
 
     // ---- watchers ----
-    watch(() => [filters.estado, filters.segment, filters.canal, filters.op, filters.rating, filters.from, filters.to, filters.search], debouncedFilter);
+    watch(() => [filters.estado, filters.segment, filters.canal, filters.op, filters.motivo, filters.rating, filters.from, filters.to, filters.search], debouncedFilter);
     watch(() => filters.sort, () => { tickets.page = 1; fetchTickets(); });
 
     onMounted(async () => {
