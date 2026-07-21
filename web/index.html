@@ -167,6 +167,9 @@
   /* Rating chip */
   .chip { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:640; padding:3px 10px 3px 8px; border-radius:999px; white-space:nowrap; }
   .chip .st { font-weight:760; } .chip.skip { background:transparent; color:var(--faint); border:1px dashed var(--border); font-weight:500; }
+  /* Hechos duros de la conversacion (deterministas, no LLM): recarga y re-engagement */
+  .chip.deposit { background:color-mix(in srgb, var(--r-excelente) 15%, transparent); color:var(--r-excelente); }
+  .chip.player  { background:color-mix(in srgb, var(--accent) 15%, transparent); color:var(--accent); }
 
   /* Modal */
   .backdrop { position:fixed; inset:0; background:rgba(10,12,10,.55); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; padding:24px; z-index:50; }
@@ -431,6 +434,11 @@
           </div>
         </div>
         <div class="pane"><h3>Análisis del modelo</h3>
+          <div v-if="modal.detail && (modal.detail.deposit_count>0 || modal.detail.conversion_returned)"
+               style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
+            <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
+            <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
+          </div>
           <div v-if="modal.detail && modal.detail.eval_status!=='evaluated'">
             <div class="why" style="border-color:var(--faint)">No se evaluó: <b>{{ SKIP_LABEL[modal.detail.skip_reason]||modal.detail.skip_reason }}</b>. Queda registrada para explicar la cobertura sin ensuciar la estadística.</div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>

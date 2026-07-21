@@ -44,11 +44,15 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.bot_message_count, cs.contact_message_count, cs.first_response_seconds,
        cs.resolution_seconds, cs.was_unassigned, cs.scoring_version, cs.llm_model,
        cs.rating_applicable, cs.atencion, cs.deposit_observed,
-       ct.name AS customer_name, ct.number AS customer_number, t.channel
+       ct.name AS customer_name, ct.number AS customer_number, t.channel,
+       pc.returned AS conversion_returned
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
   LEFT JOIN users    u  ON u.id  = cs.user_id
+  -- pc.returned no-NULL solo si ESTA conversacion es la de ENTRADA de una persona
+  -- (first_conversation_id). Sirve para el label "convirtio a jugador" en el chat.
+  LEFT JOIN player_conversions pc ON pc.first_conversation_id = cs.conversation_id
  WHERE cs.conversation_id = %(cid)s
 """
 
