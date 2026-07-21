@@ -43,7 +43,7 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.rating_rationale, cs.deposit_count, cs.dimensions, cs.message_count, cs.agent_message_count,
        cs.bot_message_count, cs.contact_message_count, cs.first_response_seconds,
        cs.resolution_seconds, cs.was_unassigned, cs.scoring_version, cs.llm_model,
-       cs.rating_applicable, cs.atencion, cs.deposit_observed, cs.deposit_mismatch, cs.motivo,
+       cs.atencion, cs.deposit_observed, cs.deposit_mismatch, cs.motivo,
        ct.name AS customer_name, ct.number AS customer_number, t.channel,
        pc.returned AS conversion_returned,
        EXTRACT(EPOCH FROM (ses.end_at - ses.start_at)) AS session_seconds
@@ -498,7 +498,7 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        cs.conversation_id, cs.ticket_id, cs.conversation_created_at, cs.eval_status,
        cs.skip_reason, cs.rating_label, cs.stars,
        left(cs.rating_rationale, 160) AS rating_rationale,
-       cs.rating_applicable, cs.atencion, cs.motivo,
+       cs.atencion, cs.motivo,
        COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id

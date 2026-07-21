@@ -490,20 +490,18 @@ def test_conversation_detail_filtra_por_id_y_agrega_transcript():
     assert d["transcript"] == []
 
 
-def test_conversation_detail_incluye_rating_applicable_y_atencion():
-    # el front necesita distinguir "sin evaluar" de "sin rating aplicable
-    # (adquisición)": sin estas columnas no puede mostrar el estado correcto.
+def test_conversation_detail_trae_atencion_deposito_motivo_no_rating_applicable():
+    # v2: rating_applicable quedó muerto (Opción B retirada) -> se sacó del payload.
     cur = _FakeCursor(rows=[], description=["conversation_id"], one=("c1",))
     conversation_detail(cur, "c1")
     query, _ = cur.executed[0]
-    assert "cs.rating_applicable" in query
-    assert "cs.atencion" in query
-    assert "cs.deposit_observed" in query
+    assert "cs.atencion" in query and "cs.deposit_observed" in query and "cs.motivo" in query
+    assert "cs.rating_applicable" not in query
 
 
-def test_tickets_convs_sql_incluye_rating_applicable_y_atencion():
-    assert "cs.rating_applicable" in _TICKETS_CONVS_SQL
-    assert "cs.atencion" in _TICKETS_CONVS_SQL
+def test_tickets_convs_sql_trae_atencion_motivo_no_rating_applicable():
+    assert "cs.atencion" in _TICKETS_CONVS_SQL and "cs.motivo" in _TICKETS_CONVS_SQL
+    assert "cs.rating_applicable" not in _TICKETS_CONVS_SQL
 
 
 class _DetailCur:
