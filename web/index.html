@@ -93,11 +93,10 @@
   .tile .foot { font-size:11.5px; color:var(--faint); margin-top:6px; }
 
   /* Cards */
-  /* .cols: altura NATURAL por tarjeta (align-items:start). Conversión por operador es
-     mucho más larga (24 filas) que Operadores (8) -> estirar Operadores dejaba una caja
-     vacía enorme con el botón flotando. Natural = Operadores compacto, botón pegado a
-     las filas. (El trío sí estira porque sus alturas son parecidas.) */
-  .cols { display:grid; grid-template-columns:1.7fr 1fr; gap:16px; margin-bottom:16px; align-items:start; }
+  /* .cols: IGUAL altura por fila (stretch, default). Operadores (más corto) LLENA esa
+     altura via flex (.ops-card) y scrollea adentro, con el botón 'Ver todos' al FONDO —
+     así usa el alto completo de la igualdad en vez de flotar arriba. */
+  .cols { display:grid; grid-template-columns:1.7fr 1fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .col-stack{ display:flex; flex-direction:column; gap:16px; }
   /* Fila de 3 cuadros chicos (distribución · % depósito · calidad por motivo) */
@@ -141,10 +140,12 @@
   .minibar span + span { border-left:2px solid var(--surface); }
   tr.op:hover .minibar span + span { border-left-color:var(--surface-2); }
   .ops-scroll { overflow-x:auto; }
-  /* Expandido ("Ver todos"): crece natural pero con tope generoso por si hay muchísimos
-     operadores; como el máximo (~17) es menor que Conversión por operador (~24), no la
-     supera. overflow-y scrollea solo si excede el tope. */
-  .ops-scroll.exp { max-height:80vh; overflow-y:auto; }
+  /* Operadores comparte fila (igual altura) con Conversión por operador. La tabla LLENA
+     esa altura y scrollea adentro; el botón 'Ver todos' queda al FONDO — usa el alto
+     completo de la igualdad, no flota arriba. Requiere align-items:stretch en .cols. */
+  .ops-card { display:flex; flex-direction:column; }
+  .ops-card .ops-body { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
+  .ops-card .ops-scroll { flex:1 1 0; min-height:0; overflow-y:auto; }
   .ops-more { margin-top:12px; width:100%; border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px; font-size:12px; font-weight:600; font-family:inherit; cursor:pointer; transition:border-color .12s,color .12s; }
   .ops-more:hover { color:var(--accent); border-color:var(--accent); }
 
@@ -354,10 +355,10 @@
       </div>
     </div>
     </div>
-    <div class="card">
+    <div class="card ops-card">
       <h2>Operadores <small>· los más activos primero</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
-      <div v-else>
+      <div v-else class="ops-body">
         <div class="ops-scroll" :class="{exp: opsExpanded}">
           <table><thead><tr><th>Operador</th><th class="r" title="Sesiones evaluadas del operador">Vol.</th><th class="r" title="★ promedio de sus sesiones evaluadas (todas los motivos mezclados)">★ prom</th><th>Distribución</th></tr></thead>
             <tbody>
