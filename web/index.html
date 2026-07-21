@@ -312,7 +312,10 @@
         <h2>Calidad por motivo <small>· ★ promedio segmentado · el global mezcla varas distintas</small></h2>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(90-n*10)+'%'}"></div></div>
         <div v-else>
-          <div class="distrow static" v-for="m in motivoStats" :key="m.motivo">
+          <div v-for="m in motivoStats" :key="m.motivo"
+               :class="['distrow', {active: filters.motivo===m.motivo, dim: filters.motivo!=='all' && filters.motivo!==m.motivo, static: m.motivo==='sin_motivo'}]"
+               :role="m.motivo!=='sin_motivo'?'button':null" :tabindex="m.motivo!=='sin_motivo'?0:null" :aria-pressed="filters.motivo===m.motivo"
+               @click="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.enter.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.space.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)">
             <span class="lbl">{{ MOTIVO_LABEL[m.motivo]||m.motivo }} <span style="color:var(--faint)">{{ m.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:(m.avg?m.avg/5*100:0)+'%', background:m.avg?starColor(m.avg):'var(--faint)'}"></span><span class="val num">{{ m.avg!=null ? m.avg.toFixed(2)+'★' : '—' }}</span></span>
           </div>
@@ -462,7 +465,10 @@
             <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
             <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
           </div>
-          <div v-if="modal.detail && modal.detail.eval_status!=='evaluated'">
+          <div v-if="modal.detail && modal.detail.pending">
+            <div class="why" style="border-color:var(--faint)">⏳ <b>Pendiente de evaluar</b> — el worker todavía no scoreó esta sesión (backfill en curso). El chat se muestra igual; el análisis aparece cuando termine de procesarla.</div>
+          </div>
+          <div v-else-if="modal.detail && modal.detail.eval_status!=='evaluated'">
             <div class="why" style="border-color:var(--faint)">No se evaluó: <b>{{ SKIP_LABEL[modal.detail.skip_reason]||modal.detail.skip_reason }}</b>. Queda registrada para explicar la cobertura sin ensuciar la estadística.</div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
           </div>
@@ -641,6 +647,7 @@ createApp({
       loadCharts();
     }
     function toggleRating(l) { filters.rating = filters.rating===l ? "all" : l; }
+    function toggleMotivo(m) { filters.motivo = filters.motivo===m ? "all" : m; }
     function toggleCard(k) { openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k); }
     function setPage(p) { tickets.page = Math.min(Math.max(1,p), tickets.pages); fetchTickets(); }
     function resetFilters() { Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" }); }
@@ -877,7 +884,7 @@ createApp({
       kpiTiles, distRows, depByChannel, operators, motivoStats, opsShown, qualOps, convPasvOps, accentColor, snapText,
       convOps, convMaxPct, convByOp, convGlobal,
       TOP_OPS, SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
-      switchAccount, toggleRating, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
+      switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, metaGrid };

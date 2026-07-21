@@ -489,3 +489,33 @@ def test_conversation_detail_incluye_rating_applicable_y_atencion():
 def test_tickets_convs_sql_incluye_rating_applicable_y_atencion():
     assert "cs.rating_applicable" in _TICKETS_CONVS_SQL
     assert "cs.atencion" in _TICKETS_CONVS_SQL
+
+
+class _DetailCur:
+    """Cursor mínimo: execute no-op, fetchone devuelve `row` (None = sin score)."""
+    description = []
+
+    def __init__(self, row):
+        self._row = row
+
+    def execute(self, *a, **k):
+        pass
+
+    def fetchone(self):
+        return self._row
+
+
+def test_conversation_detail_sin_score_devuelve_transcript_pendiente(monkeypatch):
+    import src.queries as q
+    monkeypatch.setattr(q, "fetch_messages", lambda cur, cid: [
+        {"from_me": False, "is_note": False, "body": "hola", "sent_from": None, "media_type": None}])
+    d = q.conversation_detail(_DetailCur(None), "conv-x")
+    assert d is not None
+    assert d["pending"] is True and d["eval_status"] is None
+    assert d["transcript"][0]["role"] == "CLIENTE"
+
+
+def test_conversation_detail_sin_score_ni_mensajes_es_none(monkeypatch):
+    import src.queries as q
+    monkeypatch.setattr(q, "fetch_messages", lambda cur, cid: [])
+    assert q.conversation_detail(_DetailCur(None), "conv-x") is None

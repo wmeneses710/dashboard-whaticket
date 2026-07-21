@@ -876,12 +876,21 @@ def conversion_cohort(cur, account: str, **filters) -> list[dict]:
 
 
 def conversation_detail(cur, conversation_id: str) -> dict | None:
-    """Una conversacion con su analisis completo + transcript reconstruido."""
+    """Una conversacion con su analisis completo + transcript reconstruido.
+
+    Si NO hay fila de score (sesion pendiente / aun no scoreada), igual devolvemos el
+    CHAT desde los mensajes con `pending=True`, para que el drill de cohorte (u otro)
+    pueda ABRIR la conversacion aunque el worker todavia no la haya evaluado. Devuelve
+    None solo si tampoco hay mensajes (no hay nada que mostrar)."""
     cur.execute(_DETAIL_SQL, {"cid": conversation_id})
     row = cur.fetchone()
-    if not row:
+    if row:
+        cols = [d.name for d in cur.description]
+        d = {c: _coerce(v) for c, v in zip(cols, row)}
+        d["transcript"] = _transcript(fetch_messages(cur, conversation_id))
+        return d
+    transcript = _transcript(fetch_messages(cur, conversation_id))
+    if not transcript:
         return None
-    cols = [d.name for d in cur.description]
-    d = {c: _coerce(v) for c, v in zip(cols, row)}
-    d["transcript"] = _transcript(fetch_messages(cur, conversation_id))
-    return d
+    return {"conversation_id": conversation_id, "eval_status": None,
+            "pending": True, "transcript": transcript}
