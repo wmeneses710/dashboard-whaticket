@@ -520,6 +520,21 @@ class _DetailCur:
         return self._row
 
 
+def test_fast_close_sql_condiciones():
+    from src.queries import _FAST_CLOSE_SQL
+    q = _FAST_CLOSE_SQL
+    assert "eval_status = 'evaluated'" in q
+    assert "cs.stars <= 2" in q                       # sin resolver
+    assert "interval '10 minutes'" in q               # cierre rápido
+    assert "conversation_sessions" in q
+
+
+def test_detail_sql_trae_session_seconds():
+    from src.queries import _DETAIL_SQL
+    assert "session_seconds" in _DETAIL_SQL
+    assert "conversation_sessions ses" in _DETAIL_SQL
+
+
 def test_conversation_detail_sin_score_devuelve_transcript_pendiente(monkeypatch):
     import src.queries as q
     monkeypatch.setattr(q, "fetch_messages", lambda cur, cid: [

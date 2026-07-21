@@ -45,7 +45,8 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.resolution_seconds, cs.was_unassigned, cs.scoring_version, cs.llm_model,
        cs.rating_applicable, cs.atencion, cs.deposit_observed, cs.motivo,
        ct.name AS customer_name, ct.number AS customer_number, t.channel,
-       pc.returned AS conversion_returned
+       pc.returned AS conversion_returned,
+       EXTRACT(EPOCH FROM (ses.end_at - ses.start_at)) AS session_seconds
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
@@ -53,6 +54,9 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
   -- pc.returned no-NULL solo si ESTA conversacion es la de ENTRADA de una persona
   -- (first_conversation_id). Sirve para el label "convirtio a jugador" en el chat.
   LEFT JOIN player_conversions pc ON pc.first_conversation_id = cs.conversation_id
+  -- duración de la sesión (end_at - start_at, ambos = tiempos de mensaje reales tras el
+  -- fix de freshness) para el flag de CIERRE RÁPIDO en el chat.
+  LEFT JOIN conversation_sessions ses ON ses.session_id = cs.session_id
  WHERE cs.conversation_id = %(cid)s
 """
 
@@ -169,9 +173,28 @@ def pending_sessions_count(cur, account: str, date_from=None, date_to=None) -> i
     return int(cur.fetchone()[0])
 
 
+# "Cierre rápido": sesión EVALUADA que cerró muy rápido (<10min) Y sin resolver (★<=2).
+# Señal DIAGNÓSTICA — la conversación concluyó rápido sin solucionar al usuario; puede
+# ser deficiencia de configuración (auto-close agresivo), no siempre culpa del agente.
+# Un depósito resuelto en 3min NO cae acá (★>2). Medible gracias al fix de end_at.
+_FAST_CLOSE_SQL = """
+SELECT count(*) AS cierres_rapidos""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated' AND cs.stars <= 2 AND cs.session_id IS NOT NULL
+   AND EXISTS (SELECT 1 FROM conversation_sessions ses
+                WHERE ses.session_id = cs.session_id
+                  AND ses.end_at - ses.start_at < interval '10 minutes')"""
+
+
+def fast_close_count(cur, account: str, **filters) -> int:
+    """Sesiones evaluadas que cerraron <10min y sin resolver (★<=2). Respeta filtros."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_FAST_CLOSE_SQL.format(where=where), params)
+    return int(cur.fetchone()[0])
+
+
 def summary_kpis(cur, account: str, **filters) -> dict:
     """KPIs agregados en la BD para el filtro dado (reemplaza el cómputo en memoria).
-    Incluye `pendientes`: sesiones cerradas aún sin scorear (backfill en curso)."""
+    Incluye `pendientes` (backfill en curso) y `cierres_rapidos` (señal diagnóstica)."""
     where, params = _scores_filters(account, **filters)
     cur.execute(_SUMMARY_KPIS_SQL.format(where=where), params)
     cols = [d.name for d in cur.description]
@@ -180,6 +203,7 @@ def summary_kpis(cur, account: str, **filters) -> dict:
     kpis["pendientes"] = pending_sessions_count(
         cur, account, filters.get("date_from"), filters.get("date_to")
     )
+    kpis["cierres_rapidos"] = fast_close_count(cur, account, **filters)
     return kpis
 
 

@@ -178,6 +178,7 @@
   .chip.at-empujo       { background:color-mix(in srgb, var(--r-buena) 18%, transparent); color:var(--r-buena); }
   .chip.at-pasivo       { background:color-mix(in srgb, var(--faint) 15%, transparent); color:var(--muted); }
   .chip.at-no_respondio { background:color-mix(in srgb, var(--r-mala) 15%, transparent); color:var(--r-mala); }
+  .chip.fast { background:color-mix(in srgb, var(--r-deficiente) 16%, transparent); color:var(--r-deficiente); }
 
   /* Modal */
   .backdrop { position:fixed; inset:0; background:rgba(10,12,10,.55); backdrop-filter:blur(3px); display:none; align-items:center; justify-content:center; padding:24px; z-index:50; }
@@ -489,11 +490,12 @@
           </div>
         </div>
         <div class="pane"><h3>Análisis del modelo</h3>
-          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned)"
+          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail))"
                style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
             <span class="chip" v-if="modal.detail.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
             <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
             <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
+            <span class="chip fast" v-if="fastClose(modal.detail)">⚡ Cierre rápido ({{ Math.round(modal.detail.session_seconds/60) }}m)</span>
           </div>
           <div v-if="modal.detail && modal.detail.pending">
             <div class="why" style="border-color:var(--faint)">⏳ <b>Pendiente de evaluar</b> — el worker todavía no scoreó esta sesión (backfill en curso). El chat se muestra igual; el análisis aparece cuando termine de procesarla.</div>
@@ -736,12 +738,18 @@ createApp({
     function closeDrill() { drill.open = false; }
     function openFromDrill(cid) { if(!cid) return; drill.open = false; openModal(cid); }
     function drillCol(p) { return p.deposited ? cvar("--r-excelente") : cvar("--faint"); }
+    // Cierre rápido CONCERNING: duró <10min Y no resolvió (★<=2 o sin rating). Un
+    // depósito eficiente (rápido y bien) NO cae acá. Es diagnóstico, no penalización.
+    function fastClose(d) {
+      return !!d && d.session_seconds != null && d.session_seconds < 600
+             && (d.stars == null || d.stars <= 2);
+    }
 
     // ---- computed para la vista ----
     const kpiTiles = computed(() => { const k = summary.kpis||{};
       const cov = k.total ? Math.round(100*k.evaluadas/k.total) : 0;
       const tiles = [
-        { k:"Conversaciones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
+        { k:"Sesiones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
         { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
         { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} sesiones` },
         { k:"Cobertura", v:cov, u:"%", foot:`${(k.total||0)-(k.evaluadas||0)} sin evaluar` },
@@ -751,6 +759,9 @@ createApp({
       // no un agujero (sesiones cerradas que el worker todavía no scoreó).
       if (k.pendientes > 0) tiles.push(
         { k:"Pendientes de evaluar", v:k.pendientes, foot:"sesiones cerradas · backfill en curso" });
+      // Señal diagnóstica: cerró <10min sin resolver (★≤2). Solo si hay alguna.
+      if (k.cierres_rapidos > 0) tiles.push(
+        { k:"Cierres rápidos", v:k.cierres_rapidos, foot:"<10min sin resolver (★≤2)" });
       return tiles;
     });
     const distRows = computed(() => { const d = summary.distribution||{};
@@ -935,7 +946,7 @@ createApp({
       convOps, convMaxPct, convByOp, convGlobal,
       TOP_OPS, SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
-      openDrill, closeDrill, openFromDrill, drillCol,
+      openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, metaGrid };
   }
