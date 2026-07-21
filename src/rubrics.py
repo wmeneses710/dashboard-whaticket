@@ -89,6 +89,8 @@ MOTIVOS: tuple[Motivo, ...] = (
 )
 _V2_LABELS = ("excelente", "buena", "aceptable", "deficiente", "mala")
 _V2_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1}
+# Escala de etiquetas comun a TODOS los motivos (para el enum del schema del pase v2).
+MOTIVO_LABELS: tuple[str, ...] = _V2_LABELS
 
 # Cortesia: eje transversal del UPLIFT (mismo en todos los motivos). Se llama
 # 'cortesia' y NO 'atencion' para no colisionar con el campo top-level `atencion`

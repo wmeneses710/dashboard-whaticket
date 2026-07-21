@@ -5,7 +5,53 @@ Reglas clave que el prompt debe respetar:
   - dar el hilo del ticket como CONTEXTO (no calificarlo),
   - inyectar los criterios y las etiquetas de la rubrica correspondiente.
 """
-from src.prompts import build_output_schema, build_scorer_prompt, format_transcript
+from src.prompts import (
+    build_motivo_prompt,
+    build_motivo_schema,
+    build_output_schema,
+    build_scorer_prompt,
+    format_transcript,
+)
+from src.rubrics import MOTIVO_LABELS, MOTIVOS
+
+
+def test_motivo_prompt_muestra_la_tabla_de_los_siete_motivos():
+    system, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="")
+    low = system.lower()
+    for m in MOTIVOS:
+        assert m in low
+
+
+def test_motivo_prompt_pide_el_campo_motivo_y_reglas_de_dos_capas():
+    system, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="")
+    assert '"motivo"' in system
+    low = system.lower()
+    assert "piso" in low and "uplift" in low
+
+
+def test_motivo_prompt_incluye_transcript_y_contexto():
+    _, user = build_motivo_prompt(MSGS_HUMAN, thread_context="visita previa X")
+    assert "no me llego la recarga" in user
+    assert "visita previa X" in user
+
+
+def test_motivo_prompt_hint_de_deposito_es_condicional():
+    s_no, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="", deposit_hint=False)
+    s_si, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="", deposit_hint=True)
+    assert "HINT DETERMINISTA" in s_si
+    assert "HINT DETERMINISTA" not in s_no
+
+
+def test_motivo_schema_pide_motivo_dimensiones_v2_y_labels():
+    sch = build_motivo_schema()
+    props = sch["properties"]
+    assert props["motivo"]["enum"] == list(MOTIVOS)
+    dims = props["dimensions"]["properties"]
+    assert {"resolucion", "iniciativa", "cortesia", "errores"} <= set(dims)
+    assert props["rating_label"]["enum"] == list(MOTIVO_LABELS)
+    assert set(sch["required"]) == {"motivo", "dimensions", "rating_label", "rating_rationale"}
+    assert "atencion" not in sch["required"]
+    assert "stars" not in props
 
 MSGS_HUMAN = [
     {"from_me": False, "is_note": False, "body": "hola, no me llego la recarga"},

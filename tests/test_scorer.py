@@ -5,7 +5,7 @@ determinista desde la etiqueta. El LLM nunca decide la estrella.
 """
 import pytest
 
-from src.scorer import ScoreResult, score_conversation
+from src.scorer import ScoreResult, score_by_motivo, score_conversation
 
 MSGS = [
     {"from_me": False, "is_note": False, "body": "no me llego la recarga"},
@@ -123,3 +123,47 @@ def test_deposit_observed_string_true_es_true():
     r = score_conversation(rubric="human", target_messages=MSGS, thread_context="",
                            llm=FakeLLM(_unified_resp(deposit_observed="true")))
     assert r.deposit_observed is True
+
+
+# --- pase v2: score_by_motivo (el LLM clasifica el motivo) --------------------
+def _motivo_resp(**over):
+    resp = {
+        "motivo": "deposito",
+        "dimensions": {
+            "resolucion": "acredito el comprobante",
+            "iniciativa": "menciono un bono a alcanzar",
+            "cortesia": "saludo por el nombre",
+            "errores": [],
+        },
+        "rating_label": "buena",
+        "rating_rationale": "acredito rapido y ofrecio un bono",
+        "atencion": "empujo",
+        "deposit_observed": True,
+    }
+    resp.update(over)
+    return resp
+
+
+def test_score_by_motivo_devuelve_motivo_y_estrella_determinista():
+    r = score_by_motivo(target_messages=MSGS, thread_context="", llm=FakeLLM(_motivo_resp()))
+    assert r.motivo == "deposito"
+    assert r.rating_label == "buena" and r.stars == 4
+    assert r.dimensions["iniciativa"] == "menciono un bono a alcanzar"
+
+
+def test_score_by_motivo_rechaza_motivo_invalido():
+    with pytest.raises(ValueError):
+        score_by_motivo(target_messages=MSGS, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="chacharacha")))
+
+
+def test_score_by_motivo_pasa_deposit_hint_al_prompt():
+    llm = FakeLLM(_motivo_resp())
+    score_by_motivo(target_messages=MSGS, thread_context="", llm=llm, deposit_hint=True)
+    assert "HINT DETERMINISTA" in llm.calls[0][0]
+
+
+def test_score_by_motivo_atencion_fuera_de_enum_degrada_a_none():
+    r = score_by_motivo(target_messages=MSGS, thread_context="",
+                        llm=FakeLLM(_motivo_resp(atencion="x")))
+    assert r.atencion is None and r.motivo == "deposito"

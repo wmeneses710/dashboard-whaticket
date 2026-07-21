@@ -11,8 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from src.prompts import build_output_schema, build_scorer_prompt
-from src.rubrics import label_to_stars
+from src.prompts import (
+    build_motivo_prompt,
+    build_motivo_schema,
+    build_output_schema,
+    build_scorer_prompt,
+)
+from src.rubrics import MOTIVOS, label_to_stars
 
 
 class LLM(Protocol):
@@ -31,6 +36,7 @@ class ScoreResult:
     llm_model: str
     atencion: str | None            # empujo|pasivo|no_respondio; None si el LLM no dio uno valido
     deposit_observed: bool | None   # observacion LLM del deposito (el gate determinista manda)
+    motivo: str | None = None       # pase v2: motivo clasificado por el LLM (None en el pase viejo)
 
 
 def _validate(raw: dict, schema: dict) -> None:
@@ -93,6 +99,45 @@ def score_conversation(
         atencion = None
     return ScoreResult(
         rubric=rubric,
+        dimensions=raw["dimensions"],
+        rating_label=label,
+        rating_rationale=raw["rating_rationale"],
+        stars=stars,
+        llm_model=llm.model,
+        atencion=atencion,
+        deposit_observed=_as_bool(raw.get("deposit_observed")),
+    )
+
+
+def score_by_motivo(
+    *,
+    target_messages: list[dict],
+    thread_context: str,
+    llm: LLM,
+    deposit_hint: bool = False,
+) -> ScoreResult:
+    """Pase v2: el LLM clasifica el MOTIVO (de la tabla) y califica en 2 capas.
+
+    La estrella sigue siendo determinista (label_to_stars). El motivo elegido define
+    la rubrica del rating_label (la escala es unica, asi que cualquier motivo valida
+    igual). `deposit_hint` inyecta la senal determinista de comprobante en el prompt.
+    """
+    system, user = build_motivo_prompt(target_messages, thread_context, deposit_hint=deposit_hint)
+    schema = build_motivo_schema()
+    raw = llm.chat_json(system, user, schema)
+    _validate(raw, schema)
+
+    motivo = raw.get("motivo")
+    if motivo not in MOTIVOS:
+        raise ValueError(f"motivo invalido del LLM: {motivo!r} (validos: {list(MOTIVOS)})")
+    label = raw["rating_label"]
+    stars = label_to_stars(motivo, label)  # valida la etiqueta contra la escala del motivo
+    atencion = raw.get("atencion")
+    if atencion not in schema["properties"]["atencion"]["enum"]:
+        atencion = None
+    return ScoreResult(
+        rubric=motivo,
+        motivo=motivo,
         dimensions=raw["dimensions"],
         rating_label=label,
         rating_rationale=raw["rating_rationale"],

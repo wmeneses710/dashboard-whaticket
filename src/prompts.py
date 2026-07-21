@@ -13,7 +13,7 @@ src.rubrics.label_to_stars.
 """
 from __future__ import annotations
 
-from src.rubrics import RubricSpec, get_rubric
+from src.rubrics import MOTIVO_LABELS, MOTIVOS, RubricSpec, get_rubric
 
 # Rotulo del lado "negocio" (from_me=True) segun quien atiende esa rubrica.
 _BUSINESS_LABEL = {"human": "Agente", "bot": "Bot"}
@@ -218,6 +218,133 @@ def build_scorer_prompt(
         transcript=format_transcript(target_messages, rubric),
     )
     return system, user
+
+
+# ============================================================================
+# Pase v2: el LLM clasifica el MOTIVO (tabla de motivos) y califica en 2 capas.
+# Reemplaza la eleccion de rubrica por handler (human/bot). El determinista quedo
+# descartado para el motivo (31% 'otro' + contamina; ver docs/diseno-scoring-v2.md).
+# ============================================================================
+_MOTIVO_SYSTEM = """\
+Sos un evaluador de calidad de atencion al cliente de una plataforma de apuestas \
+(chats de WhatsApp/Facebook, espanol rioplatense/ecuatoriano). Evaluas UNA SESION (la \
+interaccion de UN agente con el cliente) y emitis: el MOTIVO de la interaccion, una \
+calificacion cualitativa y la clasificacion de la atencion del operador.
+
+Reglas generales:
+- Evaluas al OPERADOR HUMANO (Agente). El Bot y el Cliente no se califican.
+- Ignora las notas internas (ya vienen excluidas del texto).
+- RESPUESTA IMPLICITA: la respuesta al motivo puede estar CONTENIDA en lo que dijo el \
+agente aunque no repita la pregunta. Si la info pedida esta presente, el motivo SE ATENDIO.
+- ABANDONO DEL CLIENTE: si el agente dio una respuesta accionable y el cliente se fue, la \
+falta de cierre es del CLIENTE, no una falla del agente.
+- MEDIA ILEGIBLE: los "[media/sin texto]" son imagenes/audios que NO podes ver. En \
+depositos/retiros el comprobante suele venir como media: NO asumas fracaso por no verla.
+- TONO: cordial pero con PLANTILLA NO es cortante. Templateado y correcto es aceptable.
+- No inventes emociones ni contexto: evalua SOLO lo EXPLICITO en los mensajes. Atribui \
+cada mensaje a quien lo dijo (Cliente vs Agente/Bot).
+
+PASO 1 - MOTIVO. Clasifica la interaccion en UNO de estos motivos (campo "motivo"):
+{tabla}
+
+PASO 2 - CALIFICACION (modelo de DOS CAPAS, segun el motivo elegido):
+- PISO: si el agente ATENDIO el motivo (columna PISO) correctamente, aunque sea minimo o \
+templateado, la etiqueta es "aceptable". La plantilla NO baja la nota.
+- DEBAJO DEL PISO: si NO atendio el motivo (no resolvio, dato erroneo, maltrato, o cerro \
+muy rapido sin resolver), la etiqueta no supera "deficiente".
+- UPLIFT: para superar "aceptable" (llegar a "buena"/"excelente") el agente debe ADEMAS \
+hacer la accion extra del motivo (columna UPLIFT) y/o mostrar cortesia destacada.
+
+Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (atendio el \
+motivo = PISO), iniciativa (accion extra = UPLIFT), cortesia (saludo, palabras, \
+personalizacion). Mas la lista de errores concretos (vacia si no hay).
+
+Etiquetas permitidas (de mejor a peor): {etiquetas}
+
+ATENCION DEL OPERADOR (campo "atencion") - esfuerzo del AGENTE HUMANO por impulsar la \
+conversion/retencion (NO al bot, NO al cliente):
+- empujo: impulso concreto (ofrecer/guiar registro, invitar a depositar/recargar/apostar, \
+mandar link, presentar promo/bono, o retener en un retiro invitando a volver a jugar).
+- pasivo: solo saludo, informo o pregunto SIN impulsar.
+- no_respondio: casi no atendio lo que el cliente necesitaba.
+
+OBSERVACION DE DEPOSITO (campo "deposit_observed"): true si en el transcript aparece un \
+comprobante/recarga reconocida; false si no. Es OBSERVACION, no decision: el conteo real \
+lo dicta un gate DETERMINISTA aparte.{hint}
+
+{json_shape}"""
+
+_MOTIVO_HINT = (
+    "\n\nHINT DETERMINISTA: se detecto un comprobante de deposito/recarga en el "
+    'transcript. El motivo muy probablemente sea "deposito" (salvo que el texto indique '
+    "claramente otra cosa)."
+)
+
+_MOTIVO_JSON_SHAPE = (
+    "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, con esta "
+    "forma EXACTA:\n"
+    '{"motivo": "<uno de: ' + "|".join(MOTIVOS) + '">, '
+    '"dimensions": {"resolucion": "<nota 1 frase>", "iniciativa": "<nota 1 frase>", '
+    '"cortesia": "<nota 1 frase>", "errores": []}, '
+    '"rating_label": "<una de: ' + "|".join(MOTIVO_LABELS) + '">, '
+    '"rating_rationale": "<2-4 frases especificas de esta sesion>", '
+    '"atencion": "<empujo|pasivo|no_respondio>", '
+    '"deposit_observed": <true|false>}'
+)
+
+
+def _motivo_tabla_block() -> str:
+    """Tabla de motivos para el prompt: 'motivo: PISO = ... UPLIFT = ...' por cada uno."""
+    lines = []
+    for m in MOTIVOS:
+        spec = get_rubric(m)
+        res = next(d for d in spec.dimensions if d.key == spec.dominant)
+        upl = next(d for d in spec.dimensions if d.key == spec.uplift)
+        lines.append(f"- {m}: PISO = {res.bien}. UPLIFT = {upl.bien}.")
+    return "\n".join(lines)
+
+
+def build_motivo_prompt(
+    target_messages: list[dict], thread_context: str, *, deposit_hint: bool = False
+) -> tuple[str, str]:
+    """Prompt v2: el LLM elige el MOTIVO de la tabla y califica en 2 capas. (system, user)."""
+    system = _MOTIVO_SYSTEM.format(
+        tabla=_motivo_tabla_block(),
+        etiquetas=_etiquetas_block(get_rubric(MOTIVOS[0])),
+        hint=_MOTIVO_HINT if deposit_hint else "",
+        json_shape=_MOTIVO_JSON_SHAPE,
+    )
+    contexto = (thread_context or "").strip() or "(sin visitas previas)"
+    user = _USER_TEMPLATE.format(
+        contexto=contexto, transcript=format_transcript(target_messages, MOTIVOS[0])
+    )
+    return system, user
+
+
+def build_motivo_schema() -> dict:
+    """Esquema de salida del pase v2: motivo + dimensiones uniformes + label unificado."""
+    return {
+        "type": "object",
+        "properties": {
+            "motivo": {"type": "string", "enum": list(MOTIVOS)},
+            "dimensions": {
+                "type": "object",
+                "properties": {
+                    "resolucion": {"type": "string"},
+                    "iniciativa": {"type": "string"},
+                    "cortesia": {"type": "string"},
+                    "errores": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["resolucion", "iniciativa", "cortesia"],
+            },
+            "rating_label": {"type": "string", "enum": list(MOTIVO_LABELS)},
+            "rating_rationale": {"type": "string"},
+            "atencion": {"type": "string", "enum": list(ATENCION_LABELS)},
+            "deposit_observed": {"type": "boolean"},
+        },
+        # atencion/deposit_observed best-effort (no en required), igual que el pase viejo.
+        "required": ["motivo", "dimensions", "rating_label", "rating_rationale"],
+    }
 
 
 def build_output_schema(rubric: str) -> dict:
