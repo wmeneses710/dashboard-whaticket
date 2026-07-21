@@ -229,6 +229,9 @@ Guia rapida de desambiguacion:
 - interes en un bono o promocion -> promo
 - manda un comprobante/recarga para que le ACREDITEN saldo -> deposito
 - datos de agencia + monto a retirar + cuenta bancaria -> retiro
+CLAVE deposito vs retiro: si el COMPROBANTE lo manda el CLIENTE (una captura de pago) es
+RECARGA/deposito. En un RETIRO el cliente manda DATOS (agencia, monto, cuenta) y el
+COMPROBANTE lo manda el AGENTE. Cliente adjunta comprobante -> deposito, NO retiro.
 - contrasena / cambio de cuenta o nombre / verificacion de identidad -> soporte_cuenta
 - quiere crear/activar una cuenta nueva -> registro
 - algo no funciona / no se le acredito / reclamo -> problema
@@ -261,10 +264,10 @@ lo dicta un gate DETERMINISTA aparte.{hint}
 {json_shape}"""
 
 _MOTIVO_HINT = (
-    "\n\nHINT DETERMINISTA: se detecto un comprobante de pago en el transcript. Es una "
-    'PISTA de que PODRIA ser "deposito", pero NO decide: clasifica por la necesidad '
-    "PRINCIPAL del cliente. Si vino por otra cosa (consulta, promo, retiro, soporte) y solo "
-    "adjunto un comprobante, usa ESE otro motivo."
+    "\n\nHINT DETERMINISTA: el CLIENTE adjunto un comprobante de pago. Eso es una RECARGA "
+    '(deposito), NO un retiro (en un retiro el comprobante lo manda el agente). El motivo '
+    'es "deposito", salvo que el texto del cliente pida claramente otra cosa (consulta, '
+    "promo, soporte) y el comprobante sea secundario."
 )
 
 _MOTIVO_JSON_SHAPE = (

@@ -108,3 +108,24 @@ def test_deposit_observed_ambiguo_degrada_a_none():
     r = score_by_motivo(target_messages=MSGS, thread_context="",
                         llm=FakeLLM(_motivo_resp(deposit_observed="no sé")))
     assert r.deposit_observed is None
+
+
+def test_deposit_hint_corrige_retiro_a_deposito():
+    # El gate cuenta comprobantes del CLIENTE = recarga; en un retiro el comprobante lo
+    # manda el AGENTE. Si el LLM dijo 'retiro' con deposit_hint, se corrige a 'deposito'
+    # (evita la contradicción "Retiro + Recargado" del dashboard).
+    r = score_by_motivo(target_messages=MSGS, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="retiro")), deposit_hint=True)
+    assert r.motivo == "deposito"
+
+
+def test_deposit_hint_no_toca_otros_motivos():
+    r = score_by_motivo(target_messages=MSGS, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="info")), deposit_hint=True)
+    assert r.motivo == "info"
+
+
+def test_sin_deposit_hint_respeta_retiro():
+    r = score_by_motivo(target_messages=MSGS, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="retiro")), deposit_hint=False)
+    assert r.motivo == "retiro"

@@ -94,6 +94,12 @@ def score_by_motivo(
     motivo = raw.get("motivo")
     if motivo not in MOTIVOS:
         raise ValueError(f"motivo invalido del LLM: {motivo!r} (validos: {list(MOTIVOS)})")
+    # Guard determinista deposito<->retiro: el deposit_hint viene de un comprobante del
+    # CLIENTE (gate en deposits.py), y eso es una RECARGA. En un retiro el comprobante lo
+    # manda el AGENTE. Si el LLM confundio y dijo 'retiro' con hint, se corrige a 'deposito'
+    # (arregla el confusor mas comun del modelo y evita "Retiro + Recargado" en el dashboard).
+    if deposit_hint and motivo == "retiro":
+        motivo = "deposito"
     label = raw["rating_label"]
     stars = label_to_stars(motivo, label)  # valida la etiqueta contra la escala del motivo
     atencion = raw.get("atencion")
