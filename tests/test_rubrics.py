@@ -6,11 +6,36 @@ modelo). Ver db/scores_schema.sql y src/rubrics.py.
 """
 import pytest
 
-from src.rubrics import RUBRICS, get_rubric, label_to_stars
+from src.rubrics import MOTIVOS, RUBRICS, get_rubric, label_to_stars
 
 
-def test_existen_dos_rubricas():
-    assert set(RUBRICS) == {"human", "bot"}
+def test_rubricas_legacy_human_bot_presentes():
+    # human/bot siguen durante la transición (los usan prompts/router hasta el rewire).
+    assert {"human", "bot"} <= set(RUBRICS)
+
+
+def test_rubricas_incluyen_los_siete_motivos():
+    assert set(MOTIVOS) == {
+        "deposito", "retiro", "soporte_cuenta", "info", "promo", "registro", "problema",
+    }
+    assert set(MOTIVOS) <= set(RUBRICS)
+
+
+def test_cada_motivo_tiene_piso_uplift_y_atencion():
+    # Modelo de 2 capas: resolucion = PISO (dominant), iniciativa = UPLIFT.
+    for m in MOTIVOS:
+        spec = get_rubric(m)
+        keys = {d.key for d in spec.dimensions}
+        assert {"resolucion", "iniciativa", "atencion"} <= keys
+        assert spec.dominant == "resolucion"
+        assert spec.uplift == "iniciativa"
+        assert spec.label_to_stars["aceptable"] == 3  # piso eficiente
+
+
+def test_motivos_usan_la_escala_unificada_5_a_1():
+    for m in MOTIVOS:
+        spec = get_rubric(m)
+        assert [spec.label_to_stars[l] for l in spec.labels_desc] == [5, 4, 3, 2, 1]
 
 
 @pytest.mark.parametrize("rubric,label,stars", [
