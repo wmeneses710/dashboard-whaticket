@@ -535,6 +535,12 @@ def test_detail_sql_trae_session_seconds():
     assert "conversation_sessions ses" in _DETAIL_SQL
 
 
+def test_deposit_mismatch_sql_y_detalle():
+    from src.queries import _DEPOSIT_MISMATCH_SQL, _DETAIL_SQL
+    assert "cs.deposit_mismatch = true" in _DEPOSIT_MISMATCH_SQL
+    assert "cs.deposit_mismatch" in _DETAIL_SQL
+
+
 def test_conversation_detail_sin_score_devuelve_transcript_pendiente(monkeypatch):
     import src.queries as q
     monkeypatch.setattr(q, "fetch_messages", lambda cur, cid: [

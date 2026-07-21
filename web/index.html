@@ -490,12 +490,13 @@
           </div>
         </div>
         <div class="pane"><h3>Análisis del modelo</h3>
-          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail))"
+          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail) || modal.detail.deposit_mismatch)"
                style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
             <span class="chip" v-if="modal.detail.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
             <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
             <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
             <span class="chip fast" v-if="fastClose(modal.detail)">⚡ Cierre rápido ({{ Math.round(modal.detail.session_seconds/60) }}m)</span>
+            <span class="chip fast" v-if="modal.detail.deposit_mismatch" title="El gate determinista (comprobante) y la observación del LLM discrepan">⚠ Discrepancia depósito</span>
           </div>
           <div v-if="modal.detail && modal.detail.pending">
             <div class="why" style="border-color:var(--faint)">⏳ <b>Pendiente de evaluar</b> — el worker todavía no scoreó esta sesión (backfill en curso). El chat se muestra igual; el análisis aparece cuando termine de procesarla.</div>
@@ -762,6 +763,9 @@ createApp({
       // Señal diagnóstica: cerró <10min sin resolver (★≤2). Solo si hay alguna.
       if (k.cierres_rapidos > 0) tiles.push(
         { k:"Cierres rápidos", v:k.cierres_rapidos, foot:"<10min sin resolver (★≤2)" });
+      // Calidad de dato: el LLM y el gate determinista discrepan sobre el depósito.
+      if (k.deposit_mismatch > 0) tiles.push(
+        { k:"Discrepancia depósito", v:k.deposit_mismatch, foot:"LLM vs gate determinista" });
       return tiles;
     });
     const distRows = computed(() => { const d = summary.distribution||{};

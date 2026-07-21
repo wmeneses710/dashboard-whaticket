@@ -43,7 +43,7 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.rating_rationale, cs.deposit_count, cs.dimensions, cs.message_count, cs.agent_message_count,
        cs.bot_message_count, cs.contact_message_count, cs.first_response_seconds,
        cs.resolution_seconds, cs.was_unassigned, cs.scoring_version, cs.llm_model,
-       cs.rating_applicable, cs.atencion, cs.deposit_observed, cs.motivo,
+       cs.rating_applicable, cs.atencion, cs.deposit_observed, cs.deposit_mismatch, cs.motivo,
        ct.name AS customer_name, ct.number AS customer_number, t.channel,
        pc.returned AS conversion_returned,
        EXTRACT(EPOCH FROM (ses.end_at - ses.start_at)) AS session_seconds
@@ -192,6 +192,22 @@ def fast_close_count(cur, account: str, **filters) -> int:
     return int(cur.fetchone()[0])
 
 
+# "Discrepancia de depósito": el gate DETERMINISTA (comprobante del cliente) y la
+# observación del LLM (deposit_observed) NO coinciden. Es un indicador de CALIDAD DE
+# DATO: o el LLM se comió un comprobante, o el gate disparó de más. El determinista
+# manda; el flag solo marca la discrepancia. Se computa en store._deposit_mismatch.
+_DEPOSIT_MISMATCH_SQL = """
+SELECT count(*) AS deposit_mismatch""" + _SCORES_JOINS + """
+   AND cs.deposit_mismatch = true"""
+
+
+def deposit_mismatch_count(cur, account: str, **filters) -> int:
+    """Sesiones donde el gate determinista y la observación del LLM discrepan. Filtros."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_DEPOSIT_MISMATCH_SQL.format(where=where), params)
+    return int(cur.fetchone()[0])
+
+
 def summary_kpis(cur, account: str, **filters) -> dict:
     """KPIs agregados en la BD para el filtro dado (reemplaza el cómputo en memoria).
     Incluye `pendientes` (backfill en curso) y `cierres_rapidos` (señal diagnóstica)."""
@@ -204,6 +220,7 @@ def summary_kpis(cur, account: str, **filters) -> dict:
         cur, account, filters.get("date_from"), filters.get("date_to")
     )
     kpis["cierres_rapidos"] = fast_close_count(cur, account, **filters)
+    kpis["deposit_mismatch"] = deposit_mismatch_count(cur, account, **filters)
     return kpis
 
 
