@@ -140,6 +140,11 @@
   tr.op:hover .minibar span + span { border-left-color:var(--surface-2); }
   .ops-scroll { overflow-x:auto; }
   .ops-scroll.exp { max-height:380px; overflow-y:auto; }
+  /* Operadores llena el alto de su fila (= Conversión por operador, su vecino más alto)
+     y scrollea ADENTRO al expandir, en vez de crecer más que ella. */
+  .ops-card { display:flex; flex-direction:column; }
+  .ops-card .ops-body { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
+  .ops-card .ops-scroll, .ops-card .ops-scroll.exp { flex:1 1 0; min-height:0; max-height:none; overflow-y:auto; }
   .ops-more { margin-top:12px; width:100%; border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px; font-size:12px; font-weight:600; font-family:inherit; cursor:pointer; transition:border-color .12s,color .12s; }
   .ops-more:hover { color:var(--accent); border-color:var(--accent); }
 
@@ -349,10 +354,10 @@
       </div>
     </div>
     </div>
-    <div class="card">
+    <div class="card ops-card">
       <h2>Operadores <small>· los más activos primero</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
-      <div v-else>
+      <div v-else class="ops-body">
         <div class="ops-scroll" :class="{exp: opsExpanded}">
           <table><thead><tr><th>Operador</th><th class="r" title="Sesiones evaluadas del operador">Vol.</th><th class="r" title="★ promedio de sus sesiones evaluadas (todas los motivos mezclados)">★ prom</th><th>Distribución</th></tr></thead>
             <tbody>
