@@ -210,7 +210,9 @@ def deposit_mismatch_count(cur, account: str, **filters) -> int:
 
 def summary_kpis(cur, account: str, **filters) -> dict:
     """KPIs agregados en la BD para el filtro dado (reemplaza el cómputo en memoria).
-    Incluye `pendientes` (backfill en curso) y `cierres_rapidos` (señal diagnóstica)."""
+    Incluye `pendientes` (backfill en curso). Los diagnósticos del creador (cierres
+    rápidos, discrepancia de depósito) NO se agregan acá: son consultables aparte
+    (fast_close_count / deposit_mismatch_count) para no correr esos COUNT en cada carga."""
     where, params = _scores_filters(account, **filters)
     cur.execute(_SUMMARY_KPIS_SQL.format(where=where), params)
     cols = [d.name for d in cur.description]
@@ -219,8 +221,6 @@ def summary_kpis(cur, account: str, **filters) -> dict:
     kpis["pendientes"] = pending_sessions_count(
         cur, account, filters.get("date_from"), filters.get("date_to")
     )
-    kpis["cierres_rapidos"] = fast_close_count(cur, account, **filters)
-    kpis["deposit_mismatch"] = deposit_mismatch_count(cur, account, **filters)
     return kpis
 
 

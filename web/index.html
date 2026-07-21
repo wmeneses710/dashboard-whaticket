@@ -496,13 +496,12 @@
           </div>
         </div>
         <div class="pane"><h3>Análisis del modelo</h3>
-          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail) || modal.detail.deposit_mismatch)"
+          <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail))"
                style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
             <span class="chip" v-if="modal.detail.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
             <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
             <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
-            <span class="chip fast" v-if="fastClose(modal.detail)">⚡ Cierre rápido ({{ Math.round(modal.detail.session_seconds/60) }}m)</span>
-            <span class="chip fast" v-if="modal.detail.deposit_mismatch" title="El gate determinista (comprobante) y la observación del LLM discrepan">⚠ Discrepancia depósito</span>
+            <span class="chip fast" v-if="fastClose(modal.detail)" title="Cerró en menos de 10 min sin resolver (★≤2) — puede ser cierre prematuro">⏱ Cerró en {{ Math.round(modal.detail.session_seconds/60) }} min</span>
           </div>
           <div v-if="modal.detail && modal.detail.pending">
             <div class="why" style="border-color:var(--faint)">⏳ <b>Pendiente de evaluar</b> — el worker todavía no scoreó esta sesión (backfill en curso). El chat se muestra igual; el análisis aparece cuando termine de procesarla.</div>
