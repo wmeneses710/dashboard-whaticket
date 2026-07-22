@@ -266,7 +266,7 @@
         <option v-for="c in options.channels" :key="c" :value="c">{{ c }}</option></select></div>
     <div><label>Operador</label>
       <select v-model="filters.op"><option value="all">Todos</option>
-        <option v-for="o in options.operators" :key="o" :value="o">{{ o.length>16?short(o):o }}</option></select></div>
+        <option v-for="o in (options.operators||[]).filter(Boolean)" :key="o" :value="o">{{ (o||'').length>16?short(o):o }}</option></select></div>
     <div><label>Motivo</label>
       <select v-model="filters.motivo"><option value="all">Todos</option>
         <option v-for="m in (options.motivos||[])" :key="m" :value="m">{{ MOTIVO_LABEL[m]||m }}</option></select></div>
@@ -416,7 +416,7 @@
       <div class="conv-legend"><span><i style="background:var(--r-excelente)"></i>% conversión</span><span><i class="dash"></i>% atención pasiva</span></div>
       <div class="conv-grid">
         <div class="conv-mini" v-for="(op,i) in convPasvOps" :key="op.name">
-          <h4>{{ op.name.length>18?short(op.name):op.name }}</h4>
+          <h4>{{ (op.name||'').length>18?short(op.name):(op.name||'') }}</h4>
           <div style="position:relative;height:128px"><canvas :ref="el => { if(el) convPasvCanvases[i]=el }"></canvas></div>
         </div>
         <div v-if="!convPasvOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Aún sin clasificación de pasividad (el pase LLM se está poniendo al día).</div>
@@ -425,7 +425,7 @@
     <div class="card span-2"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
       <div class="conv-grid">
         <div class="conv-mini" v-for="(op,i) in qualOps" :key="op.name">
-          <h4>{{ op.name.length>18?short(op.name):op.name }}</h4>
+          <h4>{{ (op.name||'').length>18?short(op.name):(op.name||'') }}</h4>
           <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualCanvases[i]=el }"></canvas></div>
         </div>
         <div v-if="!qualOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin sesiones evaluadas en este filtro.</div>
@@ -433,7 +433,7 @@
     </div>
     <div class="card span-2"><h2>Evolución de la calidad por motivo <small>· ★ promedio por mes · una línea por operador + promedio · cada motivo con su piso · respeta filtros</small></h2>
       <div class="conv-legend" v-if="qualMotivoLegend.length" style="flex-wrap:wrap">
-        <span v-for="op in qualMotivoLegend" :key="op.name"><i :style="{background:op.color}"></i>{{ op.name.length>18?short(op.name):op.name }}</span>
+        <span v-for="op in qualMotivoLegend" :key="op.name"><i :style="{background:op.color}"></i>{{ (op.name||'').length>18?short(op.name):(op.name||'') }}</span>
         <span><i class="dash" style="background:var(--ink)"></i>Promedio del motivo</span>
       </div>
       <div class="conv-grid">
@@ -821,14 +821,14 @@ createApp({
     const depByChannel = computed(() => summary.deposit_by_channel||[]);
     const operators = computed(() => summary.operators||[]);
     const motivoStats = computed(() => summary.motivo_stats||[]);
-    const opsMotivo = computed(() => summary.ops_motivo||{motivos:[],operators:[]});
+    const opsMotivo = computed(() => { const o = summary.ops_motivo||{}; return { motivos:o.motivos||[], operators:o.operators||[] }; });
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
     // Leyenda a nivel tarjeta: unión de operadores que aparecen en los motivos, con su
     // color fijo. Una sola leyenda para los 7 mini-gráficos (los colores son consistentes).
     const qualMotivoLegend = computed(() => {
       const names = new Set();
-      (qualMotivoOps.value||[]).forEach(m => (m.operators||[]).forEach(o => names.add(o.name)));
+      (qualMotivoOps.value||[]).forEach(m => (m.operators||[]).forEach(o => { if(o && o.name) names.add(o.name); }));
       return [...names].map(n => ({ name:n, color:operatorColor(n) }));
     });
     const convPasvOps = computed(() => (conversion.evolution&&conversion.evolution.operators)||[]);
