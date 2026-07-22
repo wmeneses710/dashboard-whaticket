@@ -29,6 +29,9 @@ class Config:
     scoring_accounts: tuple[str, ...]
     scoring_batch_size: int
     scoring_poll_seconds: int
+    # Sub-evaluadores angostos (2da pasada del LLM), opt-in (cuestan llamadas extra):
+    verify_uplift_enabled: bool   # verifica el borderline de uplift antes de topar en aceptable
+    recom_subagent_enabled: bool  # genera la recomendación con un pase dedicado de coaching
     # Ventana móvil de los cuadros: cuántos meses (los más recientes) se muestran.
     charts_window_months: int
 
@@ -59,5 +62,7 @@ def load_config() -> Config:
         scoring_accounts=_csv(os.environ.get("SCORING_ACCOUNTS"), ("sistemas", "datos")),
         scoring_batch_size=int(os.environ.get("SCORING_BATCH_SIZE", "20")),
         scoring_poll_seconds=int(os.environ.get("SCORING_POLL_SECONDS", "60")),
+        verify_uplift_enabled=_bool(os.environ.get("SCORING_VERIFY_UPLIFT")),
+        recom_subagent_enabled=_bool(os.environ.get("SCORING_RECOM_SUBAGENT")),
         charts_window_months=int(os.environ.get("CHARTS_WINDOW_MONTHS", "12")),
     )

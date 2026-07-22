@@ -205,7 +205,7 @@ def test_score_sessions_batch_cuenta_y_no_aborta_por_una_excepcion(monkeypatch):
     monkeypatch.setattr(worker, "fetch_pending_sessions",
                         lambda cur, account, limit: sessions)
 
-    def fake_score(conn, sess, llm, op_map):
+    def fake_score(conn, sess, llm, op_map, verifier=None, recommender=None):
         if sess["session_id"] == "s2":
             raise RuntimeError("boom")  # una sesion falla, el lote sigue
         return ("evaluated" if sess["session_id"] == "s1" else "skipped", None, None)

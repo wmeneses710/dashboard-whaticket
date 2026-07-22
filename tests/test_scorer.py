@@ -113,6 +113,35 @@ def test_piso_funnel_info_con_empuje_no_es_deficiente():
     assert r.floor_applied is True
 
 
+def test_verifier_recupera_buena_en_borderline():
+    # buena sin señal fuerte (NEUTRAL) sería capeada, pero el verificador confirma uplift real
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp(hizo_accion_extra=True)),
+                        verifier=lambda msgs, motivo: True)
+    assert r.rating_label == "buena" and r.stars == 4
+
+
+def test_verifier_falso_capea_a_aceptable():
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp(hizo_accion_extra=True)),
+                        verifier=lambda msgs, motivo: False)
+    assert r.rating_label == "aceptable"
+
+
+def test_recommender_pisa_la_recomendacion():
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp()),
+                        recommender=lambda msgs, motivo, label: "consejo del subagente")
+    assert r.recomendacion == "consejo del subagente"
+
+
+def test_recommender_que_falla_no_tumba_el_score():
+    def boom(*a): raise RuntimeError("x")
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp()), recommender=boom)
+    assert r.rating_label == "aceptable" and r.recomendacion == "podrias invitar a un deposito"
+
+
 def test_problema_no_se_floorea_por_empuje():
     # en 'problema' un empuje comercial NO es resolución -> sigue deficiente si el LLM dijo que no atendió
     r = score_by_motivo(target_messages=PUSH, thread_context="",

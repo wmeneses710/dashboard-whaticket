@@ -99,6 +99,8 @@ def score_by_motivo(
     thread_context: str,
     llm: LLM,
     deposit_hint: bool = False,
+    verifier=None,
+    recommender=None,
 ) -> ScoreResult:
     """Pase v2: el LLM clasifica el MOTIVO (de la tabla) y califica en 2 capas.
 
@@ -161,7 +163,10 @@ def score_by_motivo(
     # ({nombre} autocompletado), jerga o emojis -> si no hay, se topa en aceptable. (Lo
     # genuinamente difuso -warmth real sin empuje- lo recuperaría un verificador angosto.)
     if label in ("buena", "excelente") and not agent_strong_uplift(target_messages):
-        label, override = "aceptable", True
+        # borderline: sin señal fuerte, se topa en aceptable... salvo que un VERIFICADOR
+        # angosto (opcional, 2da pasada del LLM) confirme uplift genuino -> lo recupera.
+        if not (verifier and verifier(target_messages, motivo)):
+            label, override = "aceptable", True
     stars = label_to_stars(motivo, label)
     rationale = raw.get("rating_rationale", "")
     if override:
@@ -179,6 +184,15 @@ def score_by_motivo(
     elif atencion == "no_respondio" and resolved:
         atencion = "pasivo"
 
+    # RECOMENDACION: por defecto la del pase de scoring; si hay un RECOMMENDER (subagente
+    # dedicado de coaching, opcional) se usa esa, que corre con su prompt propio (± ejemplos).
+    recomendacion = raw.get("recomendacion") or ""
+    if recommender is not None:
+        try:
+            recomendacion = recommender(target_messages, motivo, label) or recomendacion
+        except Exception:  # noqa: BLE001 - una falla del coach no debe tumbar el score
+            pass
+
     return ScoreResult(
         rubric=motivo,
         motivo=motivo,
@@ -190,5 +204,5 @@ def score_by_motivo(
         atencion=atencion,
         deposit_observed=_as_bool(raw.get("deposit_observed")),
         floor_applied=override,
-        recomendacion=raw.get("recomendacion") or "",
+        recomendacion=recomendacion,
     )

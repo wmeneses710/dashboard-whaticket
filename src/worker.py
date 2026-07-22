@@ -144,9 +144,10 @@ def fetch_pending_sessions(cur, account: str, limit: int) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def score_session_and_store(conn, sess: dict, llm, op_map: dict):
+def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None, recommender=None):
     """Scorea UNA sesion (transcript mergeado) y la persiste. Devuelve (eval_status,
-    skip_reason, score). Espeja score_and_store pero a grano SESION."""
+    skip_reason, score). Espeja score_and_store pero a grano SESION.
+    verifier/recommender: sub-evaluadores angostos opcionales (ver src/subeval.py)."""
     with conn.cursor() as cur:
         msgs = fetch_session_messages(cur, sess["session_id"])
     stats, rubric, eval_status, skip_reason = evaluate_session(msgs)
@@ -160,7 +161,7 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict):
         # la senal determinista de comprobante para anclar el motivo 'deposito'.
         score = score_by_motivo(
             target_messages=msgs, thread_context="", llm=llm,
-            deposit_hint=deposit_count > 0,
+            deposit_hint=deposit_count > 0, verifier=verifier, recommender=recommender,
         )
     # rubric queda como el legacy human/bot (satisface chk_rubric); el motivo del LLM
     # se persiste en su propia columna dentro de build_score_record (desde el score).
@@ -176,7 +177,8 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict):
     return eval_status, skip_reason, score
 
 
-def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | None = None) -> dict:
+def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | None = None,
+                         verifier=None, recommender=None) -> dict:
     """Scorea un lote de sesiones pendientes de una cuenta. Devuelve conteos."""
     if op_map is None:
         with conn.cursor() as cur:
@@ -186,7 +188,7 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
     counts = {"evaluated": 0, "skipped": 0, "error": 0, "seen": len(pending)}
     for sess in pending:
         try:
-            eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map)
+            eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map, verifier, recommender)
             counts[eval_status] += 1
         except Exception:  # noqa: BLE001 - no abortar el lote por una sesion
             # rollback: si el fallo fue DB-side, la txn queda abortada y cascadearia
@@ -213,7 +215,16 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
         log(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}")
 
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
-    emit(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}")
+    # Sub-evaluadores angostos opcionales (2da pasada del LLM), gateados por config.
+    verifier = recommender = None
+    if cfg.verify_uplift_enabled or cfg.recom_subagent_enabled:
+        from src.subeval import build_recomendacion, verify_uplift
+        if cfg.verify_uplift_enabled:
+            verifier = lambda m, mo: verify_uplift(m, mo, llm)["uplift_real"]  # noqa: E731
+        if cfg.recom_subagent_enabled:
+            recommender = lambda m, mo, l: build_recomendacion(m, mo, l, llm)  # noqa: E731
+    emit(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}"
+         f" · verify_uplift={cfg.verify_uplift_enabled} recom_subagente={cfg.recom_subagent_enabled}")
     ok, msg = llm.check_model()  # pre-flight: no aborta, pero avisa fuerte si falta el modelo
     emit(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")
     # Migración AUTOMÁTICA a scoring por SESIÓN (una vez, antes de tocar columnas):
@@ -259,7 +270,8 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                     op_map = build_operator_map(cur)
                 for account in cfg.scoring_accounts:
                     t0 = time.time()
-                    c = score_sessions_batch(conn, llm, account, cfg.scoring_batch_size, op_map)
+                    c = score_sessions_batch(conn, llm, account, cfg.scoring_batch_size, op_map,
+                                             verifier=verifier, recommender=recommender)
                     dt = time.time() - t0
                     seen += c["seen"]
                     if c["seen"]:
