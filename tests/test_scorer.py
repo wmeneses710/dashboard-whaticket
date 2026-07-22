@@ -11,7 +11,7 @@ from src.scorer import ScoreResult, score_by_motivo
 # Mensajes NEUTROS: no disparan ninguna senal determinista (ni confirmacion, ni
 # media, ni push, ni maltrato) -> sirven para testear la derivacion PURA.
 NEUTRAL = [
-    {"from_me": False, "is_note": False, "body": "una consulta"},
+    {"from_me": False, "is_note": False, "body": "¿una consulta?"},
     {"from_me": True, "is_note": False, "body": "buenas, decime"},
 ]
 # Deposito con confirmacion del agente (dispara agent_resolved).
@@ -140,6 +140,24 @@ def test_recommender_que_falla_no_tumba_el_score():
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
                         llm=FakeLLM(_motivo_resp()), recommender=boom)
     assert r.rating_label == "aceptable" and r.recomendacion == "podrias invitar a un deposito"
+
+
+def test_info_sin_consulta_no_es_deficiente():
+    # cliente solo agradeció (sin pregunta) y el agente respondió cordial -> aceptable
+    msgs = [{"from_me": False, "is_note": False, "body": "Gracias"},
+            {"from_me": True, "is_note": False, "body": "Con gusto, cualquier cosa avisá"}]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="info", atendio_el_motivo=False)))
+    assert r.rating_label == "aceptable" and r.floor_applied is True
+
+
+def test_info_con_consulta_evadida_sigue_deficiente():
+    # el cliente SÍ preguntó y el agente no atendió (sin push/resolución) -> sigue deficiente
+    msgs = [{"from_me": False, "is_note": False, "body": "¿cuál es el retiro mínimo?"},
+            {"from_me": True, "is_note": False, "body": "hola buenas"}]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="info", atendio_el_motivo=False)))
+    assert r.rating_label == "deficiente"
 
 
 def test_problema_no_se_floorea_por_empuje():

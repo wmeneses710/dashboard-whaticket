@@ -13,6 +13,7 @@ from src.signals import (
     agent_sent_media,
     agent_strong_uplift,
     client_abandoned,
+    client_asked_question,
 )
 
 # La plantilla real del flujo de anuncio (pitch-only): NO es empuje concreto.
@@ -132,6 +133,23 @@ def test_push_te_invito():
 
 def test_no_push_solo_informa():
     assert agent_pushed([_agent("El horario de atención es de 9 a 18")]) is False
+
+
+def test_push_ofrecer_registro_o_promo():
+    assert agent_pushed([_agent("¿te creo un usuario?")]) is True
+    assert agent_pushed([_agent("tenemos un bono del 100% para vos")]) is True
+    assert agent_pushed([_agent("te ayudo a registrarte")]) is True
+
+
+# --- client_asked_question ------------------------------------------------
+
+def test_client_asked_question_true():
+    assert client_asked_question([_client("¿cómo reclamo los 10 giros?")]) is True
+    assert client_asked_question([_client("quiero saber cuánto es el mínimo")]) is True
+
+
+def test_client_asked_question_false_solo_saludo():
+    assert client_asked_question([_client("hola"), _client("gracias"), _client("ok")]) is False
 
 
 # --- agent_maltrato (unico gatillo de 'mala') -----------------------------

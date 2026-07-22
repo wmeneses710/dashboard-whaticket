@@ -16,6 +16,7 @@ Se evalua SOLO al agente HUMANO (from_me, no nota, sent_from != CHATBOT).
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from src.metrics import _is_bot
 
@@ -77,6 +78,32 @@ def client_abandoned(messages: list[dict]) -> bool:
     return bool(real[-1].get("from_me"))
 
 
+# ¿El cliente planteó una CONSULTA contestable? (signo de pregunta o palabra interrogativa).
+# Si NO, en 'info' no hay nada que "no responder": el piso se cumple respondiendo cordial
+# (trampa de abandono/sin-necesidad). Evita el falso deficiente del saludo/gracias/abandono,
+# SIN pisar el caso legítimo donde el cliente sí preguntó algo y el agente lo evadió.
+# Se normalizan acentos (á->a) para no fallar por acentos compuestos/descompuestos o faltantes.
+_Q_WORDS_RE = re.compile(
+    r"\b(como|cuand|cuant|donde|que|cual|por que|se puede|puedo|"
+    r"necesito saber|quiero saber|me explic|no se como)\b"
+)
+
+
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", s.lower()) if not unicodedata.combining(c))
+
+
+def client_asked_question(messages: list[dict]) -> bool:
+    """True si algún mensaje del CLIENTE contiene una consulta contestable."""
+    for m in messages:
+        if m.get("from_me") or m.get("is_note"):
+            continue
+        body = m.get("body") or ""
+        if "?" in body or "¿" in body or _Q_WORDS_RE.search(_strip_accents(body)):
+            return True
+    return False
+
+
 def agent_resolved(messages: list[dict]) -> bool:
     """El agente atendio el motivo de forma determinista: confirmo o mando media.
 
@@ -91,7 +118,11 @@ def agent_resolved(messages: list[dict]) -> bool:
 # auditoria mostro que el modelo marca 'pasivo' aunque el agente claramente empuja.
 PUSH_PATTERN = (
     r"https?://|t[ei] invit|aprovech|no te pierdas|reg[íi]strate|"
-    r"obten[eé]s un bono|obtienes un bono|por tu (primera|segunda|pr[oó]xima) recarga"
+    r"obten[eé]s un bono|obtienes un bono|por tu (primera|segunda|pr[oó]xima) recarga|"
+    # ofrecer/guiar el alta y presentar promos cuenta como EMPUJO (aunque el motivo no sea
+    # promo): 'te creo un usuario', 'te registro', menciones de bono/promo/freebet/giros.
+    r"te creo (un |tu )?(usuario|cuenta)|creo tu (usuario|cuenta)|te (ayudo a )?registr|"
+    r"te registro|\bbono\b|\bpromo|freebet|giros (gratis|de regalo)"
 )
 _PUSH_RE = re.compile(PUSH_PATTERN, re.IGNORECASE)
 

@@ -19,6 +19,7 @@ from src.signals import (
     agent_pushed,
     agent_resolved,
     agent_strong_uplift,
+    client_asked_question,
 )
 
 # PISO determinista por motivo (¿el agente atendió?, aunque el LLM diga que no):
@@ -147,6 +148,10 @@ def score_by_motivo(
     if not atendio and (
         (motivo in _RESOLVED_FLOOR and resolved)
         or (motivo in _FUNNEL_FLOOR and (resolved or pushed))
+        # info SIN consulta contestable (cliente solo saludó/agradeció/abandonó): el piso se
+        # cumple respondiendo cordial -> no es deficiente (trampa abandono/sin-necesidad).
+        # Solo si el cliente NO preguntó nada: si preguntó y el agente evadió, sigue deficiente.
+        or (motivo == "info" and not client_asked_question(target_messages))
     ):
         atendio, override = True, True
     # 'mala' solo con maltrato real: el modelo lo sobre-marca y el maltrato del agente es
