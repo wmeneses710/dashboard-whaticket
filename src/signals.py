@@ -106,13 +106,16 @@ def agent_pushed(messages: list[dict]) -> bool:
     return any(_PUSH_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
 
 
-# UPLIFT CONCRETO (para licenciar buena/excelente): un LINK, o una invitacion EXPLICITA a
-# depositar/recargar/registrarse/jugar. NO alcanza mencionar el bono ni decir "aprovecha"
-# (eso es explicar la promo = piso). Mas estricto que PUSH_PATTERN a proposito.
+# UPLIFT CONCRETO (para licenciar buena/excelente): un LINK, o una invitacion IMPERATIVA a
+# convertir AHORA (depositar/recargar/registrarse/jugar). Deliberadamente NO incluye la mera
+# mencion de "primer deposito"/"con tu primera carga" ni "aprovecha": eso está DENTRO de la
+# plantilla de explicacion de la promo (= piso), no es un empuje concreto (dos conversaciones
+# con la MISMA plantilla salian 3★ y 5★; el empuje real es el link o el imperativo).
 STRONG_UPLIFT_PATTERN = (
     r"https?://|t[ei] invit[oa] a (deposit|recarg|jug|apost|registr)|"
-    r"deposit[aá] (ya|ahora|hoy)|reg[íi]strate (ya|ahora|aqu[ií]|en el)|"
-    r"complet[aá] tu registro|primer[a]? (deposito|recarga)"
+    r"deposit[aá] (ya|ahora|hoy)|recarg[aá] (ya|ahora|hoy)|"
+    r"reg[íi]strate (ya|ahora|aqu[ií]|en el|en este)|complet[aá] tu registro|"
+    r"pas[aá]me (tu|los) (nombre|datos|c[eé]dula)|indic[aá]me (tu|el)"
 )
 _STRONG_UPLIFT_RE = re.compile(STRONG_UPLIFT_PATTERN, re.IGNORECASE)
 

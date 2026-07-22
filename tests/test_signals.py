@@ -11,8 +11,14 @@ from src.signals import (
     agent_pushed,
     agent_resolved,
     agent_sent_media,
+    agent_strong_uplift,
     client_abandoned,
 )
+
+# La plantilla real del flujo de anuncio (pitch-only): NO es empuje concreto.
+_AD_TEMPLATE = (
+    "Debes registrarte, verificar tu cuenta y con tu primer deposito activas todas las "
+    "promociones. No te pierdas la promo, aprovechala. Anímate y me avisas.")
 
 
 def _agent(body="", media_type=None):
@@ -134,3 +140,26 @@ def test_jerga_amistosa_no_es_maltrato():
 
 def test_saludo_normal_no_es_maltrato():
     assert agent_maltrato([_agent("Hola, gracias por comunicarte 🙂")]) is False
+
+
+# --- agent_strong_uplift (empuje CONCRETO para licenciar buena/excelente) --
+
+def test_strong_uplift_link():
+    assert agent_strong_uplift([_agent("Registrate acá https://www.sorti.ec/register")]) is True
+
+
+def test_strong_uplift_imperativo():
+    assert agent_strong_uplift([_agent("te invito a depositar y jugar")]) is True
+    assert agent_strong_uplift([_agent("depositá ya y activás el bono")]) is True
+
+
+def test_strong_uplift_pide_datos():
+    assert agent_strong_uplift([_agent("pasame tu nombre y cédula para crearte la cuenta")]) is True
+
+
+def test_plantilla_de_anuncio_NO_es_uplift_concreto():
+    # el caso real: 'con tu primer deposito activas...' + 'aprovecha' + 'Anímate' es PISO,
+    # no empuje concreto -> no debe licenciar buena/excelente (evita el 5★ de la plantilla).
+    assert agent_strong_uplift([_agent(_AD_TEMPLATE)]) is False
+    # pero SÍ dispara el push amplio (piso del funnel):
+    assert agent_pushed([_agent(_AD_TEMPLATE)]) is True
