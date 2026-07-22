@@ -6,7 +6,7 @@ Reglas clave:
   - mostrar la tabla de motivos y pedir el campo `motivo` + reglas de 2 capas.
 """
 from src.prompts import build_motivo_prompt, build_motivo_schema, format_transcript
-from src.rubrics import MOTIVO_LABELS, MOTIVOS
+from src.rubrics import MOTIVOS
 
 MSGS_HUMAN = [
     {"from_me": False, "is_note": False, "body": "hola, no me llego la recarga"},
@@ -91,13 +91,18 @@ def test_motivo_prompt_hint_de_deposito_es_condicional():
     assert "HINT DETERMINISTA" not in s_no
 
 
-def test_motivo_schema_pide_motivo_dimensiones_v2_y_labels():
+def test_motivo_schema_pide_motivo_dimensiones_y_hechos():
     sch = build_motivo_schema()
     props = sch["properties"]
     assert props["motivo"]["enum"] == list(MOTIVOS)
     dims = props["dimensions"]["properties"]
     assert {"resolucion", "iniciativa", "cortesia", "errores"} <= set(dims)
-    assert props["rating_label"]["enum"] == list(MOTIVO_LABELS)
-    assert set(sch["required"]) == {"motivo", "dimensions", "rating_label", "rating_rationale"}
+    # el LLM emite HECHOS booleanos, NO la etiqueta (la deriva el codigo)
+    hechos = {"atendio_el_motivo", "hizo_accion_extra", "cortesia_destacada", "hubo_maltrato_grave"}
+    assert hechos <= set(props)
+    assert all(props[h]["type"] == "boolean" for h in hechos)
+    assert "rating_label" not in props
+    assert hechos <= set(sch["required"])
+    assert {"motivo", "dimensions", "rating_rationale"} <= set(sch["required"])
     assert "atencion" not in sch["required"]
     assert "stars" not in props

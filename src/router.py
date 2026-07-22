@@ -33,24 +33,30 @@ def decide_eligibility(
     customer_message_count: int,
     business_message_count: int,
     customer_text_count: int | None = None,
+    agent_resolved: bool = False,
 ) -> tuple[str, str | None]:
     """Devuelve (eval_status, skip_reason).
 
     `business_message_count` = mensajes del negocio (humano + bot, from_me).
     `customer_text_count` = mensajes del cliente con TEXTO legible (opcional por
-    compatibilidad). Orden: sin contenido real -> sin cliente -> cliente solo
-    media -> sin respuesta del negocio -> tamaño anomalo -> evaluable.
+    compatibilidad). `agent_resolved` = senal determinista de que el agente atendio
+    (confirmo la transaccion o mando el comprobante; ver src/signals.py). Orden: sin
+    contenido real -> sin cliente -> cliente solo media (y agente NO resolvio) ->
+    sin respuesta del negocio -> tamaño anomalo -> evaluable.
 
     Sin respuesta del negocio no hay accion que evaluar (p. ej. una visita con
-    solo un "Gracias" del cliente). Y si el cliente SOLO mando imagenes/audio
-    (customer_text_count == 0), el LLM no puede leer su intencion: evaluar seria
-    adivinar un fracaso, asi que se saltea.
+    solo un "Gracias" del cliente). Si el cliente SOLO mando imagenes/audio
+    (customer_text_count == 0) el LLM no puede leer su intencion... SALVO que el
+    agente haya resuelto: en el flujo estandar de deposito el cliente manda solo el
+    comprobante y el agente confirma ("saldo disponible"), asi que el motivo es
+    inferible del agente y NO se debe saltear (la auditoria mostro que este skip
+    tiraba a la basura el motivo de mayor volumen).
     """
     if real_message_count == 0:
         return "skipped", "internal_notes_only"
     if customer_message_count == 0:
         return "skipped", "no_customer_reply"
-    if customer_text_count is not None and customer_text_count == 0:
+    if customer_text_count is not None and customer_text_count == 0 and not agent_resolved:
         return "skipped", "customer_media_only"
     if business_message_count == 0:
         return "skipped", "no_agent_reply"

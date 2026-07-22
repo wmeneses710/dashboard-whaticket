@@ -273,7 +273,7 @@ def build_score_record(
             atencion=score.atencion,
             deposit_observed=score.deposit_observed,
             motivo=score.motivo,
-            dimensions=score.dimensions,
+            dimensions={**score.dimensions, "recomendacion": score.recomendacion},
             rating_label=score.rating_label,
             rating_rationale=score.rating_rationale,
             stars=score.stars,
@@ -282,6 +282,7 @@ def build_score_record(
                 "label": score.rating_label,
                 "stars": score.stars,
                 "scoring_version": scoring_version,
+                "floored": score.floor_applied,
             },
         )
     return record

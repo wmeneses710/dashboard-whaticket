@@ -84,6 +84,13 @@ def test_has_recharge_context_detecta_variantes():
     assert has_recharge_context([_cli_txt("hola buenas tardes")]) is False
 
 
+def test_abono_a_deuda_es_contexto_de_recarga():
+    # Flujo de altisimo volumen: "Abono N a deuda" + comprobante = recarga.
+    assert has_recharge_context([_cli_txt("Abono 10 a deuda")]) is True
+    msgs = [_cli_img(), _cli_txt("Abono 10 a deuda")]
+    assert deposit_candidate_count(msgs) == 1
+
+
 def test_receipt_image_cuenta_solo_imagenes_del_cliente():
     msgs = [_cli_img(), _cli_img(), _age_txt("hola"), _cli_txt("gracias")]
     assert receipt_image_count(msgs) == 2

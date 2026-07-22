@@ -19,7 +19,11 @@ import re
 # Razon de recarga en el texto (tolera acentos y mayusculas). Fuente unica del
 # patron: lo reusa la deteccion en Python (aca) y la agregacion full-scale en SQL
 # (src.queries, via regexp `~*`). No duplicar.
-RECHARGE_PATTERN = r"recarg|comprobante|dep[oó]sit|transferenc"
+# 'abono' agregado: el flujo "Abono N a deuda" (cliente manda comprobante para que
+# le acrediten saldo) es una recarga de altisimo volumen que el patron viejo no veia
+# -> el gate no disparaba y esas sesiones caian mal clasificadas como 'problema'
+# (auditoria). Cubre tambien el subconteo de deposit_count. Se reusa en SQL (src.queries).
+RECHARGE_PATTERN = r"recarg|comprobante|dep[oó]sit|transferenc|abono"
 _RECHARGE_RE = re.compile(RECHARGE_PATTERN, re.IGNORECASE)
 
 

@@ -185,3 +185,32 @@ def label_to_stars(rubric: Rubric, label: str) -> int:
             f"etiqueta {label!r} no valida para rubrica {rubric!r} "
             f"(validas: {list(spec.labels_desc)})"
         )
+
+
+def label_from_facts(
+    *,
+    atendio_motivo: bool,
+    hizo_accion_extra: bool,
+    cortesia_destacada: bool,
+    hubo_maltrato_grave: bool,
+) -> str:
+    """Deriva la etiqueta cualitativa desde HECHOS concretos (regla de 2 capas).
+
+    El LLM juzga los hechos (que hace bien) y el CODIGO aplica la regla (que el
+    modelo aplicaba de forma inestable). Reemplaza que el LLM elija rating_label.
+
+    - maltrato grave        -> 'mala'       (unico gatillo de lo peor)
+    - NO atendio el motivo  -> 'deficiente' (debajo del piso)
+    - atendio + extra Y cortesia destacada -> 'excelente'
+    - atendio + (extra O cortesia destacada) -> 'buena'
+    - atendio solo (piso)   -> 'aceptable'
+    """
+    if hubo_maltrato_grave:
+        return "mala"
+    if not atendio_motivo:
+        return "deficiente"
+    if hizo_accion_extra and cortesia_destacada:
+        return "excelente"
+    if hizo_accion_extra or cortesia_destacada:
+        return "buena"
+    return "aceptable"

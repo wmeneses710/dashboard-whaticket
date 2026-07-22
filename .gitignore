@@ -24,3 +24,6 @@ output/
 docs/latex/
 # Artefactos de analisis/exploracion (no versionar)
 scratchpad/
+
+# Config MCP del proyecto: tiene credenciales de la BD, no versionar
+.mcp.json

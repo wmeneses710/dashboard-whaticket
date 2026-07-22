@@ -44,3 +44,20 @@ def test_conversacion_normal_es_evaluable():
     assert decide_eligibility(
         real_message_count=6, customer_message_count=3, business_message_count=3
     ) == ("evaluated", None)
+
+
+def test_cliente_solo_media_se_saltea_si_agente_no_resolvio():
+    # cliente mando solo imagenes (customer_text=0) y el agente no confirmo nada
+    assert decide_eligibility(
+        real_message_count=3, customer_message_count=2, business_message_count=1,
+        customer_text_count=0, agent_resolved=False,
+    ) == ("skipped", "customer_media_only")
+
+
+def test_cliente_solo_media_se_evalua_si_agente_resolvio():
+    # flujo estandar de deposito: cliente manda solo el comprobante, agente confirma.
+    # El motivo es inferible del agente -> NO se saltea (recupera ~2301 sesiones).
+    assert decide_eligibility(
+        real_message_count=3, customer_message_count=2, business_message_count=1,
+        customer_text_count=0, agent_resolved=True,
+    ) == ("evaluated", None)

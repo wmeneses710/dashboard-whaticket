@@ -6,7 +6,35 @@ modelo). Ver db/scores_schema.sql y src/rubrics.py.
 """
 import pytest
 
-from src.rubrics import MOTIVOS, RUBRICS, get_rubric, label_to_stars
+from src.rubrics import MOTIVOS, RUBRICS, get_rubric, label_from_facts, label_to_stars
+
+
+def _facts(atendio=True, extra=False, cortesia=False, maltrato=False):
+    return label_from_facts(atendio_motivo=atendio, hizo_accion_extra=extra,
+                            cortesia_destacada=cortesia, hubo_maltrato_grave=maltrato)
+
+
+def test_label_from_facts_maltrato_es_mala():
+    assert _facts(atendio=True, maltrato=True) == "mala"
+    # maltrato manda aunque haya atendido y con cortesia
+    assert _facts(atendio=True, extra=True, cortesia=True, maltrato=True) == "mala"
+
+
+def test_label_from_facts_no_atendio_es_deficiente():
+    assert _facts(atendio=False) == "deficiente"
+
+
+def test_label_from_facts_solo_piso_es_aceptable():
+    assert _facts(atendio=True) == "aceptable"
+
+
+def test_label_from_facts_una_capa_extra_es_buena():
+    assert _facts(atendio=True, extra=True) == "buena"
+    assert _facts(atendio=True, cortesia=True) == "buena"
+
+
+def test_label_from_facts_extra_y_cortesia_es_excelente():
+    assert _facts(atendio=True, extra=True, cortesia=True) == "excelente"
 
 
 def test_rubricas_legacy_human_bot_presentes():

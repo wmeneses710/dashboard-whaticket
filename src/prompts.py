@@ -216,6 +216,10 @@ falta de cierre es del CLIENTE, no una falla del agente.
 - MEDIA ILEGIBLE: los "[media/sin texto]" son imagenes/audios que NO podes ver. En \
 depositos/retiros el comprobante suele venir como media: NO asumas fracaso por no verla.
 - TONO: cordial pero con PLANTILLA NO es cortante. Templateado y correcto es aceptable.
+- JERGA AFECTUOSA: el trato coloquial (ñaño, naho, pana, panita, mi rey, causa, amigo/amiga) \
+NO es maltrato ni falta de respeto: es cercania. NUNCA lo cuentes como error de tono.
+- CLIENTE SIN NECESIDAD: si el cliente solo saluda, agradece, dice "ok" o se despide SIN \
+plantear una consulta, y el agente respondio cordial, la nota es "aceptable", NO "deficiente".
 - No inventes emociones ni contexto: evalua SOLO lo EXPLICITO en los mensajes. Atribui \
 cada mensaje a quien lo dijo (Cliente vs Agente/Bot).
 
@@ -227,7 +231,8 @@ se menciona plata, saldo o un comprobante (un comprobante puede aparecer en CUAL
 Guia rapida de desambiguacion:
 - pregunta por saldo / comisiones / como-cuando-cuanto / duda -> info
 - interes en un bono o promocion -> promo
-- manda un comprobante/recarga para que le ACREDITEN saldo -> deposito
+- manda un comprobante/recarga para que le ACREDITEN saldo (incluye "Abono N a deuda" \
++ comprobante) -> deposito
 - datos de agencia + monto a retirar + cuenta bancaria -> retiro
 CLAVE deposito vs retiro: si el COMPROBANTE lo manda el CLIENTE (una captura de pago) es
 RECARGA/deposito. En un RETIRO el cliente manda DATOS (agencia, monto, cuenta) y el
@@ -236,19 +241,24 @@ COMPROBANTE lo manda el AGENTE. Cliente adjunta comprobante -> deposito, NO reti
 - quiere crear/activar una cuenta nueva -> registro
 - algo no funciona / no se le acredito / reclamo -> problema
 
-PASO 2 - CALIFICACION (modelo de DOS CAPAS, segun el motivo elegido):
-- PISO: si el agente ATENDIO el motivo (columna PISO) correctamente, aunque sea minimo o \
-templateado, la etiqueta es "aceptable". La plantilla NO baja la nota.
-- DEBAJO DEL PISO: si NO atendio el motivo (no resolvio, dato erroneo, maltrato, o cerro \
-muy rapido sin resolver), la etiqueta no supera "deficiente".
-- UPLIFT: para superar "aceptable" (llegar a "buena"/"excelente") el agente debe ADEMAS \
-hacer la accion extra del motivo (columna UPLIFT) y/o mostrar cortesia destacada.
+PASO 2 - HECHOS. NO elijas una nota: responde estos 4 HECHOS (true/false) y el sistema \
+calcula la nota de forma determinista.
+- atendio_el_motivo: el agente ATENDIO el motivo (columna PISO), aunque sea minimo o \
+templateado. CUENTAN: la respuesta IMPLICITA, la PLANTILLA correcta ("listo"/"ing"/"cargado") \
+y la MEDIA del agente (comprobante de retiro, video-tutorial). Si dio una respuesta accionable \
+y el cliente se fue, igual ATENDIO (el abandono es del cliente).
+- hizo_accion_extra: ADEMAS hizo la accion extra del motivo (columna UPLIFT).
+- cortesia_destacada: cortesia notable (usa el nombre, calidez real, personaliza). La jerga \
+afectuosa (ñaño/pana/panita/mi rey) SUMA, no resta.
+- hubo_maltrato_grave: hubo INSULTO o AGRESION explicita del agente. La no-respuesta, una \
+respuesta floja o la informalidad NO son maltrato.
 
-Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (atendio el \
-motivo = PISO), iniciativa (accion extra = UPLIFT), cortesia (saludo, palabras, \
-personalizacion). Mas la lista de errores concretos (vacia si no hay).
+Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (el PISO), \
+iniciativa (la accion extra = UPLIFT), cortesia. Mas la lista de errores concretos (vacia si no hay).
 
-Etiquetas permitidas (de mejor a peor): {etiquetas}
+RECOMENDACION (campo "recomendacion"): UN consejo concreto y accionable para el AGENTE sobre \
+como pudo llegar al siguiente nivel (mira la columna UPLIFT del motivo). Ej: "confirmaste la \
+recarga; la proxima invita al bono de la 2da recarga". Devuelve "" solo si ya fue excelente.
 
 ATENCION DEL OPERADOR (campo "atencion") - esfuerzo del AGENTE HUMANO por impulsar la \
 conversion/retencion (NO al bot, NO al cliente):
@@ -261,6 +271,8 @@ OBSERVACION DE DEPOSITO (campo "deposit_observed"): true si en el transcript apa
 comprobante/recarga reconocida; false si no. Es OBSERVACION, no decision: el conteo real \
 lo dicta un gate DETERMINISTA aparte.{hint}
 
+{ejemplos}
+
 {json_shape}"""
 
 _MOTIVO_HINT = (
@@ -270,14 +282,49 @@ _MOTIVO_HINT = (
     "promo, soporte) y el comprobante sea secundario."
 )
 
+# Ejemplos few-shot contrastivos: minados de la auditoria, con los HECHOS correctos.
+# Cada uno ensena una trampa que el modelo violaba (plantilla=piso, media=atendio,
+# abandono/sin-necesidad=aceptable, no-respuesta=deficiente-no-mala, abono=deposito,
+# uplift real=excelente). El modelo de 4B/14B imita ejemplos mejor que obedece prosa.
+_MOTIVO_FEWSHOT = """\
+EJEMPLOS (aprende de estos HECHOS; no copies el texto, copia el CRITERIO):
+
+[1] CLIENTE: [image] / CLIENTE: hola / AGENTE: enseguida te cargo / AGENTE: Saldo cargado
+-> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
+(la plantilla "Saldo cargado" YA cumple el piso -> atendio=true)
+
+[2] CLIENTE: agencia Sepy, monto 50, cuenta Pichincha / AGENTE: [image] / AGENTE: listo, en breve
+-> {"motivo":"retiro","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
+(el comprobante [image] lo manda el AGENTE en un retiro -> atendio=true; NO asumas fracaso por no ver la media)
+
+[3] CLIENTE: Gracias / AGENTE: Con gusto estimado, cualquier cosa avisas
+-> {"motivo":"info","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
+(el cliente no planteo consulta y el agente respondio cordial -> aceptable, NO deficiente)
+
+[4] CLIENTE: ¿Como obtengo los bonos? / AGENTE: Hola?
+-> {"motivo":"promo","atendio_el_motivo":false,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
+(no atendio -> deficiente; pero NO hubo insulto -> maltrato=false, NO es "mala")
+
+[5] CLIENTE: [image] / CLIENTE: Abono 10 a deuda / AGENTE: ing
+-> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
+("Abono a deuda" + comprobante del cliente es DEPOSITO; "ing" confirma -> atendio=true)
+
+[6] CLIENTE: [image] recarga / AGENTE: Listo Juan, saldo cargado! aprovecha que con tu 2da recarga tenes un bono del 150%
+-> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":true,"hubo_maltrato_grave":false}
+(confirmo + empujo el bono (extra) + uso el nombre (cortesia) -> excelente)"""
+
 _MOTIVO_JSON_SHAPE = (
     "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, con esta "
-    "forma EXACTA:\n"
+    "forma EXACTA (los 4 HECHOS son booleanos; NO incluyas rating_label, lo calcula el sistema):\n"
     '{"motivo": "<uno de: ' + "|".join(MOTIVOS) + '">, '
     '"dimensions": {"resolucion": "<nota 1 frase>", "iniciativa": "<nota 1 frase>", '
     '"cortesia": "<nota 1 frase>", "errores": []}, '
-    '"rating_label": "<una de: ' + "|".join(MOTIVO_LABELS) + '">, '
+    '"atendio_el_motivo": <true|false>, '
+    '"hizo_accion_extra": <true|false>, '
+    '"cortesia_destacada": <true|false>, '
+    '"hubo_maltrato_grave": <true|false>, '
     '"rating_rationale": "<2-4 frases especificas de esta sesion>", '
+    '"recomendacion": "<1 consejo accionable, o \\"\\" si excelente>", '
     '"atencion": "<empujo|pasivo|no_respondio>", '
     '"deposit_observed": <true|false>}'
 )
@@ -300,8 +347,8 @@ def build_motivo_prompt(
     """Prompt v2: el LLM elige el MOTIVO de la tabla y califica en 2 capas. (system, user)."""
     system = _MOTIVO_SYSTEM.format(
         tabla=_motivo_tabla_block(),
-        etiquetas=_etiquetas_block(get_rubric(MOTIVOS[0])),
         hint=_MOTIVO_HINT if deposit_hint else "",
+        ejemplos=_MOTIVO_FEWSHOT,
         json_shape=_MOTIVO_JSON_SHAPE,
     )
     contexto = (thread_context or "").strip() or "(sin visitas previas)"
@@ -327,11 +374,19 @@ def build_motivo_schema() -> dict:
                 },
                 "required": ["resolucion", "iniciativa", "cortesia"],
             },
-            "rating_label": {"type": "string", "enum": list(MOTIVO_LABELS)},
+            "atendio_el_motivo": {"type": "boolean"},
+            "hizo_accion_extra": {"type": "boolean"},
+            "cortesia_destacada": {"type": "boolean"},
+            "hubo_maltrato_grave": {"type": "boolean"},
             "rating_rationale": {"type": "string"},
+            "recomendacion": {"type": "string"},
             "atencion": {"type": "string", "enum": list(ATENCION_LABELS)},
             "deposit_observed": {"type": "boolean"},
         },
-        # atencion/deposit_observed best-effort (no en required), igual que el pase viejo.
-        "required": ["motivo", "dimensions", "rating_label", "rating_rationale"],
+        # El LLM emite HECHOS (booleanos); el codigo deriva rating_label (label_from_facts).
+        # recomendacion/atencion/deposit_observed son best-effort (no required).
+        "required": [
+            "motivo", "dimensions", "atendio_el_motivo", "hizo_accion_extra",
+            "cortesia_destacada", "hubo_maltrato_grave", "rating_rationale",
+        ],
     }

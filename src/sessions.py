@@ -28,6 +28,7 @@ from datetime import timedelta
 
 from src.metrics import message_stats
 from src.router import decide_eligibility, decide_rubric
+from src.signals import agent_resolved
 
 GAP = timedelta(hours=5)
 SPAN_CAP = timedelta(hours=12)  # una sesion no puede abarcar mas que esto
@@ -124,6 +125,7 @@ def evaluate_session(messages: list[dict]):
         customer_message_count=stats.contact_message_count,
         business_message_count=stats.agent_message_count + stats.bot_message_count,
         customer_text_count=stats.contact_text_message_count,
+        agent_resolved=agent_resolved(messages),
     )
     return stats, rubric, eval_status, skip_reason
 
