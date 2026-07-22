@@ -280,6 +280,8 @@
     <button class="btn-reset" type="button" @click="resetFilters">Limpiar filtros</button>
   </div>
 
+  <div v-if="loadError" class="charts-status error-state" role="alert" style="margin-bottom:12px">⚠ {{ loadError }} <button type="button" class="pgbtn" style="margin-left:8px" @click="refresh">Reintentar</button></div>
+
   <section class="kpis" :style="{'--kpi-cols': Math.max(1, Math.ceil(kpiTiles.length/2))}">
     <template v-if="loadingSummary">
       <div class="tile" v-for="n in 5" :key="'sk'+n">
@@ -299,7 +301,7 @@
 
   <div class="trio">
       <div class="card">
-        <h2>Distribución de calificaciones <small>· sobre evaluadas</small></h2>
+        <h2>Distribución de calificaciones <small>· sobre evaluadas · respeta filtros (menos rating: muestra las 5 barras)</small></h2>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
         <div v-else>
           <div v-for="row in distRows" :key="row.label"
@@ -325,7 +327,7 @@
         </div>
       </div>
       <div class="card">
-        <h2>Calidad por motivo <small>· ★ promedio segmentado · el global mezcla varas distintas</small></h2>
+        <h2>Calidad por motivo <small>· ★ promedio segmentado · el global mezcla varas distintas · respeta filtros</small></h2>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(90-n*10)+'%'}"></div></div>
         <div v-else>
           <div v-for="m in motivoStats" :key="m.motivo"
@@ -343,7 +345,7 @@
 
   <div class="cols">
     <div class="card">
-    <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · cohorte histórica</small></h2>
+    <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · grano jugador: respeta canal/segmento/operador/fecha, NO motivo/rating/estado</small></h2>
     <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
     <div v-else>
       <p style="font-size:12px;color:var(--muted);margin:-8px 0 14px">Depósito <b style="color:var(--ink)">{{ convGlobal.pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_converted }}</b>) · re-engagement <b style="color:var(--ink)">{{ convGlobal.ret_pct }}%</b> (<b style="color:var(--ink)">{{ convGlobal.total_returned }}</b> volvieron) · de <b style="color:var(--ink)">{{ convGlobal.total_potential }}</b> jugadores nuevos.</p>
@@ -359,7 +361,7 @@
     </div>
     </div>
     <div class="card ops-card">
-      <h2>Operadores <small>· los más activos primero</small></h2>
+      <h2>Operadores <small>· los más activos primero · respeta filtros</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
       <div v-else class="ops-body">
         <div class="ops-scroll">
@@ -401,16 +403,16 @@
     <span v-if="chartsStatus.kind==='loading'" class="spin"></span>{{ chartsStatus.msg }}
   </div>
   <div class="charts">
-    <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores</small></h2>
+    <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores · depósito = comprobante del cliente (recarga) · ventana fija, ignora filtros</small></h2>
       <p style="font-size:12px;color:var(--muted);margin:-6px 0 12px">Barras = jugadores nuevos por mes · línea = % que depositó. Cuando el <b style="color:var(--ink)">volumen sube</b>, la <b style="color:var(--ink)">tasa de depósito suele bajar</b>.</p>
       <div style="position:relative;height:330px"><canvas ref="nvdCombo"></canvas></div>
     </div>
-    <div class="card"><h2>% depósito en WhatsApp por operador <small>· jugadores · meses con &lt;8 conv. omitidos · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="depPctChart"></canvas></div></div>
-    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="loadChart"></canvas></div></div>
-    <div class="card span-2"><h2>Conversiones de jugadores nuevos por mes <small>· cohorte por mes de ingreso · barras = nº · línea = %</small></h2>
+    <div class="card"><h2>% depósito en WhatsApp por operador <small>· depósito = comprobante del cliente (recarga) · meses con &lt;8 conv. omitidos · top 7 + otros · ventana fija, ignora filtros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="depPctChart"></canvas></div></div>
+    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros · ventana fija, ignora filtros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="loadChart"></canvas></div></div>
+    <div class="card span-2"><h2>Conversiones de jugadores nuevos por mes <small>· cohorte por mes de ingreso · barras = nº · línea = % · grano jugador, no filtra por motivo/rating/estado</small></h2>
       <div style="position:relative;height:300px"><canvas ref="convMonth"></canvas></div>
     </div>
-    <div class="card span-2"><h2>Conversión vs atención pasiva por operador <small>· por mes · top 8 · verde = conv% · rojo = pasiva% (LLM, se pone al día)</small></h2>
+    <div class="card span-2"><h2>Conversión vs atención pasiva por operador <small>· por mes · top 8 · verde = conv% · rojo = pasiva% · grano jugador, no filtra por motivo/rating/estado</small></h2>
       <div class="conv-legend"><span><i style="background:var(--r-excelente)"></i>% conversión</span><span><i class="dash"></i>% atención pasiva</span></div>
       <div class="conv-grid">
         <div class="conv-mini" v-for="(op,i) in convPasvOps" :key="op.name">
@@ -429,10 +431,14 @@
         <div v-if="!qualOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin sesiones evaluadas en este filtro.</div>
       </div>
     </div>
-    <div class="card span-2"><h2>Evolución de la calidad por motivo <small>· ★ promedio por mes · cada motivo con su piso · meses con &lt;5 sesiones omitidos · respeta filtros</small></h2>
+    <div class="card span-2"><h2>Evolución de la calidad por motivo <small>· ★ promedio por mes · una línea por operador + promedio · cada motivo con su piso · respeta filtros</small></h2>
+      <div class="conv-legend" v-if="qualMotivoLegend.length" style="flex-wrap:wrap">
+        <span v-for="op in qualMotivoLegend" :key="op.name"><i :style="{background:op.color}"></i>{{ op.name.length>18?short(op.name):op.name }}</span>
+        <span><i class="dash" style="background:var(--ink)"></i>Promedio del motivo</span>
+      </div>
       <div class="conv-grid">
-        <div class="conv-mini" v-for="(op,i) in qualMotivoOps" :key="op.name">
-          <h4>{{ MOTIVO_LABEL[op.name]||op.name }}</h4>
+        <div class="conv-mini" v-for="(m,i) in qualMotivoOps" :key="m.motivo">
+          <h4>{{ MOTIVO_LABEL[m.motivo]||m.motivo }}</h4>
           <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualMotivoCanvases[i]=el }"></canvas></div>
         </div>
         <div v-if="!qualMotivoOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin sesiones evaluadas en este filtro.</div>
@@ -573,7 +579,7 @@ const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error
 
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
-const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo" };
+const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", sin_motivo:"Sin motivo" };
 const RATINGS = {
   excelente:{s:5,c:"--r-excelente"}, buena:{s:4,c:"--r-buena"}, aceptable:{s:3,c:"--r-aceptable"},
   deficiente:{s:2,c:"--r-deficiente"}, mala:{s:1,c:"--r-mala"},
@@ -588,6 +594,10 @@ const SERIES_LIGHT=["#2a78d6","#1baf7a","#eda100","#008300","#4a3aa7","#e34948",
 const SERIES_DARK =["#3987e5","#199e70","#c98500","#008300","#9085e9","#e66767","#d55181","#d95926"];
 const isDark = () => { const t=document.documentElement.getAttribute("data-theme"); return t==="dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches); };
 const seriesColors = () => isDark()?SERIES_DARK:SERIES_LIGHT;
+// Color FIJO por operador (mismo usuario -> mismo color en todo el dashboard). Hash
+// estable del nombre -> índice de la paleta (respeta claro/oscuro).
+const hashStr = s => { let h=0; const t=String(s||""); for(let i=0;i<t.length;i++){ h=(h*31+t.charCodeAt(i))|0; } return Math.abs(h); };
+const operatorColor = name => { const pal=seriesColors(); return pal[hashStr(name)%pal.length]; };
 
 const debounce = (fn, ms=300) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
 
@@ -597,12 +607,16 @@ createApp({
     const account = ref(null);
     const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", motivo:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
     const options = reactive({ segments:[], channels:[], operators:[] });
-    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]}, quality_motivo:{months:[],operators:[]} });
+    const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]}, quality_motivo:{months:[],motivos:[]} });
     const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0,total_returned:0,ret_pct:0}, by_month:{months:[],potential:[],converted:[],pct:[],returned:[],ret_pct:[]}, evolution:{months:[],operators:[]} });
     const tickets = reactive({ cards:[], total:0, page:1, pages:1 });
     const charts = ref(null);
     const chartsStatus = ref(null);
     const loadingSummary = ref(false), loadingTickets = ref(false), loadingConversion = ref(false);
+    const loadError = ref(null);   // mensaje visible si falla summary/tickets/conversion (antes se tragaba)
+    // Contadores por-fetcher: una respuesta lenta y VIEJA no debe pisar a una más nueva
+    // (condición de carrera al tipear filtros). Cada fetch descarta si ya no es el último.
+    const seqs = { summary:0, tickets:0, conversion:0 };
     const openKeys = reactive(new Set());
     const updating = ref(false);
     let loadedCount = 0;
@@ -636,30 +650,38 @@ createApp({
     // ---- fetchers ----
     async function fetchSummary() {
       if (!account.value) return;
+      const seq = ++seqs.summary, acc = account.value;
       loadingSummary.value = true;
       try {
         const d = await fetchJSON("/api/summary?" + qs());
-        Object.assign(summary, d);
-      } catch(e) { /* deja lo anterior */ }
-      finally { loadingSummary.value = false; }
-      await nextTick(); renderQuality(); renderQualityMotivo();
+        if (seq !== seqs.summary || acc !== account.value) return;   // respuesta vieja -> descartar
+        Object.assign(summary, d); loadError.value = null;
+      } catch(e) { if (seq === seqs.summary && acc === account.value) loadError.value = "No se pudo cargar el resumen — se muestra lo anterior."; }
+      finally { if (seq === seqs.summary) loadingSummary.value = false; }
+      if (seq === seqs.summary && acc === account.value) { await nextTick(); renderQuality(); renderQualityMotivo(); }
     }
     async function fetchConversion() {
       if (!account.value) return;
+      const seq = ++seqs.conversion, acc = account.value;
       loadingConversion.value = true;
-      try { const d = await fetchJSON("/api/conversion?" + qs()); Object.assign(conversion, d); }
-      catch(e) {}
-      finally { loadingConversion.value = false; }
-      await nextTick(); renderConversionMonth(); renderConversionPassivity();
+      try {
+        const d = await fetchJSON("/api/conversion?" + qs());
+        if (seq !== seqs.conversion || acc !== account.value) return;
+        Object.assign(conversion, d); loadError.value = null;
+      } catch(e) { if (seq === seqs.conversion && acc === account.value) loadError.value = "No se pudo cargar la conversión — se muestra lo anterior."; }
+      finally { if (seq === seqs.conversion) loadingConversion.value = false; }
+      if (seq === seqs.conversion && acc === account.value) { await nextTick(); renderConversionMonth(); renderConversionPassivity(); }
     }
     async function fetchTickets() {
       if (!account.value) return;
+      const seq = ++seqs.tickets, acc = account.value;
       loadingTickets.value = true;
       try {
         const d = await fetchJSON("/api/tickets?" + qs({ page: tickets.page, sort: filters.sort }));
-        Object.assign(tickets, d);
-      } catch(e) {}
-      finally { loadingTickets.value = false; }
+        if (seq !== seqs.tickets || acc !== account.value) return;
+        Object.assign(tickets, d); loadError.value = null;
+      } catch(e) { if (seq === seqs.tickets && acc === account.value) loadError.value = "No se pudieron cargar los clientes — se muestra lo anterior."; }
+      finally { if (seq === seqs.tickets) loadingTickets.value = false; }
     }
     async function fetchOptions() {
       try { const d = await fetchJSON("/api/options?account=" + encodeURIComponent(account.value)); Object.assign(options, d); }
@@ -684,6 +706,9 @@ createApp({
       account.value = acc;
       Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
       tickets.page = 1; openKeys.clear();
+      // limpia los refs de canvas de la cuenta anterior (si tenía más operadores/motivos,
+      // quedaban canvases detached en los dicts reactivos -> se re-setean al re-renderizar).
+      [qualCanvases, qualMotivoCanvases, convPasvCanvases].forEach(d => Object.keys(d).forEach(k => delete d[k]));
       const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0;
       charts.value = chartsCache[acc]?.data || null;
       await Promise.all([fetchOptions(), fetchSummary(), fetchTickets(), fetchConversion()]);
@@ -765,21 +790,24 @@ createApp({
       const mp = (conversion.by_month && conversion.by_month.pct) || [];
       const hasTrend = mp.length >= 2;
       const trend = hasTrend ? Math.round((mp[mp.length-1]-mp[mp.length-2])*10)/10 : 0;
+      // SET FIJO: los mismos tiles en TODA cuenta. Cuando un dato no aplica (p.ej. una
+      // cuenta sin conversiones), se muestra "—" en vez de ocultar el tile, así las dos
+      // cuentas se ven consistentes (no cambia la cantidad ni el orden de KPIs).
       const tiles = [
         { k:"Sesiones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
-        // Métricas de NEGOCIO (jugadores nuevos), lo más relevante para el usuario.
-        ...(hasConv ? [
-          { k:"Conversión", v:(c.pct||0), u:"%", foot:`${c.total_converted||0} de ${c.total_potential} nuevos depositaron` },
-          { k:"Re-engagement", v:(c.ret_pct||0), u:"%", foot:`${c.total_returned||0} volvieron a interactuar` },
-        ] : []),
+        hasConv ? { k:"Conversión", v:(c.pct||0), u:"%", foot:`${c.total_converted||0} de ${c.total_potential} nuevos depositaron` }
+                : { k:"Conversión", v:"—", foot:"sin conversiones en esta cuenta" },
+        hasConv ? { k:"Re-engagement", v:(c.ret_pct||0), u:"%", foot:`${c.total_returned||0} volvieron a interactuar` }
+                : { k:"Re-engagement", v:"—", foot:"sin conversiones en esta cuenta" },
         { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} sesiones` },
         { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
-        ...(topCh ? [{ k:"Canal top", v:topCh.canal, sm:true, foot:`${topCh.pct}% depósito · ${topCh.n} sesiones` }] : []),
-        ...(hasTrend ? [{ k:"Tendencia conversión", v:`${trend>0?'▲ +':trend<0?'▼ ':'→ '}${trend}pp`, sm:true, foot:"vs mes anterior" }] : []),
+        topCh ? { k:"Canal top", v:topCh.canal, sm:true, foot:`${topCh.pct}% depósito · ${topCh.n} sesiones` }
+              : { k:"Canal top", v:"—", sm:true, foot:"sin datos de canal" },
+        hasTrend ? { k:"Tendencia conversión", v:`${trend>0?'▲ +':trend<0?'▼ ':'→ '}${trend}pp`, sm:true, foot:"vs mes anterior" }
+                 : { k:"Tendencia conversión", v:"—", sm:true, foot:"falta un 2º mes" },
         { k:"Operadores", v:(k.operadores||0), foot:"con atención evaluada" },
       ];
-      // Cobertura + Pendientes: SOLO durante el backfill (post-backfill quedan obsoletos;
-      // el espacio ya lo ocupan las métricas de negocio de arriba).
+      // Cobertura + Pendientes: transitorios del backfill (no son del set estable).
       if (k.pendientes > 0) {
         tiles.push({ k:"Cobertura", v:cov, u:"%", foot:`${(k.total||0)-(k.evaluadas||0)} sin evaluar` });
         tiles.push({ k:"Pendientes de evaluar", v:k.pendientes, foot:"sesiones cerradas · backfill en curso" });
@@ -795,7 +823,14 @@ createApp({
     const motivoStats = computed(() => summary.motivo_stats||[]);
     const opsMotivo = computed(() => summary.ops_motivo||{motivos:[],operators:[]});
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
-    const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.operators)||[]);
+    const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
+    // Leyenda a nivel tarjeta: unión de operadores que aparecen en los motivos, con su
+    // color fijo. Una sola leyenda para los 7 mini-gráficos (los colores son consistentes).
+    const qualMotivoLegend = computed(() => {
+      const names = new Set();
+      (qualMotivoOps.value||[]).forEach(m => (m.operators||[]).forEach(o => names.add(o.name)));
+      return [...names].map(n => ({ name:n, color:operatorColor(n) }));
+    });
     const convPasvOps = computed(() => (conversion.evolution&&conversion.evolution.operators)||[]);
     const accentColor = computed(() => cvar("--accent"));
     // Conversión: ranking por operador + mapa por nombre (para las columnas de la
@@ -897,16 +932,18 @@ createApp({
     // Evolución de la ★ por MOTIVO (espeja renderQuality pero cada mini es un motivo).
     function renderQualityMotivo() {
       chartInsts.qualMotivo.forEach(c=>c.destroy()); chartInsts.qualMotivo = [];
-      const qe = summary.quality_motivo||{months:[],operators:[]}; const months = qe.months||[];
-      const muted=cvar("--muted"), gridc=cvar("--border");
-      (qe.operators||[]).forEach((op,i)=>{ const el = qualMotivoCanvases[i]; if(!el||!window.Chart) return;
-        const valid = op.data.filter(v=>v!=null);
-        const avg = valid.length ? valid.reduce((a,v)=>a+v,0)/valid.length : 3;
-        const col = starColor(avg);
-        chartInsts.qualMotivo.push(new Chart(el,{ type:"line", data:{ labels:months, datasets:[
-            { label:"★ promedio", data:op.data, borderColor:col, backgroundColor:col, borderWidth:2, tension:.3, pointRadius:2, pointHoverRadius:5, spanGaps:false } ]},
+      const qe = summary.quality_motivo||{months:[],motivos:[]}; const months = qe.months||[];
+      const muted=cvar("--muted"), gridc=cvar("--border"), ink=cvar("--ink");
+      (qe.motivos||[]).forEach((mo,i)=>{ const el = qualMotivoCanvases[i]; if(!el||!window.Chart) return;
+        // una línea (fina) por operador, color FIJO por usuario + promedio del motivo (grueso, punteado)
+        const ds = (mo.operators||[]).map(op=>{ const c=operatorColor(op.name); return {
+            label:op.name, data:op.data, borderColor:c, backgroundColor:c,
+            borderWidth:1.5, tension:.3, pointRadius:0, pointHoverRadius:4, spanGaps:false }; });
+        ds.push({ label:"Promedio", data:mo.avg, borderColor:ink, backgroundColor:ink,
+            borderWidth:2.5, borderDash:[5,3], tension:.3, pointRadius:0, pointHoverRadius:5, spanGaps:false });
+        chartInsts.qualMotivo.push(new Chart(el,{ type:"line", data:{ labels:months, datasets:ds },
           options:{ responsive:true, maintainAspectRatio:false, animation:false, interaction:{mode:"index",intersect:false},
-            plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ★ ${c.parsed.y==null?"—":c.parsed.y}` } } },
+            plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:c=>` ${c.dataset.label}: ${c.parsed.y==null?"—":"★ "+c.parsed.y}` } } },
             scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:9},maxRotation:0,autoSkip:true,maxTicksLimit:4}},
                      y:{min:0,max:5,grid:{color:gridc},ticks:{color:muted,font:{size:9},stepSize:1,maxTicksLimit:6}} } } })); });
     }

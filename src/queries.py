@@ -9,6 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from src.context import fetch_messages
+from src.rubrics import MOTIVOS
 
 # Filas para las tarjetas/tablas del dashboard: SIN dimensions ni transcript
 # (esos van en el detalle). Se unen contacts para el nombre del cliente.
@@ -385,23 +386,64 @@ def quality_evolution(cur, account: str, **filters) -> dict:
     return _build_quality_evolution(cur.fetchall())
 
 
-# Evolución de la ★ por MOTIVO (no por operador): responde "¿la calidad de depósito
-# baja?, ¿soporte mejora?" en el tiempo. Reusa _build_quality_evolution (la 2da columna
-# pasa a ser el motivo en vez del operador). Solo evaluadas.
+# Orden canónico de motivos para presentar los gráficos (los conocidos primero, en el
+# orden de la rúbrica; 'sin_motivo' y cualquier desconocido al final).
+_MOTIVO_ORDER = {m: i for i, m in enumerate(MOTIVOS)}
+
+
+def _build_quality_motivo(rows, top_n: int = 6, op_min_conv: int = 3, avg_min_conv: int = 5) -> dict:
+    """{months, motivos:[{motivo, operators:[{name, data}], avg:[★|None]}]} desde filas
+    (mes, motivo, op, n, sum_stars). PURO/testeable.
+
+    Por cada motivo: una línea por OPERADOR (top-N por volumen, mes con <op_min_conv -> None)
+    + la línea de PROMEDIO del motivo (todos los operadores, mes con <avg_min_conv -> None).
+    op_min_conv es más bajo que avg_min_conv porque al abrir por operador los conteos
+    mensuales son chicos; el promedio agrega y aguanta un umbral mayor.
+    """
+    by: dict[str, dict[str, dict[str, list]]] = {}
+    for mes, motivo, op, n, sum_stars in rows:
+        by.setdefault(motivo, {}).setdefault(op, {})[mes] = [float(sum_stars or 0), int(n)]
+    months = sorted({mes for mo in by.values() for ops in mo.values() for mes in ops})
+    motivos = []
+    for motivo in sorted(by, key=lambda m: (_MOTIVO_ORDER.get(m, len(_MOTIVO_ORDER)), m)):
+        ops = by[motivo]
+        totals = {op: sum(v[1] for v in ms.values()) for op, ms in ops.items()}
+        top = sorted(totals, key=lambda o: (-totals[o], o))[:top_n]
+        operators = []
+        for op in top:
+            data = [
+                round(c[0] / c[1], 2) if (c := ops[op].get(m)) and c[1] >= op_min_conv else None
+                for m in months
+            ]
+            operators.append({"name": op, "data": data})
+        avg = []
+        for m in months:
+            s = sum(ms[m][0] for ms in ops.values() if m in ms)
+            cnt = sum(ms[m][1] for ms in ops.values() if m in ms)
+            avg.append(round(s / cnt, 2) if cnt >= avg_min_conv else None)
+        motivos.append({"motivo": motivo, "operators": operators, "avg": avg})
+    return {"months": months, "motivos": motivos}
+
+
+# Evolución de la ★ por MOTIVO abierta POR OPERADOR: cada motivo muestra una línea por
+# usuario + el promedio del motivo. Responde "¿quién baja la calidad de depósito?, ¿quién
+# lleva soporte?". Solo evaluadas; respeta filtros; mismo guard de operador que _QUALITY_SQL.
 _QUALITY_MOTIVO_SQL = """
 SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
        coalesce(cs.motivo, 'sin_motivo') AS motivo,
+       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
        count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
    AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
- GROUP BY 1, 2"""
+   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+ GROUP BY 1, 2, 3"""
 
 
 def quality_by_motivo_month(cur, account: str, **filters) -> dict:
-    """Evolución mensual de la ★ promedio por MOTIVO (respeta filtros). {months, operators}
-    donde cada 'operator' es en realidad un motivo (reusa _build_quality_evolution)."""
+    """Evolución mensual de la ★ por MOTIVO y OPERADOR (respeta filtros).
+    {months, motivos:[{motivo, operators:[{name,data}], avg}]}."""
     where, params = _scores_filters(account, **filters)
     cur.execute(_QUALITY_MOTIVO_SQL.format(where=where), params)
-    return _build_quality_evolution(cur.fetchall())
+    return _build_quality_motivo(cur.fetchall())
 
 
 # Calidad por MOTIVO (v2). Clave tras el refactor: el ★ promedio GLOBAL mezcla motivos

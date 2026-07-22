@@ -14,6 +14,7 @@ from src.queries import (
     _build_ops,
     _build_pct_series,
     _build_quality_evolution,
+    _build_quality_motivo,
     _conversion_where,
     _dist_from_labels,
     _scores_filters,
@@ -291,6 +292,25 @@ def test_build_quality_evolution_top_n_avg_y_umbral_min():
     assert ana["data"] == [4.0, None]     # ene 16/4=4.0; feb 1<2 conv -> None
     beto = next(o for o in out["operators"] if o["name"] == "Beto")
     assert beto["data"] == [3.0, None]    # ene 6/2=3.0; feb sin datos -> None
+
+
+def test_build_quality_motivo_lineas_por_operador_y_promedio():
+    # (mes, motivo, op, n, sum_stars). op_min_conv=2, avg_min_conv=3.
+    rows = [
+        ("2026-01", "deposito", "Ana",  3, 12.0),   # 4.0
+        ("2026-01", "deposito", "Beto", 1,  2.0),   # 1<2 -> None por operador, pero suma al promedio
+        ("2026-01", "info",     "Ana",  2,  6.0),   # 3.0
+    ]
+    out = _build_quality_motivo(rows, top_n=6, op_min_conv=2, avg_min_conv=3)
+    assert out["months"] == ["2026-01"]
+    # motivos ordenados: deposito antes que info (orden canónico de la rúbrica)
+    assert [m["motivo"] for m in out["motivos"]] == ["deposito", "info"]
+    dep = out["motivos"][0]
+    ana = next(o for o in dep["operators"] if o["name"] == "Ana")
+    beto = next(o for o in dep["operators"] if o["name"] == "Beto")
+    assert ana["data"] == [4.0]            # 12/3
+    assert beto["data"] == [None]          # 1 < op_min_conv=2
+    assert dep["avg"] == [round(14.0 / 4, 2)]  # promedio del motivo: (12+2)/(3+1)=3.5, 4>=3
 
 
 def test_filter_options_devuelve_listas_por_cuenta():
