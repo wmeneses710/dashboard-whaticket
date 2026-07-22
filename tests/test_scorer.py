@@ -19,6 +19,12 @@ MSGS = [
     {"from_me": False, "is_note": False, "body": "no me llego la recarga"},
     {"from_me": True, "is_note": False, "body": "ya te la acredito"},
 ]
+# Con EMPUJE concreto del agente (link) -> agent_pushed=True. Necesario para que
+# buena/excelente sobrevivan el cap de uplift (PIEZA 2).
+PUSH = [
+    {"from_me": False, "is_note": False, "body": "quiero el bono"},
+    {"from_me": True, "is_note": False, "body": "Registrate acá https://www.sorti.ec/register y aprovechá"},
+]
 
 
 class FakeLLM:
@@ -72,16 +78,47 @@ def test_no_atendio_es_deficiente():
     assert r.rating_label == "deficiente" and r.stars == 2
 
 
-def test_atendio_mas_extra_es_buena():
-    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(hizo_accion_extra=True)))
+def test_atendio_mas_extra_con_empuje_es_buena():
+    # buena requiere empuje concreto (PIEZA 2): con el link sobrevive el cap.
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True)))
     assert r.rating_label == "buena" and r.stars == 4
 
 
-def test_atendio_extra_y_cortesia_es_excelente():
+def test_atendio_extra_y_cortesia_con_empuje_es_excelente():
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True, cortesia_destacada=True)))
+    assert r.rating_label == "excelente" and r.stars == 5
+
+
+# --- PIEZA 2: cap de uplift (buena/excelente sin empuje -> aceptable) ------
+
+def test_cap_uplift_buena_sin_empuje_baja_a_aceptable():
+    # el LLM dice extra+cortesia (deriva buena/excelente) pero NO hay empuje concreto
+    # (solo plantilla/jerga) -> se topa en aceptable.
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
                         llm=FakeLLM(_motivo_resp(hizo_accion_extra=True, cortesia_destacada=True)))
-    assert r.rating_label == "excelente" and r.stars == 5
+    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.floor_applied is True
+
+
+# --- PIEZA 1: piso del front-of-funnel (flujo de anuncio) -----------------
+
+def test_piso_funnel_info_con_empuje_no_es_deficiente():
+    # el LLM dice que NO atendió, pero el agente mandó link/promo (piso del flujo anuncio)
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="info", atendio_el_motivo=False,
+                                                 hizo_accion_extra=False, cortesia_destacada=False)))
+    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.floor_applied is True
+
+
+def test_problema_no_se_floorea_por_empuje():
+    # en 'problema' un empuje comercial NO es resolución -> sigue deficiente si el LLM dijo que no atendió
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="problema", atendio_el_motivo=False,
+                                                 hizo_accion_extra=False, cortesia_destacada=False)))
+    assert r.rating_label == "deficiente" and r.stars == 2
 
 
 def test_deposit_observed_string_false_no_se_invierte():

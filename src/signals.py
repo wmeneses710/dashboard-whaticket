@@ -97,8 +97,29 @@ _MALTRATO_RE = re.compile(MALTRATO_PATTERN, re.IGNORECASE)
 
 
 def agent_pushed(messages: list[dict]) -> bool:
-    """True si el AGENTE empujo conversion/retencion (link, invitacion, bono por recarga)."""
+    """True si el AGENTE empujo conversion/retencion (link, invitacion, bono por recarga).
+
+    Señal AMPLIA: sirve para el PISO del front-of-funnel (explicar la promo YA cuenta) y
+    para el eje atencion. Para el UPLIFT (buena/excelente) es demasiado laxa -> usar
+    agent_strong_uplift, que exige una accion concreta (no la mera explicacion de la promo).
+    """
     return any(_PUSH_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+
+
+# UPLIFT CONCRETO (para licenciar buena/excelente): un LINK, o una invitacion EXPLICITA a
+# depositar/recargar/registrarse/jugar. NO alcanza mencionar el bono ni decir "aprovecha"
+# (eso es explicar la promo = piso). Mas estricto que PUSH_PATTERN a proposito.
+STRONG_UPLIFT_PATTERN = (
+    r"https?://|t[ei] invit[oa] a (deposit|recarg|jug|apost|registr)|"
+    r"deposit[aá] (ya|ahora|hoy)|reg[íi]strate (ya|ahora|aqu[ií]|en el)|"
+    r"complet[aá] tu registro|primer[a]? (deposito|recarga)"
+)
+_STRONG_UPLIFT_RE = re.compile(STRONG_UPLIFT_PATTERN, re.IGNORECASE)
+
+
+def agent_strong_uplift(messages: list[dict]) -> bool:
+    """True si el AGENTE hizo un empuje CONCRETO (link o invitacion explicita a convertir)."""
+    return any(_STRONG_UPLIFT_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
 
 
 def agent_maltrato(messages: list[dict]) -> bool:

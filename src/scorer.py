@@ -18,14 +18,19 @@ from src.signals import (
     agent_maltrato,
     agent_pushed,
     agent_resolved,
+    agent_strong_uplift,
 )
 
-# Motivos transaccionales (plata que ENTRA/SALE) donde una confirmacion o el
-# comprobante como media del agente ALCANZA el piso de forma INEQUIVOCA. Se excluye
-# 'problema' a proposito: ahi "resolucion" es difusa (un "en breve" en un reclamo no
-# prueba que se resolvio) y sus errores son de MOTIVO (comprobante mal clasificado
-# como problema), no de piso -> eso lo corrige el guard de motivo, no este floor.
-_FLOOR_MOTIVOS = frozenset({"deposito", "retiro"})
+# PISO determinista por motivo (¿el agente atendió?, aunque el LLM diga que no):
+# - _RESOLVED_FLOOR: transaccional/trámite -> basta una CONFIRMACION o MEDIA del agente
+#   (comprobante de retiro, video KYC). Inequívoco.
+# - _FUNNEL_FLOOR: front-of-funnel (flujo de anuncio "¿cómo reclamo mis giros?") -> el piso
+#   es explicar la promo / mandar el link o formulario / acreditar, NO una respuesta literal
+#   a la pregunta del anuncio. Basta RESOLVED o un EMPUJE concreto (pushed).
+# 'problema' NO se floorea determinista: resolver un reclamo es difuso y un empuje comercial
+# no es resolución -> se deja al modelo.
+_RESOLVED_FLOOR = frozenset({"deposito", "retiro", "soporte_cuenta"})
+_FUNNEL_FLOOR = frozenset({"info", "promo", "registro"})
 
 
 class LLM(Protocol):
@@ -132,10 +137,15 @@ def score_by_motivo(
     maltrato = _as_bool(raw.get("hubo_maltrato_grave")) is True
 
     # OVERRIDES deterministas de los HECHOS (la senal dura le gana al modelo):
-    resolved = agent_resolved(target_messages)
+    resolved = agent_resolved(target_messages)   # confirmó o mandó media (comprobante/KYC/tutorial)
+    pushed = agent_pushed(target_messages)        # empuje concreto: link, invitación, bono por recarga
     override = False
-    # transaccional con confirmacion/comprobante del agente -> el piso SIEMPRE esta atendido
-    if motivo in _FLOOR_MOTIVOS and resolved and not atendio:
+    # PIEZA 1 - PISO: el agente atendió el motivo de forma determinista (corrige la dureza
+    # residual del flujo de anuncio en 'datos', donde el LLM exigía respuesta literal).
+    if not atendio and (
+        (motivo in _RESOLVED_FLOOR and resolved)
+        or (motivo in _FUNNEL_FLOOR and (resolved or pushed))
+    ):
         atendio, override = True, True
     # 'mala' solo con maltrato real: el modelo lo sobre-marca y el maltrato del agente es
     # rarisimo; sin evidencia determinista, se descarta el maltrato -> no cae a 'mala'.
@@ -146,6 +156,12 @@ def score_by_motivo(
         atendio_motivo=atendio, hizo_accion_extra=extra,
         cortesia_destacada=cortesia_destacada, hubo_maltrato_grave=maltrato,
     )
+    # PIEZA 2 - CAP DE UPLIFT: buena/excelente exige un EMPUJE CONCRETO (link o invitación
+    # explícita a convertir), no la mera explicación de la promo ni la cortesía de plantilla
+    # ({nombre} autocompletado), jerga o emojis -> si no hay, se topa en aceptable. (Lo
+    # genuinamente difuso -warmth real sin empuje- lo recuperaría un verificador angosto.)
+    if label in ("buena", "excelente") and not agent_strong_uplift(target_messages):
+        label, override = "aceptable", True
     stars = label_to_stars(motivo, label)
     rationale = raw.get("rating_rationale", "")
     if override:
@@ -157,7 +173,7 @@ def score_by_motivo(
     atencion = raw.get("atencion")
     if atencion not in schema["properties"]["atencion"]["enum"]:
         atencion = None
-    if agent_pushed(target_messages):
+    if pushed:
         if atencion in ("pasivo", "no_respondio", None):
             atencion = "empujo"
     elif atencion == "no_respondio" and resolved:
