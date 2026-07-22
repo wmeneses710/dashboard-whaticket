@@ -257,8 +257,10 @@ Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (e
 iniciativa (la accion extra = UPLIFT), cortesia. Mas la lista de errores concretos (vacia si no hay).
 
 RECOMENDACION (campo "recomendacion"): UN consejo concreto y accionable para el AGENTE sobre \
-como pudo llegar al siguiente nivel (mira la columna UPLIFT del motivo). Ej: "confirmaste la \
-recarga; la proxima invita al bono de la 2da recarga". Devuelve "" solo si ya fue excelente.
+como pudo llegar al siguiente nivel (mira la columna UPLIFT del motivo). En ESPANOL NEUTRO y \
+profesional, SIN voseo ni regionalismos (nada de "para", "mira", "dale", "animate", "bro"). \
+Ej: "Confirmaste la recarga; la proxima, invita al bono de la segunda recarga". Devuelve "" \
+solo si ya fue excelente.
 
 ATENCION DEL OPERADOR (campo "atencion") - esfuerzo del AGENTE HUMANO por impulsar la \
 conversion/retencion (NO al bot, NO al cliente):

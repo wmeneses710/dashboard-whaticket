@@ -70,12 +70,28 @@ def verify_uplift(target_messages: list[dict], motivo: str, llm: LLM) -> dict:
 # --- Generador de recomendacion (coaching) --------------------------------
 
 _RECOM_SYSTEM = """\
-Sos un coach de agentes de atencion al cliente de una plataforma de apuestas. Basandote en
-la conversacion, da UN consejo concreto y accionable (1 frase, en 2da persona) de como el
-agente pudo llegar al SIGUIENTE nivel en este motivo — usa la accion extra esperada del
-motivo (el UPLIFT). Especifico a lo que paso, no generico. Si ya fue excelente, devolve "".
+Eres un coach de agentes de atencion al cliente de una plataforma de apuestas. Basandote en
+la conversacion, da UN consejo concreto y accionable (1 frase) de como el agente pudo llegar
+al SIGUIENTE nivel en este motivo — usa la accion extra esperada del motivo (el UPLIFT).
+Debe ser ESPECIFICO a lo que paso, no generico. Si ya fue excelente, devuelve "".
+
+USA ESPANOL NEUTRO Y PROFESIONAL. Imperativo o segunda persona con "tu" ("confirma",
+"invita", "envia el enlace"). PROHIBIDO el voseo y los regionalismos: nada de "para",
+"mira", "dale", "animate", "bro", "che". Ejemplo neutro: "Invita al cliente a...".
 {ejemplos}
 Responde SOLO con JSON: {{"recomendacion": "<consejo o cadena vacia>"}}"""
+
+# Ejemplos por motivo (español neutro, concretos, apuntando al UPLIFT). Se usan como
+# few-shot por defecto; el lever real contra la genericidad. "may or may not use examples".
+_RECOM_EXAMPLES: dict[str, list[str]] = {
+    "deposito": ["Confirmaste la recarga; la proxima, menciona el bono que puede alcanzar con su siguiente deposito."],
+    "retiro": ["Procesaste el retiro; invita al cliente a volver a jugar o a recargar para retenerlo."],
+    "registro": ["Explicaste el registro; envia el enlace directo y guia el primer deposito para cerrar el alta."],
+    "soporte_cuenta": ["Resolviste el tramite; confirma que quedo solucionado y anticipa el proximo paso."],
+    "info": ["Respondiste la consulta; aprovecha para invitar a un deposito o registro concreto."],
+    "promo": ["Explicaste la promocion; envia el enlace de registro e invita a realizar el primer deposito para activarla."],
+    "problema": ["Atendiste el reclamo; haz seguimiento y confirma la solucion para prevenir que se repita."],
+}
 
 
 def _recom_schema() -> dict:
@@ -91,12 +107,15 @@ def build_recomendacion(
     examples: list[str] | None = None,
 ) -> str:
     """Genera el consejo de coaching como tarea dedicada. `examples` (opcional) = lista de
-    consejos ejemplares para few-shot. Devuelve "" si falla o si ya fue excelente."""
+    consejos ejemplares para few-shot; si es None se usan los del motivo (_RECOM_EXAMPLES).
+    Devuelve "" si falla o si ya fue excelente."""
     if label == "excelente":
         return ""
+    if examples is None:
+        examples = _RECOM_EXAMPLES.get(motivo)
     ejemplos = ""
     if examples:
-        ejemplos = "\nEjemplos de buenos consejos:\n" + "\n".join(f"- {e}" for e in examples) + "\n"
+        ejemplos = "\nEjemplos de buenos consejos (neutros):\n" + "\n".join(f"- {e}" for e in examples) + "\n"
     system = _RECOM_SYSTEM.format(ejemplos=ejemplos)
     user = (f"MOTIVO: {motivo}\nNOTA OBTENIDA: {label}\n\n### CONVERSACION\n"
             f"{format_transcript(target_messages, motivo)}")

@@ -78,6 +78,13 @@ def test_media_del_cliente_no_cuenta():
     assert agent_sent_media([_client(media_type="image")]) is False
 
 
+def test_media_type_no_real_no_cuenta():
+    # 'chat'/'missed'/'template' NO son media real (un texto guardado como 'chat' no cuenta)
+    assert agent_sent_media([_agent(media_type="chat")]) is False
+    assert agent_sent_media([_agent(media_type="missed")]) is False
+    assert agent_sent_media([_agent(media_type="document")]) is True  # doc sí es media real
+
+
 # --- client_abandoned -----------------------------------------------------
 
 def test_cliente_abandono_si_ultimo_es_agente():

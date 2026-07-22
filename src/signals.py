@@ -46,13 +46,23 @@ def agent_confirmation(messages: list[dict]) -> bool:
     )
 
 
+# Tipos de media REAL (comprobante, tutorial en video, audio, doc). Se excluyen a
+# proposito 'chat'/'missed'/'template'/'location', que NO son un adjunto del agente
+# (un texto guardado como 'chat' no debe contar como "mando el comprobante/tutorial").
+_MEDIA_TYPES = frozenset({"image", "video", "audio", "voice", "ptt", "document",
+                          "application", "sticker", "viewonce"})
+
+
 def agent_sent_media(messages: list[dict]) -> bool:
-    """True si el AGENTE mando media (comprobante de retiro, tutorial, etc.).
+    """True si el AGENTE mando MEDIA real (comprobante de retiro, video-tutorial, etc.).
 
     El modelo no puede leer la media; asumir fracaso por eso es el error #3 de la
     auditoria. Si el agente la mando, es evidencia de que atendio.
     """
-    return any(_is_agent(m) and (m.get("media_type") or "").strip() for m in messages)
+    return any(
+        _is_agent(m) and (m.get("media_type") or "").strip().lower() in _MEDIA_TYPES
+        for m in messages
+    )
 
 
 def client_abandoned(messages: list[dict]) -> bool:

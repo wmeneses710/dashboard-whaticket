@@ -79,3 +79,18 @@ def test_recomendacion_con_ejemplos_los_incluye():
 def test_recomendacion_error_del_llm_es_vacia():
     r = build_recomendacion(MSGS, "promo", "aceptable", FakeLLM(None, raises=True))
     assert r == ""
+
+
+def test_recomendacion_instruye_espanol_neutro():
+    llm = FakeLLM({"recomendacion": "ok"})
+    build_recomendacion(MSGS, "retiro", "aceptable", llm)
+    system = llm.calls[0][0].lower()
+    assert "neutro" in system and "voseo" in system
+
+
+def test_recomendacion_usa_ejemplos_del_motivo_por_defecto():
+    # sin pasar examples, toma los del motivo (few-shot por defecto)
+    llm = FakeLLM({"recomendacion": "ok"})
+    build_recomendacion(MSGS, "retiro", "aceptable", llm)
+    system = llm.calls[0][0]
+    assert "volver a jugar" in system   # el ejemplo neutro de retiro
