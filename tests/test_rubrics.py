@@ -6,12 +6,21 @@ modelo). Ver db/scores_schema.sql y src/rubrics.py.
 """
 import pytest
 
-from src.rubrics import MOTIVOS, RUBRICS, get_rubric, label_from_facts, label_to_stars
+from src.rubrics import (
+    MOTIVOS,
+    RUBRICS,
+    derive_aciertos,
+    get_rubric,
+    label_from_facts,
+    label_to_stars,
+)
 
 
-def _facts(atendio=True, extra=False, cortesia=False, maltrato=False):
+def _facts(atendio=True, extra=False, cortesia=False, maltrato=False,
+           claridad="claro", friccion=False):
     return label_from_facts(atendio_motivo=atendio, hizo_accion_extra=extra,
-                            cortesia_destacada=cortesia, hubo_maltrato_grave=maltrato)
+                            cortesia_destacada=cortesia, hubo_maltrato_grave=maltrato,
+                            claridad=claridad, friccion=friccion)
 
 
 def test_label_from_facts_maltrato_es_mala():
@@ -35,6 +44,44 @@ def test_label_from_facts_una_capa_extra_es_buena():
 
 def test_label_from_facts_extra_y_cortesia_es_excelente():
     assert _facts(atendio=True, extra=True, cortesia=True) == "excelente"
+
+
+# --- Modulador v3: claridad + fricción (bajan/limitan la nota desde el piso) -----
+
+def test_confuso_baja_el_piso_a_deficiente():
+    # atendió el motivo pero de forma confusa (el cliente tuvo que adivinar) -> 2
+    assert _facts(atendio=True, claridad="confuso") == "deficiente"
+
+
+def test_friccion_baja_el_piso_a_deficiente():
+    # atendió pero hubo fricción (cliente reinsistió sin respuesta) -> 2
+    assert _facts(atendio=True, friccion=True) == "deficiente"
+
+
+def test_confuso_bloquea_el_uplift():
+    # ni con acción extra + cortesía puede superar deficiente si fue confuso
+    assert _facts(atendio=True, extra=True, cortesia=True, claridad="confuso") == "deficiente"
+
+
+def test_dudoso_es_neutral_no_demota_ni_bloquea_uplift():
+    # borderline = no-op: no baja el piso...
+    assert _facts(atendio=True, claridad="dudoso") == "aceptable"
+    # ...ni impide subir con uplift real (beneficio de la duda en el eje ambiguo)
+    assert _facts(atendio=True, extra=True, cortesia=True, claridad="dudoso") == "excelente"
+
+
+def test_ghosteo_total_no_atendio_con_friccion_es_mala():
+    # NO atendió + fricción (cliente rogando, agente ghosteó) -> 1★ (habilita el extremo)
+    assert _facts(atendio=False, friccion=True) == "mala"
+
+
+def test_no_atendio_sin_friccion_sigue_deficiente():
+    # sin fricción, no atender sigue siendo deficiente (no cae a mala)
+    assert _facts(atendio=False, friccion=False) == "deficiente"
+
+
+def test_maltrato_manda_sobre_claridad_y_friccion():
+    assert _facts(atendio=True, maltrato=True, claridad="claro", friccion=False) == "mala"
 
 
 def test_rubricas_legacy_human_bot_presentes():
@@ -105,3 +152,51 @@ def test_etiqueta_de_otra_rubrica_falla():
     # "optima" es una etiqueta de bot, no de human.
     with pytest.raises(ValueError):
         label_to_stars("human", "optima")
+
+
+# --- derive_aciertos: el "por qué" positivo (espejo de errores[]) ----------
+
+def _aciertos(atendio=True, extra=False, cortesia=False, claridad="claro",
+              friccion=False, dimensions=None):
+    return derive_aciertos(atendio_motivo=atendio, hizo_accion_extra=extra,
+                           cortesia_destacada=cortesia, claridad=claridad,
+                           friccion=friccion, dimensions=dimensions)
+
+
+def _claves(aciertos):
+    return [a["clave"] for a in aciertos]
+
+
+def test_aciertos_piso_limpio_incluye_resolucion_y_claridad():
+    assert _claves(_aciertos(atendio=True, claridad="claro")) == ["resolucion", "claridad"]
+
+
+def test_aciertos_suma_iniciativa_y_cortesia():
+    got = _claves(_aciertos(atendio=True, extra=True, cortesia=True, claridad="claro"))
+    assert got == ["resolucion", "claridad", "iniciativa", "cortesia"]
+
+
+def test_aciertos_confuso_no_da_resolucion_ni_claridad():
+    assert _aciertos(atendio=True, claridad="confuso") == []
+
+
+def test_aciertos_friccion_suprime_piso_y_claridad_pero_no_iniciativa():
+    # con fricción no se acredita el piso ni "fue claro"; una acción extra real sí sobrevive
+    got = _claves(_aciertos(atendio=True, friccion=True, claridad="claro", extra=True))
+    assert got == ["iniciativa"]
+
+
+def test_aciertos_dudoso_da_resolucion_pero_no_claridad():
+    # borderline: el piso cuenta como acierto, pero no se afirma "fue claro"
+    assert _claves(_aciertos(atendio=True, claridad="dudoso")) == ["resolucion"]
+
+
+def test_aciertos_no_atendio_es_vacio():
+    assert _aciertos(atendio=False) == []
+
+
+def test_aciertos_usa_la_nota_del_llm_como_evidencia():
+    dims = {"resolucion": "Confirmó la recarga con 'ing' tras el comprobante"}
+    got = _aciertos(atendio=True, claridad="claro", dimensions=dims)
+    res = next(a for a in got if a["clave"] == "resolucion")
+    assert res["detalle"] == "Confirmó la recarga con 'ing' tras el comprobante"

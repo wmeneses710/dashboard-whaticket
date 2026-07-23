@@ -276,3 +276,54 @@ def test_pasa_deposit_hint_al_prompt():
     llm = FakeLLM(_motivo_resp())
     score_by_motivo(target_messages=MSGS, thread_context="", llm=llm, deposit_hint=True)
     assert "HINT DETERMINISTA" in llm.calls[0][0]
+
+
+# --- Modulador claridad + fricción (v3) -----------------------------------
+
+# Cliente reinsiste sin respuesta y el agente NO resuelve (deflexión) -> fricción.
+REASK = [
+    {"from_me": False, "is_note": False, "body": "hice un deposito"},
+    {"from_me": False, "is_note": False, "body": "ayuda"},
+    {"from_me": False, "is_note": False, "body": "?"},
+    {"from_me": False, "is_note": False, "body": "?"},
+    {"from_me": True, "is_note": False, "body": "comuníquese con su agente al 099"},
+]
+
+
+def test_confuso_sin_resolucion_baja_a_deficiente():
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp(claridad="confuso")))
+    assert r.rating_label == "deficiente" and r.stars == 2
+
+
+def test_confuso_no_baja_si_el_agente_resolvio_determinista():
+    # MSGS tiene "acredito" -> agent_resolved=True protege del confuso difuso del LLM
+    r = score_by_motivo(target_messages=MSGS, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="deposito", claridad="confuso")))
+    assert r.rating_label == "aceptable" and r.stars == 3
+
+
+def test_friccion_determinista_baja_a_deficiente():
+    r = score_by_motivo(target_messages=REASK, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="deposito", atendio_el_motivo=True)))
+    assert r.rating_label == "deficiente" and r.stars == 2
+
+
+def test_ghosteo_total_no_atendio_con_friccion_es_mala():
+    r = score_by_motivo(target_messages=REASK, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="deposito", atendio_el_motivo=False)))
+    assert r.rating_label == "mala" and r.stars == 1
+
+
+def test_claridad_ausente_es_neutral_aceptable():
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="", llm=FakeLLM(_motivo_resp()))
+    assert r.rating_label == "aceptable"
+
+
+def test_score_expone_aciertos_y_claridad():
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="promo", claridad="claro",
+                                                 hizo_accion_extra=True, cortesia_destacada=True)))
+    claves = [a["clave"] for a in r.aciertos]
+    assert "iniciativa" in claves and "cortesia" in claves
+    assert r.claridad in ("claro", "confuso", "dudoso")

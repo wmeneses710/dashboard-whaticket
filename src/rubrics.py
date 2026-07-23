@@ -171,6 +171,54 @@ def get_rubric(rubric: Rubric) -> RubricSpec:
         raise ValueError(f"rubrica desconocida: {rubric!r} (validas: {sorted(RUBRICS)})")
 
 
+# Frase por defecto de cada acierto (fallback si el LLM no dejo una nota-evidencia
+# de esa dimension). El detalle real deberia ser la nota del LLM (evidencia concreta).
+_ACIERTO_DEFAULTS: dict[str, str] = {
+    "resolucion": "atendio el motivo del cliente",
+    "claridad": "comunico con claridad, sin que el cliente tuviera que adivinar",
+    "iniciativa": "fue mas alla del tramite (accion extra del motivo)",
+    "cortesia": "trato cordial y personalizado",
+}
+
+
+def derive_aciertos(
+    *,
+    atendio_motivo: bool,
+    hizo_accion_extra: bool,
+    cortesia_destacada: bool,
+    claridad: str = "claro",
+    friccion: bool = False,
+    dimensions: dict | None = None,
+) -> list[dict]:
+    """Lista estructurada de lo que se hizo BIEN (espejo de errores[]), derivada de
+    los HECHOS. Hibrido: el codigo decide QUE aciertos hay (consistente con la estrella)
+    y usa la nota por dimension del LLM como EVIDENCIA (detalle); si falta, cae a una
+    frase por defecto.
+
+    Cada acierto: {"clave": <dimension>, "detalle": <evidencia>}.
+    - resolucion (piso): solo si atendio, sin friccion y no fue confuso.
+    - claridad: solo si fue 'claro' y sin friccion (la friccion contradice la claridad).
+    - iniciativa / cortesia: si el hecho de uplift correspondiente es verdadero.
+    """
+    dims = dimensions or {}
+    out: list[dict] = []
+
+    def add(clave: str) -> None:
+        detalle = (dims.get(clave) or "").strip() or _ACIERTO_DEFAULTS[clave]
+        out.append({"clave": clave, "detalle": detalle})
+
+    piso_limpio = atendio_motivo and not friccion and claridad != "confuso"
+    if piso_limpio:
+        add("resolucion")
+    if atendio_motivo and claridad == "claro" and not friccion:
+        add("claridad")
+    if hizo_accion_extra:
+        add("iniciativa")
+    if cortesia_destacada:
+        add("cortesia")
+    return out
+
+
 def label_to_stars(rubric: Rubric, label: str) -> int:
     """Traduce una etiqueta cualitativa a su estrella (1..5), de forma determinista.
 
@@ -193,22 +241,39 @@ def label_from_facts(
     hizo_accion_extra: bool,
     cortesia_destacada: bool,
     hubo_maltrato_grave: bool,
+    claridad: str = "claro",
+    friccion: bool = False,
 ) -> str:
-    """Deriva la etiqueta cualitativa desde HECHOS concretos (regla de 2 capas).
+    """Deriva la etiqueta cualitativa desde HECHOS concretos (2 capas + modulador).
 
     El LLM juzga los hechos (que hace bien) y el CODIGO aplica la regla (que el
     modelo aplicaba de forma inestable). Reemplaza que el LLM elija rating_label.
 
-    - maltrato grave        -> 'mala'       (unico gatillo de lo peor)
-    - NO atendio el motivo  -> 'deficiente' (debajo del piso)
-    - atendio + extra Y cortesia destacada -> 'excelente'
-    - atendio + (extra O cortesia destacada) -> 'buena'
-    - atendio solo (piso)   -> 'aceptable'
+    PISO/UPLIFT (capas 1 y 2) + MODULADOR de la CALIDAD del piso (`claridad`,
+    `friccion`), que puede bajar un 'atendio' nominal por debajo del piso:
+    - maltrato grave                         -> 'mala'       (gatillo de lo peor)
+    - NO atendio + friccion (ghosteo total)  -> 'mala'       (cliente rogando, sin respuesta)
+    - NO atendio                             -> 'deficiente' (debajo del piso)
+    - atendio + (claridad 'confuso' O friccion) -> 'deficiente' (atendio pero el
+      cliente tuvo que adivinar / reinsistir: no alcanza el piso)
+    - atendio limpio + extra Y cortesia destacada -> 'excelente'
+    - atendio limpio + (extra O cortesia destacada) -> 'buena'
+    - atendio limpio (piso)                  -> 'aceptable'
+
+    `claridad`: 'claro' | 'confuso' | 'dudoso'. Solo 'confuso' actua (demota y
+    bloquea el uplift); 'dudoso' es NEUTRAL (borderline = no-op: ni baja ni impide
+    subir). `friccion`: senal (determinista + refuerzo del LLM) de que el cliente
+    tuvo que reinsistir sin respuesta.
     """
     if hubo_maltrato_grave:
         return "mala"
     if not atendio_motivo:
+        # ghosteo total: no atendio Y el cliente reinsistio sin respuesta -> lo peor.
+        return "mala" if friccion else "deficiente"
+    # PISO cumplido, pero la CALIDAD del piso puede bajarlo por debajo del piso.
+    if claridad == "confuso" or friccion:
         return "deficiente"
+    # UPLIFT (piso limpio; 'dudoso' no bloquea, solo 'confuso' -ya descartado- lo haria).
     if hizo_accion_extra and cortesia_destacada:
         return "excelente"
     if hizo_accion_extra or cortesia_destacada:

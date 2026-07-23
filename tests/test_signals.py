@@ -14,6 +14,7 @@ from src.signals import (
     agent_strong_uplift,
     client_abandoned,
     client_asked_question,
+    client_reasked,
 )
 
 # La plantilla real del flujo de anuncio (pitch-only): NO es empuje concreto.
@@ -188,3 +189,42 @@ def test_plantilla_de_anuncio_NO_es_uplift_concreto():
     assert agent_strong_uplift([_agent(_AD_TEMPLATE)]) is False
     # pero SÍ dispara el push amplio (piso del funnel):
     assert agent_pushed([_agent(_AD_TEMPLATE)]) is True
+
+
+# --- client_reasked (fricción determinista) -------------------------------
+
+def test_reasked_corrida_larga_sin_respuesta():
+    # el cliente manda 5 seguidos sin ninguna respuesta del negocio -> fricción
+    msgs = [_client("hola"), _client("necesito ayuda"), _client("me sale error"),
+            _client("hola?"), _client("?")]
+    assert client_reasked(msgs) is True
+
+
+def test_reasked_pings_de_desesperacion_en_corrida():
+    # corrida corta pero con pings claros ("ayuda", "?") sin respuesta -> fricción
+    msgs = [_client("hice un deposito"), _client("ayuda"), _client("?")]
+    assert client_reasked(msgs) is True
+
+
+def test_reasked_multitransaccion_no_es_friccion():
+    # cliente manda mucho PERO el agente responde entre medio (Abono->ing) -> NO fricción
+    msgs = [_client("Abono 5"), _agent("ing"), _client("Abono 10"), _agent("ing"),
+            _client("Abono 15"), _agent("ing"), _client("Abono 20"), _agent("ing")]
+    assert client_reasked(msgs) is False
+
+
+def test_reasked_intercambio_normal_no_es_friccion():
+    msgs = [_client("cuanto es el minimo?"), _agent("$5"), _client("gracias")]
+    assert client_reasked(msgs) is False
+
+
+def test_reasked_respuesta_del_bot_corta_la_corrida():
+    # si el bot responde, el cliente no quedó sin respuesta -> no es ghosteo
+    msgs = [_client("hola"), _bot("¡Hola! ¿En qué te ayudo?"), _client("info"),
+            _client("por favor")]
+    assert client_reasked(msgs) is False
+
+
+def test_reasked_vacio_o_sin_cliente():
+    assert client_reasked([]) is False
+    assert client_reasked([_agent("hola")]) is False

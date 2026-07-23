@@ -104,6 +104,52 @@ def client_asked_question(messages: list[dict]) -> bool:
     return False
 
 
+# Pings de DESESPERACION del cliente (re-pregunta/insistencia sin respuesta): solo
+# signos de pregunta ("?"/"??"), o palabras de reclamo por silencio. Se normalizan
+# acentos. Son la marca de que el cliente tuvo que insistir, no de una consulta normal.
+_REASK_PING_RE = re.compile(
+    r"\b(ayuda|auxilio|me responden?|respond[ae](me|n)?|alguien( ahi)?|"
+    r"sigue[sn]? ahi|est[a]?[sn]? ahi|hol[ao]+\?)\b"
+)
+
+
+def _is_reask_ping(body: str) -> bool:
+    """True si el mensaje del cliente es un ping de insistencia (solo '?' o reclamo de silencio)."""
+    b = _strip_accents((body or "").strip().lower())
+    if not b:
+        return False
+    if re.fullmatch(r"[?¿]+", b):
+        return True
+    return bool(_REASK_PING_RE.search(b))
+
+
+def client_reasked(messages: list[dict], *, min_run: int = 4) -> bool:
+    """True si hubo FRICCION: el cliente tuvo que reinsistir sin respuesta del negocio.
+
+    Senal determinista de que el cliente quedo colgado (agnostica al motivo): una
+    corrida de mensajes CONSECUTIVOS del cliente SIN respuesta del negocio (agente o
+    bot). Dispara si la corrida llega a `min_run`, o si en una corrida de >=2 el
+    cliente manda un ping de desesperacion ("?", "ayuda", "me responden"). El caso
+    multi-transaccion (cliente manda mucho pero el agente contesta entre medio) NO
+    dispara, porque cada respuesta del negocio corta la corrida.
+    """
+    run = 0
+    run_has_ping = False
+    for m in messages:
+        if m.get("is_note"):
+            continue
+        if m.get("from_me"):  # el negocio (agente o bot) respondio -> corta la corrida
+            run = 0
+            run_has_ping = False
+            continue
+        run += 1  # mensaje del cliente
+        if _is_reask_ping(m.get("body") or ""):
+            run_has_ping = True
+        if run >= min_run or (run >= 2 and run_has_ping):
+            return True
+    return False
+
+
 def agent_resolved(messages: list[dict]) -> bool:
     """El agente atendio el motivo de forma determinista: confirmo o mando media.
 

@@ -106,3 +106,20 @@ def test_motivo_schema_pide_motivo_dimensiones_y_hechos():
     assert {"motivo", "dimensions", "rating_rationale"} <= set(sch["required"])
     assert "atencion" not in sch["required"]
     assert "stars" not in props
+
+
+def test_motivo_schema_incluye_claridad_y_reinsistio_no_requeridos():
+    sch = build_motivo_schema()
+    props = sch["properties"]
+    assert props["claridad"]["enum"] == ["claro", "confuso", "dudoso"]
+    assert props["cliente_reinsistio"]["type"] == "boolean"
+    # best-effort (como atencion): no deben ser requeridos ni tumbar un rating válido
+    assert "claridad" not in sch["required"]
+    assert "cliente_reinsistio" not in sch["required"]
+
+
+def test_motivo_prompt_pide_claridad_y_reinsistencia():
+    system, _ = build_motivo_prompt([{"from_me": False, "is_note": False, "body": "hola"}], "")
+    low = system.lower()
+    assert "claridad" in low and "confuso" in low and "dudoso" in low
+    assert "cliente_reinsistio" in low

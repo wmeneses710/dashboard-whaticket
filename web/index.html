@@ -212,6 +212,8 @@
   .why { font-size:13.5px; line-height:1.55; border-left:3px solid var(--accent); padding:4px 0 4px 14px; margin:4px 0 18px; }
   .dims { display:flex; flex-direction:column; gap:12px; } .dim .dh { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin-bottom:3px; } .dim p { margin:0; font-size:12.5px; }
   .errs { margin-top:16px; } .err { font-size:12px; color:var(--r-mala); background:color-mix(in srgb, var(--r-mala) 12%, transparent); padding:7px 11px; border-radius:8px; margin-top:6px; }
+  .oks { margin-top:16px; } .ok { font-size:12px; color:var(--r-buena); background:color-mix(in srgb, var(--r-buena) 12%, transparent); padding:7px 11px; border-radius:8px; margin-top:6px; }
+  .rec { margin-top:16px; } .recbody { font-size:12.5px; background:color-mix(in srgb, var(--faint) 12%, transparent); padding:8px 11px; border-radius:8px; }
   .metagrid { display:grid; grid-template-columns:1fr 1fr; gap:9px 16px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
   .metagrid .m { font-size:11.5px; } .metagrid .m span { color:var(--faint); } .metagrid .m b { font-weight:640; }
   .est { font-size:10.5px; color:var(--faint); margin-top:16px; font-style:italic; }
@@ -526,13 +528,20 @@
               <span class="chip" :style="chipStyle(modal.detail)"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span>
               <span class="chip at" :class="'at-'+modal.detail.atencion" v-if="modal.detail.atencion">{{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion }}</span>
               <span class="chip" v-if="modal.detail.deposit_observed!==null" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">depósito observado: {{ modal.detail.deposit_observed ? 'sí' : 'no' }}</span>
+              <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='claro'" style="background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)">claro</span>
+              <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='confuso'" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">poco claro</span>
+              <span class="chip" v-if="dimReinsistio(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">el cliente reinsistió</span>
             </div>
             <div class="why">{{ modal.detail.rating_rationale }}</div>
             <div class="dims">
               <div class="dim" v-for="(v,k) in dimsOnly(modal.detail.dimensions)" :key="k"><div class="dh">{{ k }}</div><p>{{ v }}</p></div>
             </div>
+            <div class="oks" v-if="dimAciertos(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Lo que hizo bien</div>
+              <div class="ok" v-for="(a,i) in dimAciertos(modal.detail.dimensions)" :key="i">{{ a.detalle }}</div></div>
             <div class="errs" v-if="dimErrors(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Errores detectados</div>
               <div class="err" v-for="(e,i) in dimErrors(modal.detail.dimensions)" :key="i">{{ e }}</div></div>
+            <div class="rec" v-if="dimRecom(modal.detail.dimensions)"><div class="dh" style="margin-bottom:4px">Recomendación</div>
+              <div class="recbody">{{ dimRecom(modal.detail.dimensions) }}</div></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
             <div class="est">★ estimada por LLM — no es un dato de la plataforma.</div>
           </div>
@@ -855,8 +864,15 @@ createApp({
     function bubClass(role) { return role==="CLIENTE"?"cli":role==="BOT"?"bot":"age"; }
     function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
     function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Agente")); }
-    function dimsOnly(dims) { const o={}; for (const [k,v] of Object.entries(dims||{})) if (k!=="errores") o[k]=v; return o; }
+    // Claves del jsonb que NO son notas de dimensión (se muestran aparte): errores,
+    // aciertos, recomendación y los ejes del modulador (claridad/reinsistió).
+    const _NON_DIM = new Set(["errores","aciertos","claridad","cliente_reinsistio","recomendacion"]);
+    function dimsOnly(dims) { const o={}; for (const [k,v] of Object.entries(dims||{})) if (!_NON_DIM.has(k) && typeof v==="string") o[k]=v; return o; }
     function dimErrors(dims) { return (dims&&dims.errores)||[]; }
+    function dimAciertos(dims) { return (dims&&dims.aciertos)||[]; }
+    function dimRecom(dims) { return (dims&&dims.recomendacion)||""; }
+    function dimClaridad(dims) { return (dims&&dims.claridad)||""; }
+    function dimReinsistio(dims) { return !!(dims&&dims.cliente_reinsistio); }
     function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
       return m("operador",esc(opName(r)))+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} agente${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
     }
@@ -1006,7 +1022,8 @@ createApp({
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
-      bubClass, bubText, bubAuthor, dimsOnly, dimErrors, metaGrid };
+      bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
+      dimClaridad, dimReinsistio, metaGrid };
   }
 }).mount("#app");
 </script>

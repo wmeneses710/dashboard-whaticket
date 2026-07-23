@@ -8,11 +8,11 @@ evaluated/skipped) la decide antes el router; aca ya llega una conversacion
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from src.prompts import build_motivo_prompt, build_motivo_schema
-from src.rubrics import MOTIVOS, label_from_facts, label_to_stars
+from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
     agent_confirmation,
     agent_maltrato,
@@ -20,7 +20,12 @@ from src.signals import (
     agent_resolved,
     agent_strong_uplift,
     client_asked_question,
+    client_reasked,
 )
+
+# Valores validos del eje de CLARIDAD (hecho del LLM). 'dudoso' es el neutral/borderline:
+# no demota ni bloquea el uplift. Ausente o invalido -> 'dudoso' (no castigar por omision).
+CLARIDAD_VALS = ("claro", "confuso", "dudoso")
 
 # PISO determinista por motivo (¿el agente atendió?, aunque el LLM diga que no):
 # - _RESOLVED_FLOOR: transaccional/trámite -> basta una CONFIRMACION o MEDIA del agente
@@ -53,6 +58,9 @@ class ScoreResult:
     motivo: str | None = None       # pase v2: motivo clasificado por el LLM (None en el pase viejo)
     floor_applied: bool = False     # True si un override determinista cambio un HECHO (ver score_by_motivo)
     recomendacion: str = ""         # consejo accionable para el agente (coaching); "" si excelente
+    claridad: str = "dudoso"        # eje claridad EFECTIVO (claro|confuso|dudoso) que modulo la nota
+    friccion: bool = False          # True si el cliente tuvo que reinsistir sin respuesta (determinista)
+    aciertos: list = field(default_factory=list)  # el "por que" POSITIVO (espejo de errores[])
 
 
 def _validate(raw: dict, schema: dict) -> None:
@@ -138,10 +146,20 @@ def score_by_motivo(
     extra = _as_bool(raw.get("hizo_accion_extra")) is True
     cortesia_destacada = _as_bool(raw.get("cortesia_destacada")) is True
     maltrato = _as_bool(raw.get("hubo_maltrato_grave")) is True
+    # HECHOS del MODULADOR (claridad + reinsistencia). Ausente/invalido -> 'dudoso' (neutral).
+    claridad = raw.get("claridad")
+    if claridad not in CLARIDAD_VALS:
+        claridad = "dudoso"
+    cliente_reinsistio = _as_bool(raw.get("cliente_reinsistio")) is True
 
     # OVERRIDES deterministas de los HECHOS (la senal dura le gana al modelo):
     resolved = agent_resolved(target_messages)   # confirmó o mandó media (comprobante/KYC/tutorial)
     pushed = agent_pushed(target_messages)        # empuje concreto: link, invitación, bono por recarga
+    # MODULADOR (calidad del piso): fricción determinista y claridad efectiva. La resolución
+    # determinista PROTEGE el piso -> un 'confuso' difuso no baja una transacción confirmada,
+    # y la fricción solo demota cuando el agente NO resolvió (lo determinista gana).
+    friccion = client_reasked(target_messages) and not resolved
+    claridad_eff = "dudoso" if (resolved and claridad == "confuso") else claridad
     override = False
     # PIEZA 1 - PISO: el agente atendió el motivo de forma determinista (corrige la dureza
     # residual del flujo de anuncio en 'datos', donde el LLM exigía respuesta literal).
@@ -162,7 +180,10 @@ def score_by_motivo(
     label = label_from_facts(
         atendio_motivo=atendio, hizo_accion_extra=extra,
         cortesia_destacada=cortesia_destacada, hubo_maltrato_grave=maltrato,
+        claridad=claridad_eff, friccion=friccion,
     )
+    if friccion or (atendio and claridad_eff == "confuso"):
+        override = True  # el modulador bajó la nota -> marca el ajuste determinista
     # PIEZA 2 - CAP DE UPLIFT: buena/excelente exige un EMPUJE CONCRETO (link o invitación
     # explícita a convertir), no la mera explicación de la promo ni la cortesía de plantilla
     # ({nombre} autocompletado), jerga o emojis -> si no hay, se topa en aceptable. (Lo
@@ -198,10 +219,29 @@ def score_by_motivo(
         except Exception:  # noqa: BLE001 - una falla del coach no debe tumbar el score
             pass
 
+    # EL "POR QUE" BIDIRECCIONAL. aciertos[] = lo que se hizo bien (derivado de hechos,
+    # con la nota del LLM como evidencia); errores[] = lo del LLM + el porqué determinista
+    # de la baja (fricción / confuso), asi tanto subir como bajar tienen su motivo explicito.
+    aciertos = derive_aciertos(
+        atendio_motivo=atendio, hizo_accion_extra=extra,
+        cortesia_destacada=cortesia_destacada, claridad=claridad_eff,
+        friccion=friccion, dimensions=raw.get("dimensions") or {},
+    )
+    dims_out = dict(raw.get("dimensions") or {})
+    errores = list(dims_out.get("errores") or [])
+    if friccion:
+        errores.append("El cliente tuvo que reinsistir sin respuesta del agente.")
+    if atendio and claridad_eff == "confuso":
+        errores.append("La respuesta no fue clara: el cliente tuvo que inferir.")
+    dims_out["errores"] = errores
+    dims_out["aciertos"] = aciertos
+    dims_out["claridad"] = claridad_eff
+    dims_out["cliente_reinsistio"] = cliente_reinsistio
+
     return ScoreResult(
         rubric=motivo,
         motivo=motivo,
-        dimensions=raw["dimensions"],
+        dimensions=dims_out,
         rating_label=label,
         rating_rationale=rationale,
         stars=stars,
@@ -210,4 +250,7 @@ def score_by_motivo(
         deposit_observed=_as_bool(raw.get("deposit_observed")),
         floor_applied=override,
         recomendacion=recomendacion,
+        claridad=claridad_eff,
+        friccion=friccion,
+        aciertos=aciertos,
     )

@@ -241,8 +241,8 @@ COMPROBANTE lo manda el AGENTE. Cliente adjunta comprobante -> deposito, NO reti
 - quiere crear/activar una cuenta nueva -> registro
 - algo no funciona / no se le acredito / reclamo -> problema
 
-PASO 2 - HECHOS. NO elijas una nota: responde estos 4 HECHOS (true/false) y el sistema \
-calcula la nota de forma determinista.
+PASO 2 - HECHOS. NO elijas una nota: responde estos HECHOS (los 4 primeros true/false; \
+claridad es una etiqueta) y el sistema calcula la nota de forma determinista.
 - atendio_el_motivo: el agente ATENDIO el motivo (columna PISO), aunque sea minimo o \
 templateado. CUENTAN: la respuesta IMPLICITA, la PLANTILLA correcta ("listo"/"ing"/"cargado") \
 y la MEDIA del agente (comprobante de retiro, video-tutorial). Si dio una respuesta accionable \
@@ -252,6 +252,15 @@ y el cliente se fue, igual ATENDIO (el abandono es del cliente).
 afectuosa (ñaño/pana/panita/mi rey) SUMA, no resta.
 - hubo_maltrato_grave: hubo INSULTO o AGRESION explicita del agente. La no-respuesta, una \
 respuesta floja o la informalidad NO son maltrato.
+- claridad: que tan CLARO fue el agente sobre el objetivo. UNA de: "claro" | "confuso" | "dudoso".
+  * claro: el cliente pudo ACCIONAR la respuesta sin adivinar ni volver a preguntar; el proximo \
+paso o la info pedida esta EXPLICITA; si uso plantilla, la plantilla RESPONDE lo que ESTE cliente pregunto.
+  * confuso: respuesta ambigua/contradictoria, info incompleta que obliga a inferir, o una plantilla \
+generica que NO encaja con la pregunta puntual (deflexion tipo "crea tu cuenta" ante una consulta concreta).
+  * dudoso: si NO estas seguro (no fuerces "claro" ni "confuso" en un caso borderline).
+  El TONO/cortesia NO es claridad: un mensaje seco pero claro es claro; uno calido pero confuso NO lo es.
+- cliente_reinsistio: true SOLO si el cliente tuvo que REPETIR o re-preguntar lo mismo (o mando \
+"?", "ayuda") porque no obtuvo respuesta clara. false si se fue callado (abandono) o quedo conforme.
 
 Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (el PISO), \
 iniciativa (la accion extra = UPLIFT), cortesia. Mas la lista de errores concretos (vacia si no hay).
@@ -312,8 +321,16 @@ EJEMPLOS (aprende de estos HECHOS; no copies el texto, copia el CRITERIO):
 ("Abono a deuda" + comprobante del cliente es DEPOSITO; "ing" confirma -> atendio=true)
 
 [6] CLIENTE: [image] recarga / AGENTE: Listo Juan, saldo cargado! aprovecha que con tu 2da recarga tenes un bono del 150%
--> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":true,"hubo_maltrato_grave":false}
-(confirmo + empujo el bono (extra) + uso el nombre (cortesia) -> excelente)"""
+-> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":true,"hubo_maltrato_grave":false,"claridad":"claro","cliente_reinsistio":false}
+(confirmo + empujo el bono (extra) + uso el nombre (cortesia) -> excelente)
+
+[7] CLIENTE: ¿Como reclamo mis 10 giros? / AGENTE: es super facil, solo crea tu cuenta
+-> {"motivo":"promo","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false,"claridad":"confuso","cliente_reinsistio":false}
+(NO explica COMO obtener los giros; deflexion generica "crea tu cuenta" que no responde lo puntual -> claridad=confuso)
+
+[8] CLIENTE: ¿cual es el minimo de deposito? / AGENTE: El minimo es $5. Te dejo el link para registrarte: https://sorti.ec/reg
+-> {"motivo":"info","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":false,"hubo_maltrato_grave":false,"claridad":"claro","cliente_reinsistio":false}
+(responde lo puntual ($5) + proximo paso explicito (link) -> claridad=claro)"""
 
 _MOTIVO_JSON_SHAPE = (
     "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, con esta "
@@ -325,6 +342,8 @@ _MOTIVO_JSON_SHAPE = (
     '"hizo_accion_extra": <true|false>, '
     '"cortesia_destacada": <true|false>, '
     '"hubo_maltrato_grave": <true|false>, '
+    '"claridad": "<claro|confuso|dudoso>", '
+    '"cliente_reinsistio": <true|false>, '
     '"rating_rationale": "<2-4 frases especificas de esta sesion>", '
     '"recomendacion": "<1 consejo accionable, o \\"\\" si excelente>", '
     '"atencion": "<empujo|pasivo|no_respondio>", '
@@ -380,6 +399,8 @@ def build_motivo_schema() -> dict:
             "hizo_accion_extra": {"type": "boolean"},
             "cortesia_destacada": {"type": "boolean"},
             "hubo_maltrato_grave": {"type": "boolean"},
+            "claridad": {"type": "string", "enum": ["claro", "confuso", "dudoso"]},
+            "cliente_reinsistio": {"type": "boolean"},
             "rating_rationale": {"type": "string"},
             "recomendacion": {"type": "string"},
             "atencion": {"type": "string", "enum": list(ATENCION_LABELS)},

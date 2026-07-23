@@ -10,6 +10,7 @@ venv/
 # Env y secretos
 .env
 .env.local
+copia_prod_fix.txt
 
 # Dumps de la BD (fotos de desarrollo, no versionar)
 *.dump
