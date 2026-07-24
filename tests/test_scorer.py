@@ -303,6 +303,36 @@ def test_confuso_no_baja_si_el_agente_resolvio_determinista():
     assert r.rating_label == "aceptable" and r.stars == 3
 
 
+def test_confuso_corroborado_por_reinsistencia_llm_baja_a_deficiente():
+    # sin fricción determinista, pero el LLM reporta que el cliente reinsistió
+    # (cliente_reinsistio) -> corrobora el confuso -> deficiente.
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp(claridad="confuso", cliente_reinsistio=True)))
+    assert r.rating_label == "deficiente" and r.stars == 2
+
+
+def test_gate1_confuso_sin_pregunta_ni_reinsistencia_se_neutraliza():
+    # el cliente no preguntó nada ni reinsistió (no había nada que aclarar): un
+    # 'confuso' del LLM se neutraliza a 'dudoso' -> no hunde la nota.
+    msgs = [{"from_me": False, "is_note": False, "body": "todo bien, gracias"},
+            {"from_me": True, "is_note": False, "body": "genial, que tengas buen dia"}]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(claridad="confuso")))
+    assert r.rating_label == "aceptable"
+
+
+def test_gate2_confuso_con_pregunta_y_empuje_concreto_no_corroborado_se_rescata():
+    # el cliente preguntó y el agente mandó un empuje concreto (link) sin que el
+    # cliente reinsistiera: el confuso NO queda corroborado -> se rescata a
+    # 'aceptable' (no hunde a deficiente) y no marca el override determinista.
+    msgs = [{"from_me": False, "is_note": False, "body": "¿cómo puedo depositar?"},
+            {"from_me": True, "is_note": False, "body": "Depositá acá https://www.sorti.ec/deposit"}]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(claridad="confuso")))
+    assert r.rating_label == "aceptable"
+    assert r.floor_applied is False
+
+
 def test_friccion_determinista_baja_a_deficiente():
     r = score_by_motivo(target_messages=REASK, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="deposito", atendio_el_motivo=True)))

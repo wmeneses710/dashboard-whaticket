@@ -17,10 +17,11 @@ from src.rubrics import (
 
 
 def _facts(atendio=True, extra=False, cortesia=False, maltrato=False,
-           claridad="claro", friccion=False):
+           claridad="claro", friccion=False, confuso_corroborado=False):
     return label_from_facts(atendio_motivo=atendio, hizo_accion_extra=extra,
                             cortesia_destacada=cortesia, hubo_maltrato_grave=maltrato,
-                            claridad=claridad, friccion=friccion)
+                            claridad=claridad, friccion=friccion,
+                            confuso_corroborado=confuso_corroborado)
 
 
 def test_label_from_facts_maltrato_es_mala():
@@ -49,8 +50,15 @@ def test_label_from_facts_extra_y_cortesia_es_excelente():
 # --- Modulador v3: claridad + fricción (bajan/limitan la nota desde el piso) -----
 
 def test_confuso_baja_el_piso_a_deficiente():
-    # atendió el motivo pero de forma confusa (el cliente tuvo que adivinar) -> 2
-    assert _facts(atendio=True, claridad="confuso") == "deficiente"
+    # atendió el motivo pero de forma confusa (el cliente tuvo que adivinar) y
+    # el confuso esta CORROBORADO por una senal determinista -> 2
+    assert _facts(atendio=True, claridad="confuso", confuso_corroborado=True) == "deficiente"
+
+
+def test_confuso_sin_corroborar_no_hunde_topa_en_aceptable():
+    # sin corroboracion determinista, el confuso del LLM NO hunde la nota: topa
+    # en el piso (aceptable), no llega a deficiente.
+    assert _facts(atendio=True, claridad="confuso", confuso_corroborado=False) == "aceptable"
 
 
 def test_friccion_baja_el_piso_a_deficiente():
@@ -59,8 +67,17 @@ def test_friccion_baja_el_piso_a_deficiente():
 
 
 def test_confuso_bloquea_el_uplift():
-    # ni con acción extra + cortesía puede superar deficiente si fue confuso
-    assert _facts(atendio=True, extra=True, cortesia=True, claridad="confuso") == "deficiente"
+    # ni con acción extra + cortesía puede superar deficiente si fue confuso Y
+    # esta corroborado
+    assert _facts(atendio=True, extra=True, cortesia=True, claridad="confuso",
+                  confuso_corroborado=True) == "deficiente"
+
+
+def test_confuso_sin_corroborar_bloquea_uplift_pero_no_hunde():
+    # sin corroboracion, el confuso sigue bloqueando el uplift (no sube a buena/
+    # excelente aunque haya extra + cortesía), pero ya no hunde la nota -> aceptable
+    assert _facts(atendio=True, extra=True, cortesia=True, claridad="confuso",
+                  confuso_corroborado=False) == "aceptable"
 
 
 def test_dudoso_es_neutral_no_demota_ni_bloquea_uplift():

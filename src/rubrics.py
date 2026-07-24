@@ -243,6 +243,7 @@ def label_from_facts(
     hubo_maltrato_grave: bool,
     claridad: str = "claro",
     friccion: bool = False,
+    confuso_corroborado: bool = False,
 ) -> str:
     """Deriva la etiqueta cualitativa desde HECHOS concretos (2 capas + modulador).
 
@@ -254,25 +255,36 @@ def label_from_facts(
     - maltrato grave                         -> 'mala'       (gatillo de lo peor)
     - NO atendio + friccion (ghosteo total)  -> 'mala'       (cliente rogando, sin respuesta)
     - NO atendio                             -> 'deficiente' (debajo del piso)
-    - atendio + (claridad 'confuso' O friccion) -> 'deficiente' (atendio pero el
-      cliente tuvo que adivinar / reinsistir: no alcanza el piso)
+    - atendio + friccion                     -> 'deficiente' (el cliente tuvo que
+      reinsistir sin respuesta: la friccion real SIEMPRE demota; ya llega gateada
+      con `and not resolved` desde el scorer)
+    - atendio + claridad 'confuso'           -> 'deficiente' SOLO si esta
+      CORROBORADO (`confuso_corroborado`); sin corroboracion, un 'confuso' del LLM
+      topa en 'aceptable' (piso cumplido, sin uplift) en vez de hundir la nota.
     - atendio limpio + extra Y cortesia destacada -> 'excelente'
     - atendio limpio + (extra O cortesia destacada) -> 'buena'
     - atendio limpio (piso)                  -> 'aceptable'
 
-    `claridad`: 'claro' | 'confuso' | 'dudoso'. Solo 'confuso' actua (demota y
-    bloquea el uplift); 'dudoso' es NEUTRAL (borderline = no-op: ni baja ni impide
-    subir). `friccion`: senal (determinista + refuerzo del LLM) de que el cliente
-    tuvo que reinsistir sin respuesta.
+    `claridad`: 'claro' | 'confuso' | 'dudoso'. Solo 'confuso' actua (demota si
+    esta corroborado, y siempre bloquea el uplift); 'dudoso' es NEUTRAL (borderline
+    = no-op: ni baja ni impide subir). `friccion`: senal (determinista + refuerzo
+    del LLM) de que el cliente tuvo que reinsistir sin respuesta.
+    `confuso_corroborado`: gate para que un 'confuso' del LLM sin corroboracion
+    determinista (el cliente ni pregunto ni reinsistio, o el agente resolvio/empujo)
+    no hunda la nota a 'deficiente' sin evidencia real de que hizo falta aclarar.
     """
     if hubo_maltrato_grave:
         return "mala"
     if not atendio_motivo:
         # ghosteo total: no atendio Y el cliente reinsistio sin respuesta -> lo peor.
         return "mala" if friccion else "deficiente"
-    # PISO cumplido, pero la CALIDAD del piso puede bajarlo por debajo del piso.
-    if claridad == "confuso" or friccion:
+    # la friccion real (ya gateada por el scorer) siempre demota, corroborada o no.
+    if friccion:
         return "deficiente"
+    if claridad == "confuso":
+        # sin corroboracion, el confuso del LLM topa en el piso (sin uplift) en vez
+        # de hundir la nota: no hay evidencia determinista de que hizo falta aclarar.
+        return "deficiente" if confuso_corroborado else "aceptable"
     # UPLIFT (piso limpio; 'dudoso' no bloquea, solo 'confuso' -ya descartado- lo haria).
     if hizo_accion_extra and cortesia_destacada:
         return "excelente"

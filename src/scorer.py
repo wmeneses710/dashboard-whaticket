@@ -155,11 +155,20 @@ def score_by_motivo(
     # OVERRIDES deterministas de los HECHOS (la senal dura le gana al modelo):
     resolved = agent_resolved(target_messages)   # confirmó o mandó media (comprobante/KYC/tutorial)
     pushed = agent_pushed(target_messages)        # empuje concreto: link, invitación, bono por recarga
+    asked = client_asked_question(target_messages)
+    reasked = client_reasked(target_messages)
     # MODULADOR (calidad del piso): fricción determinista y claridad efectiva. La resolución
     # determinista PROTEGE el piso -> un 'confuso' difuso no baja una transacción confirmada,
     # y la fricción solo demota cuando el agente NO resolvió (lo determinista gana).
-    friccion = client_reasked(target_messages) and not resolved
-    claridad_eff = "dudoso" if (resolved and claridad == "confuso") else claridad
+    friccion = reasked and not resolved
+    # Gate 1: neutralizar 'confuso' cuando el agente resolvió determinista, o cuando el
+    # cliente no preguntó nada ni reinsistió (no había nada que aclarar) -> a 'dudoso'.
+    neutraliza_confuso = resolved or (not asked and not reasked)
+    claridad_eff = "dudoso" if (neutraliza_confuso and claridad == "confuso") else claridad
+    # Gate 2: el 'confuso' solo baja duro a 2★ si está CORROBORADO: el cliente reinsistió
+    # (determinista o señal LLM cliente_reinsistio), o es un esquive genuino (preguntó y el
+    # agente ni resolvió ni empujó).
+    confuso_corroborado = reasked or cliente_reinsistio or (asked and not resolved and not pushed)
     override = False
     # PIEZA 1 - PISO: el agente atendió el motivo de forma determinista (corrige la dureza
     # residual del flujo de anuncio en 'datos', donde el LLM exigía respuesta literal).
@@ -181,8 +190,11 @@ def score_by_motivo(
         atendio_motivo=atendio, hizo_accion_extra=extra,
         cortesia_destacada=cortesia_destacada, hubo_maltrato_grave=maltrato,
         claridad=claridad_eff, friccion=friccion,
+        confuso_corroborado=confuso_corroborado,
     )
-    if friccion or (atendio and claridad_eff == "confuso"):
+    # el confuso solo "ajustó" la nota si de verdad la demotó (corroborado); un
+    # confuso rescatado (no corroborado) no debe marcarse como override.
+    if friccion or (atendio and claridad_eff == "confuso" and confuso_corroborado):
         override = True  # el modulador bajó la nota -> marca el ajuste determinista
     # PIEZA 2 - CAP DE UPLIFT: buena/excelente exige un EMPUJE CONCRETO (link o invitación
     # explícita a convertir), no la mera explicación de la promo ni la cortesía de plantilla
@@ -231,7 +243,9 @@ def score_by_motivo(
     errores = list(dims_out.get("errores") or [])
     if friccion:
         errores.append("El cliente tuvo que reinsistir sin respuesta del agente.")
-    if atendio and claridad_eff == "confuso":
+    if atendio and claridad_eff == "confuso" and confuso_corroborado:
+        # solo si el confuso realmente demotó (corroborado); un confuso rescatado
+        # (no corroborado) no debe arrastrar un error duro en el "por qué".
         errores.append("La respuesta no fue clara: el cliente tuvo que inferir.")
     dims_out["errores"] = errores
     dims_out["aciertos"] = aciertos
