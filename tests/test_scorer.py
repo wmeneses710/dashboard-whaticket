@@ -179,6 +179,19 @@ def test_recomendacion_pasa_al_resultado():
     assert r.recomendacion == "podrias invitar a un deposito"
 
 
+def test_recomendacion_se_augmenta_con_fragmento_determinista():
+    # el agente entrega credenciales de alta manual -> el fragmento determinista
+    # de cambio de contraseña debe anteponerse a la recomendacion del LLM.
+    msgs = [
+        {"from_me": False, "is_note": False, "body": "ya me registraron?"},
+        {"from_me": True, "is_note": False, "body": "tu usuario es juan123 tu contraseña es abc456"},
+    ]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="soporte_cuenta")))
+    assert "cambie la contraseña" in r.recomendacion
+    assert r.recomendacion.endswith("podrias invitar a un deposito")
+
+
 # --- validacion de salida -------------------------------------------------
 
 def test_rechaza_motivo_invalido():

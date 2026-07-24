@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from src.prompts import build_motivo_prompt, build_motivo_schema
+from src.recommendations import refine_recomendacion
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
     agent_confirmation,
@@ -230,6 +231,9 @@ def score_by_motivo(
             recomendacion = recommender(target_messages, motivo, label) or recomendacion
         except Exception:  # noqa: BLE001 - una falla del coach no debe tumbar el score
             pass
+    # Capa 1: fragmentos deterministas de alto valor (el LLM casi nunca los produce)
+    # anteponen coaching aspiracional; nunca afectan la nota.
+    recomendacion = refine_recomendacion(recomendacion, motivo=motivo, target_messages=target_messages)
 
     # EL "POR QUE" BIDIRECCIONAL. aciertos[] = lo que se hizo bien (derivado de hechos,
     # con la nota del LLM como evidencia); errores[] = lo del LLM + el porqué determinista

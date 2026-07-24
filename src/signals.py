@@ -215,3 +215,73 @@ def agent_strong_uplift(messages: list[dict]) -> bool:
 def agent_maltrato(messages: list[dict]) -> bool:
     """True si hay maltrato GRAVE del agente (insulto/agresion explicita)."""
     return any(_MALTRATO_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+
+
+# Credenciales de alta manual: la cuenta se creo desde el operador y el AGENTE le
+# entrega usuario/contrasena al cliente. Es evidencia determinista de alto valor
+# para el coaching (Capa 1 de recomendaciones): sugiere pedirle al cliente que
+# cambie la contrasena en su primer ingreso.
+# ENTREGA de credenciales: exige que despues de la etiqueta venga un VALOR en la
+# MISMA linea ([ \t] no cruza saltos), o una frase inequivoca de entrega ("tu
+# usuario es X", "tus credenciales de acceso"). Asi NO dispara cuando el agente
+# PIDE los datos ("envíame tu usuario", un formulario "usuario: ____").
+# Patrones SIN acentos (se comparan sobre el texto normalizado con _strip_accents,
+# que ademas pasa a minusculas). Asi "contrasena" cubre "contraseña" y los verbos
+# de pedido con tilde en la raiz ("indicame", "pasame") matchean igual.
+CREDENTIALS_PATTERN = (
+    r"(usuario|user)\s*[:=][ \t]*\S+|"
+    r"(clave|contrasena|pass)\s*[:=][ \t]*\S+|"
+    r"tu (usuario|clave|contrasena) es\b|"
+    r"(tus|las) credenciales|credenciales (de acceso|de tu cuenta|son)"
+)
+_CREDENTIALS_RE = re.compile(CREDENTIALS_PATTERN)
+
+# Verbos de PEDIDO: si el agente ESTA pidiendo los datos (no entregandolos), no
+# cuenta como entrega aunque haya una etiqueta con dos puntos y un valor.
+ASK_CREDENTIALS_PATTERN = (
+    r"envia|enviame|pasame|pasa |mandame|manda |indica|indicame|"
+    r"cual es|necesito|dame|proporcion|comparte|apunta"
+)
+_ASK_CREDENTIALS_RE = re.compile(ASK_CREDENTIALS_PATTERN)
+
+
+def agent_sent_credentials(messages: list[dict]) -> bool:
+    """True si el AGENTE ENTREGO credenciales (usuario/contrasena con su valor) de
+    una cuenta creada por el operador. Distingue entregar de PEDIR: un mensaje que
+    pide los datos (verbo de pedido) no cuenta aunque tenga una etiqueta con valor."""
+    for m in messages:
+        if not _is_agent(m):
+            continue
+        body = _strip_accents(m.get("body") or "")
+        if _CREDENTIALS_RE.search(body) and not _ASK_CREDENTIALS_RE.search(body):
+            return True
+    return False
+
+
+# Enlace de registro (con codigo de afiliado) que el AGENTE manda al cliente para
+# completar el alta. Distinto de agent_pushed/agent_strong_uplift (que son mas
+# amplios): esta senal es especifica del ENLACE de registro, para detectar cuando
+# el agente NO lo mando (y hay que recomendar que lo mande).
+REGISTER_LINK_PATTERN = r"(https?://\S*/register|sorti\.ec/register)"
+_REGISTER_LINK_RE = re.compile(REGISTER_LINK_PATTERN, re.IGNORECASE)
+
+
+def agent_sent_register_link(messages: list[dict]) -> bool:
+    """True si el AGENTE mando un enlace de registro (sorti.ec/register o URL con /register)."""
+    return any(_REGISTER_LINK_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+
+
+# Mencion de "app"/"aplicacion" por CUALQUIERA (cliente o agente): el negocio no
+# tiene app disponible, asi que esta senal sirve para recomendar guiar al cliente
+# a la web en vez de prometer o buscar una app inexistente.
+APP_MENTIONED_PATTERN = r"\bapp\b|aplicaci[oó]n|desc[aá]rga\w*\s+la\s+app"
+_APP_MENTIONED_RE = re.compile(APP_MENTIONED_PATTERN, re.IGNORECASE)
+
+
+def app_mentioned(messages: list[dict]) -> bool:
+    """True si algun mensaje (cliente o agente), sin contar notas, menciona la app."""
+    return any(
+        _APP_MENTIONED_RE.search(m.get("body") or "")
+        for m in messages
+        if not m.get("is_note")
+    )

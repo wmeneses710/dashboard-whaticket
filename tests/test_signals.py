@@ -10,8 +10,11 @@ from src.signals import (
     agent_maltrato,
     agent_pushed,
     agent_resolved,
+    agent_sent_credentials,
     agent_sent_media,
+    agent_sent_register_link,
     agent_strong_uplift,
+    app_mentioned,
     client_abandoned,
     client_asked_question,
     client_reasked,
@@ -228,3 +231,80 @@ def test_reasked_respuesta_del_bot_corta_la_corrida():
 def test_reasked_vacio_o_sin_cliente():
     assert client_reasked([]) is False
     assert client_reasked([_agent("hola")]) is False
+
+
+# --- agent_sent_credentials (cuenta creada por el operador) ---------------
+
+def test_credenciales_usuario_y_contrasena():
+    assert agent_sent_credentials(
+        [_agent("tu usuario: juan123 contraseña: abc456")]) is True
+
+
+def test_credenciales_tu_usuario_es():
+    assert agent_sent_credentials([_agent("tu usuario es juan123")]) is True
+
+
+def test_credenciales_palabra_credencial():
+    assert agent_sent_credentials([_agent("estas son tus credenciales de acceso")]) is True
+
+
+def test_credenciales_ignora_al_cliente():
+    # el CLIENTE mandando "usuario: x" no cuenta (no es el agente entregando el alta)
+    assert agent_sent_credentials([_client("usuario: juan123 contraseña: abc456")]) is False
+
+
+def test_sin_credenciales_saludo_normal():
+    assert agent_sent_credentials([_agent("Hola, ¿en qué te ayudo?")]) is False
+
+
+def test_credenciales_pedir_no_cuenta():
+    # el agente PIDE los datos (no los entrega) -> no dispara la regla de contraseña
+    assert agent_sent_credentials([_agent("envíame tu usuario y contraseña")]) is False
+    assert agent_sent_credentials([_agent("¿cuál es tu usuario?")]) is False
+    assert agent_sent_credentials([_agent("pásame tu usuario: ")]) is False
+
+
+def test_credenciales_etiqueta_sin_valor_no_cuenta():
+    # un formulario a completar (etiqueta sin valor en la línea) no es entrega
+    assert agent_sent_credentials([_agent("usuario:\ncontraseña:")]) is False
+
+
+def test_credenciales_pedir_con_dos_puntos_y_valor_no_cuenta():
+    # aunque haya etiqueta:valor, el verbo de pedido lo excluye
+    assert agent_sent_credentials([_agent("indícame tu usuario: elque tengas")]) is False
+
+
+# --- agent_sent_register_link (enlace de registro del agente) ------------
+
+def test_register_link_sorti_ec():
+    assert agent_sent_register_link([_agent("Regístrate acá sorti.ec/register?code=1")]) is True
+
+
+def test_register_link_url_generica_con_register():
+    assert agent_sent_register_link([_agent("Entra aquí https://otrodominio.com/register")]) is True
+
+
+def test_register_link_ignora_al_cliente():
+    assert agent_sent_register_link([_client("vi sorti.ec/register en otro lado")]) is False
+
+
+def test_sin_register_link_solo_texto():
+    assert agent_sent_register_link([_agent("Puedes registrarte cuando quieras")]) is False
+
+
+# --- app_mentioned (no hay app; sirve para recomendar la web) -------------
+
+def test_app_mentioned_por_cliente():
+    assert app_mentioned([_client("¿tienen app?")]) is True
+
+
+def test_app_mentioned_por_agente():
+    assert app_mentioned([_agent("descarga la aplicación desde la tienda")]) is True
+
+
+def test_app_mentioned_ignora_notas():
+    assert app_mentioned([{"from_me": True, "is_note": True, "body": "revisar app"}]) is False
+
+
+def test_sin_app_mentioned():
+    assert app_mentioned([_client("quiero depositar"), _agent("claro, decime cuanto")]) is False

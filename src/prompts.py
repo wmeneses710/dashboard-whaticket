@@ -265,11 +265,38 @@ generica que NO encaja con la pregunta puntual (deflexion tipo "crea tu cuenta" 
 Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (el PISO), \
 iniciativa (la accion extra = UPLIFT), cortesia. Mas la lista de errores concretos (vacia si no hay).
 
-RECOMENDACION (campo "recomendacion"): UN consejo concreto y accionable para el AGENTE sobre \
-como pudo llegar al siguiente nivel (mira la columna UPLIFT del motivo). En ESPANOL NEUTRO y \
-profesional, SIN voseo ni regionalismos (nada de "para", "mira", "dale", "animate", "bro"). \
-Ej: "Confirmaste la recarga; la proxima, invita al bono de la segunda recarga". Devuelve "" \
-solo si ya fue excelente.
+RECOMENDACION (campo "recomendacion"): UN consejo concreto y accionable para el AGENTE, \
+anclado en las REGLAS DE NEGOCIO de abajo (no un coaching generico). En ESPANOL NEUTRO y \
+profesional, SIN voseo ni regionalismos rioplatenses en el texto del consejo. Devuelve "" \
+solo si ya fue excelente y no aplica ninguna regla.
+REGLA GENERAL: NO recomiendes algo que el agente YA HIZO en el chat (no sugieras mandar el \
+enlace si ya mando uno, ni invitar a depositar/registrarse si ya lo hizo); reconoce lo hecho \
+y apunta al SIGUIENTE paso real.
+REGLAS POR MOTIVO:
+- registro: si el operador creo la cuenta (mando usuario/clave en el chat), recuerda que el \
+cliente debe cambiar la contrasena en su primer ingreso. Si se piden datos sensibles \
+(cedula/datos), aclara para que son y que estan protegidos. Aclara que el beneficio se activa \
+con el primer deposito (puede depender del monto, salvo promo) y se verifica en la pagina.
+- deposito: al ofrecer un bono, avisa QUE se gana, CUANDO y COMO se libera (hay que apostar lo \
+depositado y el bono solo se usa en apuestas con requisitos), porque si el cliente no lo sabe \
+termina reclamando. NO inventes porcentajes de campana que no conoces.
+- promo: igual que el bono; explica el requisito de la promo y el camino de reclamo (registrarse \
+-> primer deposito -> se activa, o la accion puntual del evento).
+- retiro: da un tiempo estimado para dar tranquilidad e invita a escribir si se pasa de ese \
+tiempo. La verificacion se exige en retiros por la pagina, no por mensaje.
+- info: responde la duda con CLARIDAD y ADELANTATE al hueco encadenado (si explicas como \
+apostar, cubre tambien que es una cuota y los tipos de apuesta) para no dejar al cliente a \
+medias. Empuja el registro/deposito solo si la duda es de bono/promo/producto, no en una duda \
+tecnica de una apuesta ya hecha.
+- soporte_cuenta: si se reseteo la contrasena, pide que la cambie al ingresar; no pidas \
+documentos sensibles salvo que el cliente quiera retirar o acceder a beneficios.
+- problema: reconoce el problema y resuelvelo o escalalo al area correcta con un tiempo \
+estimado; no cierres sin resolver ni derives a redes sociales.
+REGLA APP: no hay app todavia; si el cliente la pide, guialo a usar la web (la app llega \
+proximamente). Nunca lo mandes a descargar una app.
+El tono informal/cercano del agente (bro, pana, ñaño) esta PERMITIDO: NO lo marques como algo \
+a corregir en la recomendacion.
+Ej: "Confirmaste la recarga; la proxima menciona el bono de la segunda recarga y como se libera".
 
 ATENCION DEL OPERADOR (campo "atencion") - esfuerzo del AGENTE HUMANO por impulsar la \
 conversion/retencion (NO al bot, NO al cliente):

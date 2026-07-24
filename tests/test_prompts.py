@@ -84,6 +84,21 @@ def test_motivo_prompt_porta_reglas_generales():
     assert "determinista" in low         # deposit_observed es observacion
 
 
+def test_motivo_prompt_porta_reglas_de_negocio_de_recomendacion():
+    system, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="")
+    low = system.lower()
+    # regla general: no recomendar lo ya hecho (evita las contradiccions medidas)
+    assert "ya hizo" in low
+    # honestidad del bono / rollover
+    assert "se libera" in low
+    # regla transversal de la app inexistente
+    assert "no hay app" in low
+    # seguridad: cambio de contrasena cuando el operador crea la cuenta
+    assert "cambiar la contrasena" in low or "cambie la contrasena" in low
+    # tono informal permitido (no marcarlo como error)
+    assert "permitido" in low
+
+
 def test_motivo_prompt_hint_de_deposito_es_condicional():
     s_no, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="", deposit_hint=False)
     s_si, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="", deposit_hint=True)
