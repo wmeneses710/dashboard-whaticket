@@ -63,12 +63,17 @@ class OllamaClient:
         num_ctx: int = 16384,
         num_predict: int = 2048,
         fallback_num_predict: int = 16384,
+        fast_attempts: int = FAST_ATTEMPTS,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.num_ctx = num_ctx
         self.num_predict = num_predict
+        # Intentos del camino rapido antes del fallback lento. Configurable para
+        # acotar el desperdicio cuando el endpoint corta por timeout (cada intento
+        # fallido gasta hasta el timeout completo).
+        self.fast_attempts = fast_attempts
         self.fallback_num_predict = fallback_num_predict
         self._client = client  # inyectable para tests (httpx.MockTransport)
         # Auth para un Ollama detras de proxy (p. ej. el compartido via Cloudflare).
@@ -136,7 +141,7 @@ class OllamaClient:
     def chat_json(self, system: str, user: str, schema: dict | None = None) -> dict:
         """Devuelve el JSON parseado. Reintenta el fast y cae al grammar si falla."""
         # Nivel 1: rapido (think=false + json generico), varios intentos.
-        for i in range(FAST_ATTEMPTS):
+        for i in range(self.fast_attempts):
             num_predict = self.num_predict * (2 if i else 1)
             parsed = _extract_json(
                 self._chat(system, user, response_format="json",
@@ -159,5 +164,5 @@ class OllamaClient:
         self.calls["empty"] += 1
         raise EmptyCompletionError(
             "el modelo no devolvio JSON parseable ni en el camino rapido "
-            f"({FAST_ATTEMPTS} intentos) ni en el fallback grammar"
+            f"({self.fast_attempts} intentos) ni en el fallback grammar"
         )

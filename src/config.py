@@ -21,6 +21,10 @@ class Config:
     ollama_url: str
     ollama_model: str
     ollama_token: str  # auth para un Ollama detras de proxy (Cloudflare); "" = sin auth
+    # Tuning de inferencia (para caber bajo el timeout del proxy, p. ej. 100s de Cloudflare):
+    ollama_num_ctx: int         # ventana de contexto del modelo
+    ollama_num_predict: int     # tope de tokens de SALIDA (el decode secuencial manda el tiempo)
+    llm_fast_attempts: int      # intentos del camino rapido antes del fallback lento
     api_host: str
     api_port: int
     log_level: str
@@ -55,6 +59,9 @@ def load_config() -> Config:
         ollama_url=os.environ.get("OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.environ.get("OLLAMA_MODEL", "qwen3.5:4b"),
         ollama_token=os.environ.get("OLLAMA_TOKEN", ""),
+        ollama_num_ctx=int(os.environ.get("OLLAMA_NUM_CTX", "16384")),
+        ollama_num_predict=int(os.environ.get("OLLAMA_NUM_PREDICT", "768")),
+        llm_fast_attempts=int(os.environ.get("LLM_FAST_ATTEMPTS", "2")),
         api_host=os.environ.get("API_HOST", "0.0.0.0"),
         api_port=int(os.environ.get("API_PORT", "8080")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),

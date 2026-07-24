@@ -227,7 +227,9 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
         """Log con timestamp (para leer la hora y el ritmo del goteo en prod)."""
         log(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}")
 
-    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0)
+    llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0,
+                       num_ctx=cfg.ollama_num_ctx, num_predict=cfg.ollama_num_predict,
+                       fast_attempts=cfg.llm_fast_attempts)
     # Sub-evaluadores angostos opcionales (2da pasada del LLM), gateados por config.
     verifier = recommender = None
     if cfg.verify_uplift_enabled or cfg.recom_subagent_enabled:

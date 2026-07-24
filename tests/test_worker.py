@@ -256,6 +256,7 @@ def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
         database_url="postgresql://x", ollama_url="http://x", ollama_model="qwen",
         ollama_token="", verify_uplift_enabled=False, recom_subagent_enabled=False,
         scoring_accounts=("sistemas",), scoring_batch_size=20, scoring_poll_seconds=1,
+        ollama_num_ctx=16384, ollama_num_predict=768, llm_fast_attempts=2,
     )
     worker.run_worker_loop(cfg, should_stop=lambda: True)
 

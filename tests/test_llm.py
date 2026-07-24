@@ -95,7 +95,25 @@ def test_chat_json_sin_schema_y_sin_salida_levanta_error():
     )
     with pytest.raises(EmptyCompletionError):
         llm.chat_json("s", "u")     # sin schema -> no hay fallback grammar
-    assert attempts["n"] == 3        # 3 intentos del fast
+    assert attempts["n"] == 3        # 3 intentos del fast (default)
+
+
+def test_fast_attempts_configurable_acota_los_reintentos():
+    """fast_attempts recorta cuántas veces se prueba el camino rápido (cada intento
+    fallido gasta hasta el timeout completo cuando el endpoint corta)."""
+    attempts = {"n": 0}
+
+    def handler(request):
+        attempts["n"] += 1
+        return httpx.Response(200, json={"message": {"content": ""}})
+
+    llm = OllamaClient(
+        "http://ollama:11434", "qwen3.5:4b", fast_attempts=1,
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(EmptyCompletionError):
+        llm.chat_json("s", "u")
+    assert attempts["n"] == 1        # un solo intento, no 3
 
 
 def test_chat_json_propaga_error_http():

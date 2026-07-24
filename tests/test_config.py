@@ -23,3 +23,19 @@ def test_defaults_razonables(monkeypatch):
     assert cfg.scoring_accounts == ("sistemas", "datos")
     assert cfg.scoring_batch_size > 0
     assert cfg.scoring_poll_seconds > 0
+
+
+def test_tuning_inferencia_defaults_y_override(monkeypatch):
+    for k in ("OLLAMA_NUM_CTX", "OLLAMA_NUM_PREDICT", "LLM_FAST_ATTEMPTS"):
+        monkeypatch.delenv(k, raising=False)
+    cfg = config.load_config()
+    assert cfg.ollama_num_predict == 768   # default bajo para caber bajo el timeout del proxy
+    assert cfg.llm_fast_attempts == 2
+    assert cfg.ollama_num_ctx == 16384
+    monkeypatch.setenv("OLLAMA_NUM_PREDICT", "512")
+    monkeypatch.setenv("LLM_FAST_ATTEMPTS", "1")
+    monkeypatch.setenv("OLLAMA_NUM_CTX", "8192")
+    cfg = config.load_config()
+    assert cfg.ollama_num_predict == 512
+    assert cfg.llm_fast_attempts == 1
+    assert cfg.ollama_num_ctx == 8192
