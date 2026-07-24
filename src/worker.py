@@ -211,6 +211,10 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
 # ciclo: es un recompute full-scale, alcanza cada tanto (el histórico cambia lento).
 _CONV_REFRESH_SECONDS = 1800
 
+# Clave del advisory lock de Postgres que serializa el worker de scoring a UNA sola
+# instancia (evita deadlocks en conversation_sessions cuando hay varias réplicas).
+_SCORING_LOCK_KEY = 823147
+
 
 def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
@@ -236,6 +240,25 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
          f" · verify_uplift={cfg.verify_uplift_enabled} recom_subagente={cfg.recom_subagent_enabled}")
     ok, msg = llm.check_model()  # pre-flight: no aborta, pero avisa fuerte si falta el modelo
     emit(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")
+    # SINGLETON: solo UN worker scorea a la vez. Sin esto, varias réplicas del contenedor
+    # (o el solape del restart-loop del health-check) arrancan cada una su propio loop y se
+    # DEADLOCKEAN escribiendo conversation_sessions. Un advisory lock de sesión de Postgres
+    # (atado a lock_conn; se libera solo si el proceso muere o cierra la conexión) garantiza
+    # una sola instancia activa. Si no se obtiene, esta instancia NO scorea (se retira).
+    try:
+        lock_conn = psycopg.connect(cfg.database_url, connect_timeout=8)
+        lock_conn.autocommit = True
+        got_lock = lock_conn.execute(
+            "SELECT pg_try_advisory_lock(%s)", (_SCORING_LOCK_KEY,)
+        ).fetchone()[0]
+    except Exception as e:  # noqa: BLE001 - sin lock no arriesgamos correr en paralelo
+        emit(f"[worker] no se pudo tomar el lock de scoring: {type(e).__name__}: {e}")
+        return
+    if not got_lock:
+        emit("[worker] otra instancia ya tiene el lock de scoring; esta instancia NO scorea")
+        lock_conn.close()
+        return
+    emit("[worker] lock de scoring adquirido (instancia única)")
     # Migración AUTOMÁTICA a scoring por SESIÓN (una vez, antes de tocar columnas):
     # renombra la tabla vieja a backup y crea la fresca de grano sesión. Idempotente.
     try:
@@ -323,4 +346,5 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                 if should_stop and should_stop():
                     break
                 time.sleep(1)
+    lock_conn.close()  # libera el advisory lock en la parada ordenada (should_stop)
     emit("[worker] detenido")

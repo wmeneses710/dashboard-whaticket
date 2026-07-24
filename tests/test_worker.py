@@ -213,3 +213,51 @@ def test_score_sessions_batch_cuenta_y_no_aborta_por_una_excepcion(monkeypatch):
     monkeypatch.setattr(worker, "score_session_and_store", fake_score)
     counts = score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
     assert counts == {"evaluated": 1, "skipped": 1, "error": 1, "seen": 3}
+
+
+def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
+    """Guard singleton: si pg_try_advisory_lock devuelve False, la instancia se retira
+    sin scorear (evita el deadlock en conversation_sessions entre réplicas)."""
+    import types
+    import psycopg
+
+    connects = []
+
+    class _LockConn:
+        autocommit = False
+
+        def execute(self, *a, **k):
+            return types.SimpleNamespace(fetchone=lambda: [False])  # lock NO adquirido
+
+        def close(self):
+            pass
+
+    def fake_connect(*a, **k):
+        connects.append(1)
+        return _LockConn()
+
+    monkeypatch.setattr(psycopg, "connect", fake_connect)
+
+    class _FakeLLM:
+        def __init__(self, *a, **k):
+            self.model = "qwen"
+            self.calls = {"fast": 0, "fallback": 0, "empty": 0}
+
+        def check_model(self):
+            return (True, "ok")
+
+    monkeypatch.setattr(worker, "OllamaClient", _FakeLLM)
+
+    called = {"batch": 0}
+    monkeypatch.setattr(worker, "score_sessions_batch",
+                        lambda *a, **k: called.__setitem__("batch", called["batch"] + 1))
+
+    cfg = types.SimpleNamespace(
+        database_url="postgresql://x", ollama_url="http://x", ollama_model="qwen",
+        ollama_token="", verify_uplift_enabled=False, recom_subagent_enabled=False,
+        scoring_accounts=("sistemas",), scoring_batch_size=20, scoring_poll_seconds=1,
+    )
+    worker.run_worker_loop(cfg, should_stop=lambda: True)
+
+    assert called["batch"] == 0        # no scoreó: se retiró por el lock
+    assert len(connects) == 1          # solo la conexión del lock, no llegó a migración/refresh
