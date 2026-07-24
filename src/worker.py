@@ -96,11 +96,14 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
         try:
             eval_status, _, _ = score_and_store(conn, conv, llm, op_map)
             counts[eval_status] += 1
-        except Exception:  # noqa: BLE001 - no abortar el lote por una conversacion
+        except Exception as e:  # noqa: BLE001 - no abortar el lote por una conversacion
             # rollback: si el fallo fue DB-side, la txn queda abortada y cascadearia
             # al resto del lote (InFailedSqlTransaction) sin este reset.
             conn.rollback()
             counts["error"] += 1
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [worker] error conv "
+                  f"{conv.get('conversation_id') or conv.get('id')} ({account}): "
+                  f"{type(e).__name__}: {str(e)[:300]}", flush=True)
     return counts
 
 
@@ -190,11 +193,14 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
         try:
             eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map, verifier, recommender)
             counts[eval_status] += 1
-        except Exception:  # noqa: BLE001 - no abortar el lote por una sesion
+        except Exception as e:  # noqa: BLE001 - no abortar el lote por una sesion
             # rollback: si el fallo fue DB-side, la txn queda abortada y cascadearia
             # al resto del lote (InFailedSqlTransaction) sin este reset.
             conn.rollback()
             counts["error"] += 1
+            print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [worker] error sesion "
+                  f"{sess.get('session_id') or sess.get('id')} ({account}): "
+                  f"{type(e).__name__}: {str(e)[:300]}", flush=True)
     return counts
 
 
