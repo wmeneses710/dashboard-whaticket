@@ -8,6 +8,7 @@ sistemas conviven en la misma BD y el worker procesa las cuentas configuradas.
 from __future__ import annotations
 
 import time
+import traceback
 
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
 from src.deposits import deposit_candidate_count
@@ -104,6 +105,7 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [worker] error conv "
                   f"{conv.get('conversation_id') or conv.get('id')} ({account}): "
                   f"{type(e).__name__}: {str(e)[:300]}", flush=True)
+            print(traceback.format_exc()[-1500:], flush=True)
     return counts
 
 
@@ -201,6 +203,7 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [worker] error sesion "
                   f"{sess.get('session_id') or sess.get('id')} ({account}): "
                   f"{type(e).__name__}: {str(e)[:300]}", flush=True)
+            print(traceback.format_exc()[-1500:], flush=True)
     return counts
 
 
