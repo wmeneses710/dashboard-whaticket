@@ -17,7 +17,7 @@ def test_digest_vacio_si_no_hay_visitas():
 def test_digest_rotula_bot_y_agente_y_muestra_cliente():
     d = format_thread_digest([_visit(1, True, "hola"), _visit(2, False, "gracias")])
     assert "[BOT]" in d
-    assert "[AGENTE]" in d
+    assert "[OPERADOR]" in d
     assert "hola" in d
 
 

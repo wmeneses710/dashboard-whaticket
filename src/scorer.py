@@ -15,11 +15,11 @@ from src.prompts import build_motivo_prompt, build_motivo_schema
 from src.recommendations import refine_recomendacion
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
-    agent_confirmation,
-    agent_maltrato,
-    agent_pushed,
-    agent_resolved,
-    agent_strong_uplift,
+    operator_confirmation,
+    operator_maltrato,
+    operator_pushed,
+    operator_resolved,
+    operator_strong_uplift,
     client_asked_question,
     client_reasked,
 )
@@ -28,8 +28,8 @@ from src.signals import (
 # no demota ni bloquea el uplift. Ausente o invalido -> 'dudoso' (no castigar por omision).
 CLARIDAD_VALS = ("claro", "confuso", "dudoso")
 
-# PISO determinista por motivo (¿el agente atendió?, aunque el LLM diga que no):
-# - _RESOLVED_FLOOR: transaccional/trámite -> basta una CONFIRMACION o MEDIA del agente
+# PISO determinista por motivo (¿el operador atendió?, aunque el LLM diga que no):
+# - _RESOLVED_FLOOR: transaccional/trámite -> basta una CONFIRMACION o MEDIA del operador
 #   (comprobante de retiro, video KYC). Inequívoco.
 # - _FUNNEL_FLOOR: front-of-funnel (flujo de anuncio "¿cómo reclamo mis giros?") -> el piso
 #   es explicar la promo / mandar el link o formulario / acreditar, NO una respuesta literal
@@ -58,7 +58,7 @@ class ScoreResult:
     deposit_observed: bool | None   # observacion LLM del deposito (el gate determinista manda)
     motivo: str | None = None       # pase v2: motivo clasificado por el LLM (None en el pase viejo)
     floor_applied: bool = False     # True si un override determinista cambio un HECHO (ver score_by_motivo)
-    recomendacion: str = ""         # consejo accionable para el agente (coaching); "" si excelente
+    recomendacion: str = ""         # consejo accionable para el operador (coaching); "" si excelente
     claridad: str = "dudoso"        # eje claridad EFECTIVO (claro|confuso|dudoso) que modulo la nota
     friccion: bool = False          # True si el cliente tuvo que reinsistir sin respuesta (determinista)
     aciertos: list = field(default_factory=list)  # el "por que" POSITIVO (espejo de errores[])
@@ -128,15 +128,15 @@ def score_by_motivo(
         raise ValueError(f"motivo invalido del LLM: {motivo!r} (validos: {list(MOTIVOS)})")
     # Guard determinista deposito<->retiro: el deposit_hint viene de un comprobante del
     # CLIENTE (gate en deposits.py), y eso es una RECARGA. En un retiro el comprobante lo
-    # manda el AGENTE. Si el LLM confundio y dijo 'retiro' con hint, se corrige a 'deposito'
+    # manda el OPERADOR. Si el LLM confundio y dijo 'retiro' con hint, se corrige a 'deposito'
     # (arregla el confusor mas comun del modelo y evita "Retiro + Recargado" en el dashboard).
     if deposit_hint and motivo == "retiro":
         motivo = "deposito"
-    # problema->deposito: un comprobante del cliente ("Abono a deuda") que el AGENTE
+    # problema->deposito: un comprobante del cliente ("Abono a deuda") que el OPERADOR
     # confirmo ("ing"/"acreditado") es una recarga completada, NO un reclamo. Se exige
     # la confirmacion (a diferencia de retiro) para NO pisar un reclamo genuino de
-    # deposito no acreditado, donde el agente no confirmo nada.
-    elif deposit_hint and motivo == "problema" and agent_confirmation(target_messages):
+    # deposito no acreditado, donde el operador no confirmo nada.
+    elif deposit_hint and motivo == "problema" and operator_confirmation(target_messages):
         motivo = "deposito"
 
     # HECHOS del LLM -> etiqueta por CODIGO. El modelo juzga hechos concretos (que hace
@@ -154,37 +154,37 @@ def score_by_motivo(
     cliente_reinsistio = _as_bool(raw.get("cliente_reinsistio")) is True
 
     # OVERRIDES deterministas de los HECHOS (la senal dura le gana al modelo):
-    resolved = agent_resolved(target_messages)   # confirmó o mandó media (comprobante/KYC/tutorial)
-    pushed = agent_pushed(target_messages)        # empuje concreto: link, invitación, bono por recarga
+    resolved = operator_resolved(target_messages)   # confirmó o mandó media (comprobante/KYC/tutorial)
+    pushed = operator_pushed(target_messages)        # empuje concreto: link, invitación, bono por recarga
     asked = client_asked_question(target_messages)
     reasked = client_reasked(target_messages)
     # MODULADOR (calidad del piso): fricción determinista y claridad efectiva. La resolución
     # determinista PROTEGE el piso -> un 'confuso' difuso no baja una transacción confirmada,
-    # y la fricción solo demota cuando el agente NO resolvió (lo determinista gana).
+    # y la fricción solo demota cuando el operador NO resolvió (lo determinista gana).
     friccion = reasked and not resolved
-    # Gate 1: neutralizar 'confuso' cuando el agente resolvió determinista, o cuando el
+    # Gate 1: neutralizar 'confuso' cuando el operador resolvió determinista, o cuando el
     # cliente no preguntó nada ni reinsistió (no había nada que aclarar) -> a 'dudoso'.
     neutraliza_confuso = resolved or (not asked and not reasked)
     claridad_eff = "dudoso" if (neutraliza_confuso and claridad == "confuso") else claridad
     # Gate 2: el 'confuso' solo baja duro a 2★ si está CORROBORADO: el cliente reinsistió
     # (determinista o señal LLM cliente_reinsistio), o es un esquive genuino (preguntó y el
-    # agente ni resolvió ni empujó).
+    # operador ni resolvió ni empujó).
     confuso_corroborado = reasked or cliente_reinsistio or (asked and not resolved and not pushed)
     override = False
-    # PIEZA 1 - PISO: el agente atendió el motivo de forma determinista (corrige la dureza
+    # PIEZA 1 - PISO: el operador atendió el motivo de forma determinista (corrige la dureza
     # residual del flujo de anuncio en 'datos', donde el LLM exigía respuesta literal).
     if not atendio and (
         (motivo in _RESOLVED_FLOOR and resolved)
         or (motivo in _FUNNEL_FLOOR and (resolved or pushed))
         # info SIN consulta contestable (cliente solo saludó/agradeció/abandonó): el piso se
         # cumple respondiendo cordial -> no es deficiente (trampa abandono/sin-necesidad).
-        # Solo si el cliente NO preguntó nada: si preguntó y el agente evadió, sigue deficiente.
+        # Solo si el cliente NO preguntó nada: si preguntó y el operador evadió, sigue deficiente.
         or (motivo == "info" and not client_asked_question(target_messages))
     ):
         atendio, override = True, True
-    # 'mala' solo con maltrato real: el modelo lo sobre-marca y el maltrato del agente es
+    # 'mala' solo con maltrato real: el modelo lo sobre-marca y el maltrato del operador es
     # rarisimo; sin evidencia determinista, se descarta el maltrato -> no cae a 'mala'.
-    if maltrato and not agent_maltrato(target_messages):
+    if maltrato and not operator_maltrato(target_messages):
         maltrato, override = False, True
 
     label = label_from_facts(
@@ -201,7 +201,7 @@ def score_by_motivo(
     # explícita a convertir), no la mera explicación de la promo ni la cortesía de plantilla
     # ({nombre} autocompletado), jerga o emojis -> si no hay, se topa en aceptable. (Lo
     # genuinamente difuso -warmth real sin empuje- lo recuperaría un verificador angosto.)
-    if label in ("buena", "excelente") and not agent_strong_uplift(target_messages):
+    if label in ("buena", "excelente") and not operator_strong_uplift(target_messages):
         # borderline: sin señal fuerte, se topa en aceptable... salvo que un VERIFICADOR
         # angosto (opcional, 2da pasada del LLM) confirme uplift genuino -> lo recupera.
         if not (verifier and verifier(target_messages, motivo)):
@@ -211,9 +211,9 @@ def score_by_motivo(
     if override:
         rationale = f"[ajuste determinista de hechos] {rationale}"
 
-    # ATENCION (#5 + señal de resolucion). Si el agente empujo (link/invitacion/bono por
+    # ATENCION (#5 + señal de resolucion). Si el operador empujo (link/invitacion/bono por
     # recarga) es 'empujo' aunque el LLM lo subvalue; si no, 'no_respondio' es falso cuando
-    # el agente confirmo o mando el comprobante -> al menos 'pasivo'.
+    # el operador confirmo o mando el comprobante -> al menos 'pasivo'.
     atencion = raw.get("atencion")
     if atencion not in schema["properties"]["atencion"]["enum"]:
         atencion = None
@@ -246,7 +246,7 @@ def score_by_motivo(
     dims_out = dict(raw.get("dimensions") or {})
     errores = list(dims_out.get("errores") or [])
     if friccion:
-        errores.append("El cliente tuvo que reinsistir sin respuesta del agente.")
+        errores.append("El cliente tuvo que reinsistir sin respuesta del operador.")
     if atendio and claridad_eff == "confuso" and confuso_corroborado:
         # solo si el confuso realmente demotó (corroborado); un confuso rescatado
         # (no corroborado) no debe arrastrar un error duro en el "por qué".

@@ -69,7 +69,7 @@ def format_thread_digest(visits: list[dict], max_visits: int = MAX_THREAD_VISITS
     if omitidas > 0:
         lines.append(f"(... {omitidas} visitas previas omitidas ...)")
     for v in recientes:
-        quien = "BOT" if v["is_bot"] else "AGENTE"
+        quien = "BOT" if v["is_bot"] else "OPERADOR"
         snippet = (v.get("first_customer_msg") or "(sin mensaje de cliente)")[:90]
         lines.append(f"- {v['created_at']:%Y-%m-%d %H:%M} [{quien}] cliente: {snippet}")
     return "\n".join(lines)

@@ -1,4 +1,4 @@
-"""Capa 1 de recomendaciones deterministas (sin LLM) para el coaching del agente.
+"""Capa 1 de recomendaciones deterministas (sin LLM) para el coaching del operador.
 
 La recomendacion de hoy sale VERBATIM del LLM (`recomendacion` en scorer.py), pero
 el modelo casi nunca produce ciertos consejos de alto valor porque no los "ve"
@@ -7,12 +7,12 @@ cuenta se creo desde el operador). Esta capa AUGMENTA la recomendacion del LLM
 anteponiendo fragmentos deterministas de alta prioridad que se calculan a partir
 de senales puras sobre los mensajes (ver src/signals.py).
 
-Es coaching ASPIRACIONAL para el agente: NUNCA afecta la nota, la etiqueta ni
+Es coaching ASPIRACIONAL para el operador: NUNCA afecta la nota, la etiqueta ni
 ningun otro campo del ScoreResult. Solo cambia el texto de `recomendacion`.
 """
 from __future__ import annotations
 
-from src.signals import agent_sent_credentials, agent_sent_register_link, app_mentioned
+from src.signals import operator_sent_credentials, operator_sent_register_link, app_mentioned
 
 _FRAG_PASSWORD = (
     "Como la cuenta se creó desde el operador, indícale al cliente que cambie "
@@ -32,7 +32,7 @@ def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: li
     """Antepone fragmentos deterministas de alto valor a la recomendacion del LLM.
 
     Calcula senales deterministas sobre `target_messages` (credenciales entregadas
-    por el agente, enlace de registro enviado, mencion de la app) y arma una lista
+    por el operador, enlace de registro enviado, mencion de la app) y arma una lista
     de fragmentos de coaching PRIORITARIOS que el LLM suele omitir. Si hay
     fragmentos, LIDERAN el texto final y la `recomendacion` del LLM (si no esta
     vacia) queda al final. Si no hay fragmentos, se devuelve `recomendacion` tal
@@ -41,8 +41,8 @@ def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: li
     Es puramente aditivo/textual: no modifica la nota, la etiqueta ni ningun otro
     hecho del scoring.
     """
-    cred = agent_sent_credentials(target_messages)
-    reg_link = agent_sent_register_link(target_messages)
+    cred = operator_sent_credentials(target_messages)
+    reg_link = operator_sent_register_link(target_messages)
     app = app_mentioned(target_messages)
 
     fragmentos: list[str] = []

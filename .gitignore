@@ -27,3 +27,5 @@ docs/latex/
 scratchpad/
 
 .mcp.json
+
+.codegraph/

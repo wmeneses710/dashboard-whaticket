@@ -16,7 +16,7 @@ from __future__ import annotations
 from src.rubrics import MOTIVO_LABELS, MOTIVOS, RubricSpec, get_rubric
 
 # Rotulo del lado "negocio" (from_me=True) segun quien atiende esa rubrica.
-_BUSINESS_LABEL = {"human": "Agente", "bot": "Bot"}
+_BUSINESS_LABEL = {"human": "Operador", "bot": "Bot"}
 
 # Etiquetas de ATENCION del operador (pasividad portada al pase unificado). ASCII,
 # igual que src/passivity.py (no se importa de alli para no crear un ciclo: passivity
@@ -49,16 +49,16 @@ avanzar? No penalices porque el caso completo del ticket siga abierto.
 indicar el proceso, ofrecer crear la cuenta) CUENTA como hacer avanzar el motivo, \
 aunque el caso no cierre en esta visita.
 - RESPUESTA IMPLICITA: la respuesta al motivo puede estar CONTENIDA en lo que dijo \
-el agente aunque no sea punto-por-punto ni repita la pregunta. Si el agente EXPLICO \
+el operador aunque no sea punto-por-punto ni repita la pregunta. Si el operador EXPLICO \
 lo que el cliente pidio (p. ej. dijo el proceso: "registrate, verifica y con tu \
 primer deposito se activa"), el motivo SE ATENDIO, aunque la info venga dentro de un \
 mensaje promocional o de plantilla. NO marques "no explico" / "no respondio" si la \
-informacion PEDIDA esta presente en los mensajes del agente; leela y reconocela.
-- ABANDONO DEL CLIENTE: si el agente dio una respuesta accionable y el cliente NO \
+informacion PEDIDA esta presente en los mensajes del operador; leela y reconocela.
+- ABANDONO DEL CLIENTE: si el operador dio una respuesta accionable y el cliente NO \
 respondio o se fue, la falta de cierre es del lado del cliente, NO una falla del \
-agente. No lo bajes de nota por el silencio del cliente.
+operador. No lo bajes de nota por el silencio del cliente.
 - MEDIA ILEGIBLE: los mensajes marcados "[media/sin texto]" son imagenes/audios que \
-NO podes ver. No infieras que "no hubo interaccion" ni que el agente fallo por no \
+NO podes ver. No infieras que "no hubo interaccion" ni que el operador fallo por no \
 poder leerlas: evalua SOLO el texto legible; si no hay texto suficiente del cliente, \
 NO inventes un fracaso.
 - TONO: cordial pero informal o con plantilla NO es "cortante". Cortante = seco, sin \
@@ -73,8 +73,8 @@ etiqueta a {piso}.{dos_capas}
 por que). Prohibido generico o de plantilla.
 - No inventes emociones, quejas, urgencias ni contexto: evalua SOLO lo que esta \
 EXPLICITO en los mensajes. Si el cliente no expreso frustracion o apuro, no lo \
-asumas. Atribui cada mensaje a quien lo dijo (Cliente vs Agente/Bot); no confundas \
-un mensaje del cliente con una accion del agente.
+asumas. Atribui cada mensaje a quien lo dijo (Cliente vs Operador/Bot); no confundas \
+un mensaje del cliente con una accion del operador.
 
 RUBRICA: {rubric}
 Dimensiones y criterios:
@@ -86,7 +86,7 @@ chat; no dejes ninguna nota vacia. Devolve tambien la lista de errores concretos
 (vacia si no hay), la etiqueta elegida y su justificacion.
 
 ATENCION DEL OPERADOR (campo "atencion"): ademas de la calificacion, clasifica en \
-UNA etiqueta el ESFUERZO del OPERADOR HUMANO (Agente) por impulsar la conversion \
+UNA etiqueta el ESFUERZO del OPERADOR HUMANO por impulsar la conversion \
 (registro/deposito/apuesta). Juzga SOLO al operador humano: NO al bot, NO al cliente, \
 y NO juzgues si el cliente termino depositando (eso es otro eje).
 - empujo: el operador IMPULSO CONCRETAMENTE la conversion con una accion real: \
@@ -119,12 +119,12 @@ _USER_TEMPLATE = """\
 def format_transcript(messages: list[dict], rubric: str) -> str:
     """Convierte los mensajes en un transcript legible, excluyendo notas internas.
 
-    `from_me=True` = lado negocio (Agente o Bot segun la rubrica); False = Cliente.
+    `from_me=True` = lado negocio (Operador o Bot segun la rubrica); False = Cliente.
     Los mensajes sin texto (solo media) se marcan para que el LLM lo sepa.
     """
     # Las rubricas de MOTIVO (deposito/retiro/...) no estan en _BUSINESS_LABEL: el
-    # lado negocio se rotula 'Agente' (el motivo evalua al operador humano).
-    biz = _BUSINESS_LABEL.get(get_rubric(rubric).name, "Agente")
+    # lado negocio se rotula 'Operador' (el motivo evalua al operador humano).
+    biz = _BUSINESS_LABEL.get(get_rubric(rubric).name, "Operador")
     lines: list[str] = []
     for m in messages:
         if m.get("is_note"):
@@ -152,12 +152,12 @@ def _dos_capas_block(spec: RubricSpec) -> str:
     upl = next(d for d in spec.dimensions if d.key == spec.uplift)
     return (
         "\n- MODELO DE DOS CAPAS (calibracion de la etiqueta):\n"
-        f"  PISO: si el agente ATENDIO el motivo (dimension {spec.dominant}) de forma "
+        f"  PISO: si el operador ATENDIO el motivo (dimension {spec.dominant}) de forma "
         'correcta, aunque sea minima o con PLANTILLA, la etiqueta es "aceptable". '
         "La plantilla NO baja la nota (ver regla de tono).\n"
         "  DEBAJO DEL PISO: si NO atendio el motivo (no resolvio, dato erroneo, maltrato, "
         'o cerro muy rapido sin resolver), la etiqueta no supera "deficiente".\n'
-        '  UPLIFT: para superar "aceptable" (llegar a "buena"/"excelente") el agente debe '
+        '  UPLIFT: para superar "aceptable" (llegar a "buena"/"excelente") el operador debe '
         f"ADEMAS {upl.bien}, y/o mostrar una cortesia destacada (saludo, personalizacion). "
         'Sin eso, el techo es "aceptable".'
     )
@@ -203,25 +203,25 @@ def _json_shape_block(spec: RubricSpec) -> str:
 _MOTIVO_SYSTEM = """\
 Sos un evaluador de calidad de atencion al cliente de una plataforma de apuestas \
 (chats de WhatsApp/Facebook, espanol rioplatense/ecuatoriano). Evaluas UNA SESION (la \
-interaccion de UN agente con el cliente) y emitis: el MOTIVO de la interaccion, una \
+interaccion de UN operador con el cliente) y emitis: el MOTIVO de la interaccion, una \
 calificacion cualitativa y la clasificacion de la atencion del operador.
 
 Reglas generales:
-- Evaluas al OPERADOR HUMANO (Agente). El Bot y el Cliente no se califican.
+- Evaluas al OPERADOR HUMANO. El Bot y el Cliente no se califican.
 - Ignora las notas internas (ya vienen excluidas del texto).
 - RESPUESTA IMPLICITA: la respuesta al motivo puede estar CONTENIDA en lo que dijo el \
-agente aunque no repita la pregunta. Si la info pedida esta presente, el motivo SE ATENDIO.
-- ABANDONO DEL CLIENTE: si el agente dio una respuesta accionable y el cliente se fue, la \
-falta de cierre es del CLIENTE, no una falla del agente.
+operador aunque no repita la pregunta. Si la info pedida esta presente, el motivo SE ATENDIO.
+- ABANDONO DEL CLIENTE: si el operador dio una respuesta accionable y el cliente se fue, la \
+falta de cierre es del CLIENTE, no una falla del operador.
 - MEDIA ILEGIBLE: los "[media/sin texto]" son imagenes/audios que NO podes ver. En \
 depositos/retiros el comprobante suele venir como media: NO asumas fracaso por no verla.
 - TONO: cordial pero con PLANTILLA NO es cortante. Templateado y correcto es aceptable.
 - JERGA AFECTUOSA: el trato coloquial (ñaño, naho, pana, panita, mi rey, causa, amigo/amiga) \
 NO es maltrato ni falta de respeto: es cercania. NUNCA lo cuentes como error de tono.
 - CLIENTE SIN NECESIDAD: si el cliente solo saluda, agradece, dice "ok" o se despide SIN \
-plantear una consulta, y el agente respondio cordial, la nota es "aceptable", NO "deficiente".
+plantear una consulta, y el operador respondio cordial, la nota es "aceptable", NO "deficiente".
 - No inventes emociones ni contexto: evalua SOLO lo EXPLICITO en los mensajes. Atribui \
-cada mensaje a quien lo dijo (Cliente vs Agente/Bot).
+cada mensaje a quien lo dijo (Cliente vs Operador/Bot).
 
 PASO 1 - MOTIVO. Clasifica la interaccion en UNO de estos motivos (campo "motivo"):
 {tabla}
@@ -236,23 +236,23 @@ Guia rapida de desambiguacion:
 - datos de agencia + monto a retirar + cuenta bancaria -> retiro
 CLAVE deposito vs retiro: si el COMPROBANTE lo manda el CLIENTE (una captura de pago) es
 RECARGA/deposito. En un RETIRO el cliente manda DATOS (agencia, monto, cuenta) y el
-COMPROBANTE lo manda el AGENTE. Cliente adjunta comprobante -> deposito, NO retiro.
+COMPROBANTE lo manda el OPERADOR. Cliente adjunta comprobante -> deposito, NO retiro.
 - contrasena / cambio de cuenta o nombre / verificacion de identidad -> soporte_cuenta
 - quiere crear/activar una cuenta nueva -> registro
 - algo no funciona / no se le acredito / reclamo -> problema
 
 PASO 2 - HECHOS. NO elijas una nota: responde estos HECHOS (los 4 primeros true/false; \
 claridad es una etiqueta) y el sistema calcula la nota de forma determinista.
-- atendio_el_motivo: el agente ATENDIO el motivo (columna PISO), aunque sea minimo o \
+- atendio_el_motivo: el operador ATENDIO el motivo (columna PISO), aunque sea minimo o \
 templateado. CUENTAN: la respuesta IMPLICITA, la PLANTILLA correcta ("listo"/"ing"/"cargado") \
-y la MEDIA del agente (comprobante de retiro, video-tutorial). Si dio una respuesta accionable \
+y la MEDIA del operador (comprobante de retiro, video-tutorial). Si dio una respuesta accionable \
 y el cliente se fue, igual ATENDIO (el abandono es del cliente).
 - hizo_accion_extra: ADEMAS hizo la accion extra del motivo (columna UPLIFT).
 - cortesia_destacada: cortesia notable (usa el nombre, calidez real, personaliza). La jerga \
 afectuosa (ñaño/pana/panita/mi rey) SUMA, no resta.
-- hubo_maltrato_grave: hubo INSULTO o AGRESION explicita del agente. La no-respuesta, una \
+- hubo_maltrato_grave: hubo INSULTO o AGRESION explicita del operador. La no-respuesta, una \
 respuesta floja o la informalidad NO son maltrato.
-- claridad: que tan CLARO fue el agente sobre el objetivo. UNA de: "claro" | "confuso" | "dudoso".
+- claridad: que tan CLARO fue el operador sobre el objetivo. UNA de: "claro" | "confuso" | "dudoso".
   * claro: el cliente pudo ACCIONAR la respuesta sin adivinar ni volver a preguntar; el proximo \
 paso o la info pedida esta EXPLICITA; si uso plantilla, la plantilla RESPONDE lo que ESTE cliente pregunto.
   * confuso: respuesta ambigua/contradictoria, info incompleta que obliga a inferir, o una plantilla \
@@ -265,11 +265,11 @@ generica que NO encaja con la pregunta puntual (deflexion tipo "crea tu cuenta" 
 Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (el PISO), \
 iniciativa (la accion extra = UPLIFT), cortesia. Mas la lista de errores concretos (vacia si no hay).
 
-RECOMENDACION (campo "recomendacion"): UN consejo concreto y accionable para el AGENTE, \
+RECOMENDACION (campo "recomendacion"): UN consejo concreto y accionable para el OPERADOR, \
 anclado en las REGLAS DE NEGOCIO de abajo (no un coaching generico). En ESPANOL NEUTRO y \
 profesional, SIN voseo ni regionalismos rioplatenses en el texto del consejo. Devuelve "" \
 solo si ya fue excelente y no aplica ninguna regla.
-REGLA GENERAL: NO recomiendes algo que el agente YA HIZO en el chat (no sugieras mandar el \
+REGLA GENERAL: NO recomiendes algo que el operador YA HIZO en el chat (no sugieras mandar el \
 enlace si ya mando uno, ni invitar a depositar/registrarse si ya lo hizo); reconoce lo hecho \
 y apunta al SIGUIENTE paso real.
 REGLAS POR MOTIVO:
@@ -294,11 +294,11 @@ documentos sensibles salvo que el cliente quiera retirar o acceder a beneficios.
 estimado; no cierres sin resolver ni derives a redes sociales.
 REGLA APP: no hay app todavia; si el cliente la pide, guialo a usar la web (la app llega \
 proximamente). Nunca lo mandes a descargar una app.
-El tono informal/cercano del agente (bro, pana, ñaño) esta PERMITIDO: NO lo marques como algo \
+El tono informal/cercano del operador (bro, pana, ñaño) esta PERMITIDO: NO lo marques como algo \
 a corregir en la recomendacion.
 Ej: "Confirmaste la recarga; la proxima menciona el bono de la segunda recarga y como se libera".
 
-ATENCION DEL OPERADOR (campo "atencion") - esfuerzo del AGENTE HUMANO por impulsar la \
+ATENCION DEL OPERADOR (campo "atencion") - esfuerzo del OPERADOR HUMANO por impulsar la \
 conversion/retencion (NO al bot, NO al cliente):
 - empujo: impulso concreto (ofrecer/guiar registro, invitar a depositar/recargar/apostar, \
 mandar link, presentar promo/bono, o retener en un retiro invitando a volver a jugar).
@@ -315,7 +315,7 @@ lo dicta un gate DETERMINISTA aparte.{hint}
 
 _MOTIVO_HINT = (
     "\n\nHINT DETERMINISTA: el CLIENTE adjunto un comprobante de pago. Eso es una RECARGA "
-    '(deposito), NO un retiro (en un retiro el comprobante lo manda el agente). El motivo '
+    '(deposito), NO un retiro (en un retiro el comprobante lo manda el operador). El motivo '
     'es "deposito", salvo que el texto del cliente pida claramente otra cosa (consulta, '
     "promo, soporte) y el comprobante sea secundario."
 )
@@ -327,35 +327,35 @@ _MOTIVO_HINT = (
 _MOTIVO_FEWSHOT = """\
 EJEMPLOS (aprende de estos HECHOS; no copies el texto, copia el CRITERIO):
 
-[1] CLIENTE: [image] / CLIENTE: hola / AGENTE: enseguida te cargo / AGENTE: Saldo cargado
+[1] CLIENTE: [image] / CLIENTE: hola / OPERADOR: enseguida te cargo / OPERADOR: Saldo cargado
 -> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
 (la plantilla "Saldo cargado" YA cumple el piso -> atendio=true)
 
-[2] CLIENTE: agencia Sepy, monto 50, cuenta Pichincha / AGENTE: [image] / AGENTE: listo, en breve
+[2] CLIENTE: agencia Sepy, monto 50, cuenta Pichincha / OPERADOR: [image] / OPERADOR: listo, en breve
 -> {"motivo":"retiro","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-(el comprobante [image] lo manda el AGENTE en un retiro -> atendio=true; NO asumas fracaso por no ver la media)
+(el comprobante [image] lo manda el OPERADOR en un retiro -> atendio=true; NO asumas fracaso por no ver la media)
 
-[3] CLIENTE: Gracias / AGENTE: Con gusto estimado, cualquier cosa avisas
+[3] CLIENTE: Gracias / OPERADOR: Con gusto estimado, cualquier cosa avisas
 -> {"motivo":"info","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-(el cliente no planteo consulta y el agente respondio cordial -> aceptable, NO deficiente)
+(el cliente no planteo consulta y el operador respondio cordial -> aceptable, NO deficiente)
 
-[4] CLIENTE: ¿Como obtengo los bonos? / AGENTE: Hola?
+[4] CLIENTE: ¿Como obtengo los bonos? / OPERADOR: Hola?
 -> {"motivo":"promo","atendio_el_motivo":false,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
 (no atendio -> deficiente; pero NO hubo insulto -> maltrato=false, NO es "mala")
 
-[5] CLIENTE: [image] / CLIENTE: Abono 10 a deuda / AGENTE: ing
+[5] CLIENTE: [image] / CLIENTE: Abono 10 a deuda / OPERADOR: ing
 -> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
 ("Abono a deuda" + comprobante del cliente es DEPOSITO; "ing" confirma -> atendio=true)
 
-[6] CLIENTE: [image] recarga / AGENTE: Listo Juan, saldo cargado! aprovecha que con tu 2da recarga tenes un bono del 150%
+[6] CLIENTE: [image] recarga / OPERADOR: Listo Juan, saldo cargado! aprovecha que con tu 2da recarga tenes un bono del 150%
 -> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":true,"hubo_maltrato_grave":false,"claridad":"claro","cliente_reinsistio":false}
 (confirmo + empujo el bono (extra) + uso el nombre (cortesia) -> excelente)
 
-[7] CLIENTE: ¿Como reclamo mis 10 giros? / AGENTE: es super facil, solo crea tu cuenta
+[7] CLIENTE: ¿Como reclamo mis 10 giros? / OPERADOR: es super facil, solo crea tu cuenta
 -> {"motivo":"promo","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false,"claridad":"confuso","cliente_reinsistio":false}
 (NO explica COMO obtener los giros; deflexion generica "crea tu cuenta" que no responde lo puntual -> claridad=confuso)
 
-[8] CLIENTE: ¿cual es el minimo de deposito? / AGENTE: El minimo es $5. Te dejo el link para registrarte: https://sorti.ec/reg
+[8] CLIENTE: ¿cual es el minimo de deposito? / OPERADOR: El minimo es $5. Te dejo el link para registrarte: https://sorti.ec/reg
 -> {"motivo":"info","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":false,"hubo_maltrato_grave":false,"claridad":"claro","cliente_reinsistio":false}
 (responde lo puntual ($5) + proximo paso explicito (link) -> claridad=claro)"""
 

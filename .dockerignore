@@ -1,0 +1,31 @@
+# El Dockerfile hace `COPY . .`, así que TODO lo que esté en el contexto de build entra a
+# la imagen. Sin este archivo, un `.env` presente al construir quedaba HORNEADO dentro del
+# contenedor: el secreto viajaría en la imagen, y cualquiera con acceso al registry o al
+# contenedor podría leerlo con un `cat`. Los secretos van SIEMPRE por variables de entorno
+# del panel, nunca dentro de la imagen.
+.env
+.env.local
+.env.*
+
+# Control de versiones y basura de herramientas: no aportan nada en runtime y engordan la
+# imagen (y el historial de git puede contener secretos viejos).
+.git
+.gitignore
+.dockerignore
+.codegraph/
+.mcp.json
+scratchpad/
+
+# Entorno virtual local: son cientos de MB compilados para OTRA máquina. Las dependencias
+# se instalan dentro de la imagen desde requirements.txt.
+.venv
+venv
+
+# Cachés
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# NO excluir `config/`: config/operadores.json es la SEMILLA que lee seed_operator_status()
+# al arrancar el contenedor. Si no está, arranca sin nadie apagado.

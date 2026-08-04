@@ -39,7 +39,7 @@ def test_message_stats_separa_humano_bot_y_cliente():
     s = message_stats(msgs)
     assert s.message_count == 4           # excluye la nota
     assert s.contact_message_count == 2   # cliente
-    assert s.agent_message_count == 1     # WEB = humano
+    assert s.operator_message_count == 1     # WEB = humano
     assert s.bot_message_count == 1       # CHATBOT = bot real
 
 
@@ -47,7 +47,7 @@ def test_message_stats_sin_sent_from_cuenta_como_humano():
     # sin sent_from asumimos operador humano (no bot)
     msgs = [{"from_me": True, "is_note": False, "body": "hola"}]
     s = message_stats(msgs)
-    assert s.agent_message_count == 1
+    assert s.operator_message_count == 1
     assert s.bot_message_count == 0
 
 

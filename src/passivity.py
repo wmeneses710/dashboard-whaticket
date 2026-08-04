@@ -29,7 +29,7 @@ PASSIVITY_SCHEMA = {
 
 _SYSTEM = (
     "Sos analista de calidad de una operación de apuestas. Clasificás en UNA etiqueta "
-    "el comportamiento del OPERADOR (Agente) frente a un jugador nuevo. NO juzgás si el "
+    "el comportamiento del OPERADOR frente a un jugador nuevo. NO juzgás si el "
     "jugador terminó depositando (eso es otro eje); solo el ESFUERZO del operador.\n"
     "- empujo: el operador IMPULSÓ CONCRETAMENTE la conversión. Requiere una acción "
     "real: ofrecer/guiar el registro, pedir datos para crear la cuenta, invitar a "
@@ -47,7 +47,7 @@ _SYSTEM = (
 
 def build_passivity_prompt(transcript: str) -> tuple[str, str]:
     """(system, user) para clasificar la atención del operador en una conversación."""
-    user = ("Conversación (Agente = operador, Cliente = jugador):\n\n"
+    user = ("Conversación (Operador = personal de soporte, Cliente = jugador):\n\n"
             f"{transcript}\n\nClasificá la atención del OPERADOR en una etiqueta.")
     return _SYSTEM, user
 

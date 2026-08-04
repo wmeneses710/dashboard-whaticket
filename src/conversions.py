@@ -102,7 +102,7 @@ person_deposit AS (
 -- re-engagement DETERMINISTA (sin LLM): "convirtió a jugador" = VOLVIÓ a interactuar,
 -- medido por SESIÓN. n_sessions cuenta sesiones distintas de la persona (via tickets);
 -- returned = n_sessions > 1. return_session_id = la 2da sesión en orden cronológico
--- (llave del regreso). El mérito sigue siendo del PRIMER agente (first_op.user_id).
+-- (llave del regreso). El mérito sigue siendo del PRIMER operador (first_op.user_id).
 sessions_per_contact AS (
   SELECT t.contact_id::text AS contact_id,
          count(DISTINCT cs.session_id) AS n_sessions,

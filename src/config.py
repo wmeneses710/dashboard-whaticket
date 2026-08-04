@@ -38,6 +38,10 @@ class Config:
     recom_subagent_enabled: bool  # genera la recomendación con un pase dedicado de coaching
     # Ventana móvil de los cuadros: cuántos meses (los más recientes) se muestran.
     charts_window_months: int
+    # Token compartido para los endpoints de ESCRITURA (hoy: prender/apagar operadores).
+    # VACIO = escritura DESHABILITADA (falla cerrada). Generalo con
+    # `python scripts/gen_admin_token.py` y ponelo en el .env / en el panel de EasyPanel.
+    admin_token: str
 
 
 def _bool(value: str | None) -> bool:
@@ -72,4 +76,5 @@ def load_config() -> Config:
         verify_uplift_enabled=_bool(os.environ.get("SCORING_VERIFY_UPLIFT")),
         recom_subagent_enabled=_bool(os.environ.get("SCORING_RECOM_SUBAGENT")),
         charts_window_months=int(os.environ.get("CHARTS_WINDOW_MONTHS", "12")),
+        admin_token=os.environ.get("DASHBOARD_ADMIN_TOKEN", "").strip(),
     )

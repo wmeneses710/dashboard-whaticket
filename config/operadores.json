@@ -1,0 +1,144 @@
+{
+  "version": 2,
+  "criterio": "estado de la tabla operator_status",
+  "generado_en": "2026-08-04T19:08:10+00:00",
+  "nota": "Solo se listan los operadores APAGADOS. Cualquiera que no esté acá está ACTIVO: es el default, para que alguien que entra a trabajar hoy aparezca solo. Generado por scripts/dump_operadores.py; editable a mano.",
+  "apagados": {
+    "datos": [
+      {
+        "operador": "Kathya",
+        "comentario": ""
+      },
+      {
+        "operador": "OnlySorti",
+        "comentario": ""
+      }
+    ],
+    "sistemas": [
+      {
+        "operador": "Alejandra",
+        "comentario": ""
+      },
+      {
+        "operador": "Anahi",
+        "comentario": ""
+      },
+      {
+        "operador": "Antonella",
+        "comentario": ""
+      },
+      {
+        "operador": "Caroline Nicole",
+        "comentario": ""
+      },
+      {
+        "operador": "Christopher",
+        "comentario": ""
+      },
+      {
+        "operador": "Claudia",
+        "comentario": ""
+      },
+      {
+        "operador": "Daniel Lopez",
+        "comentario": ""
+      },
+      {
+        "operador": "Elian",
+        "comentario": ""
+      },
+      {
+        "operador": "Erika",
+        "comentario": ""
+      },
+      {
+        "operador": "Fernanda",
+        "comentario": ""
+      },
+      {
+        "operador": "Gary",
+        "comentario": ""
+      },
+      {
+        "operador": "Gerente de Cuentas",
+        "comentario": ""
+      },
+      {
+        "operador": "Jhostyn",
+        "comentario": ""
+      },
+      {
+        "operador": "Josselyn",
+        "comentario": ""
+      },
+      {
+        "operador": "Kathya",
+        "comentario": ""
+      },
+      {
+        "operador": "Katty",
+        "comentario": ""
+      },
+      {
+        "operador": "Keyla",
+        "comentario": ""
+      },
+      {
+        "operador": "Liz",
+        "comentario": ""
+      },
+      {
+        "operador": "MariCruz",
+        "comentario": ""
+      },
+      {
+        "operador": "Mariana",
+        "comentario": ""
+      },
+      {
+        "operador": "Maycol",
+        "comentario": ""
+      },
+      {
+        "operador": "Milena",
+        "comentario": ""
+      },
+      {
+        "operador": "Paola",
+        "comentario": ""
+      },
+      {
+        "operador": "Prueba Sistemas",
+        "comentario": ""
+      },
+      {
+        "operador": "RAMIREZ",
+        "comentario": ""
+      },
+      {
+        "operador": "Santiago",
+        "comentario": ""
+      },
+      {
+        "operador": "SortiGO",
+        "comentario": ""
+      },
+      {
+        "operador": "Teddy",
+        "comentario": ""
+      },
+      {
+        "operador": "Vivian",
+        "comentario": ""
+      },
+      {
+        "operador": "Yanina Salinas",
+        "comentario": ""
+      },
+      {
+        "operador": "onlysorti",
+        "comentario": ""
+      }
+    ]
+  }
+}

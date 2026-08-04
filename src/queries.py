@@ -9,6 +9,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from src.context import fetch_messages
+from src.router import ANOMALOUS_MESSAGE_MAX
 from src.rubrics import MOTIVOS
 
 # Filas para las tarjetas/tablas del dashboard: SIN dimensions ni transcript
@@ -97,13 +98,38 @@ def scored_rows(cur, account: str) -> list[dict]:
 _RATING_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1}
 
 
+# Nombre del operador RESUELTO: el mismo con el que agrupan todos los cuadros. `users.name`
+# manda y la firma `*Nombre:*` guardada en `user_name` es el fallback (38 de 67 operadores
+# de `sistemas` no existen en `users`).
+_OPERADOR_RESUELTO = ("coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
+                      "'Operador sin identificar')")
+
+# BAJA LÓGICA de operadores. Un operador apagado desaparece de TODO lo que sale de
+# conversation_scores — KPIs incluidos, no solo de los cuadros por operador: en `sistemas`
+# son 31 operadores que ya no trabajan aportando 27.398 sesiones históricas que ensuciaban
+# promedios y rankings.
+#
+# NOT EXISTS y no una lista de nombres traída desde Python: así `_scores_filters` sigue
+# siendo puro (account + kwargs -> where, params) y no necesita un cursor. La subconsulta va
+# contra una tabla diminuta con PK (account, operator_name).
+#
+# El default es ESCONDER, pero la baja es lógica: `inactivos="incluir"` los trae de vuelta.
+# Sin esa salida, apagar a alguien sería una eliminación de hecho.
+_SIN_APAGADOS = f"""NOT EXISTS (
+     SELECT 1 FROM operator_status os
+      WHERE os.account = cs.account AND os.activo = false
+        AND os.operator_name = {_OPERADOR_RESUELTO})"""
+
+
 def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
                     op="all", date_from=None, date_to=None, rating="all",
-                    search="", motivo="all") -> tuple[str, dict]:
+                    search="", motivo="all", inactivos="ocultar") -> tuple[str, dict]:
     """(where_sql, params) para conversation_scores, replicando matchBase del front.
     Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas."""
     where = ["cs.account = %(account)s"]
     params: dict = {"account": account}
+    if inactivos != "incluir":
+        where.append(_SIN_APAGADOS)
     if estado and estado != "all":
         where.append("cs.eval_status = %(estado)s"); params["estado"] = estado
     if motivo and motivo != "all":
@@ -134,16 +160,46 @@ _SCORES_JOINS = """
   LEFT JOIN users    u  ON u.id  = cs.user_id
  WHERE {where}"""
 
-# KPIs = renderKpis del front: total, evaluadas, ★ promedio (solo evaluadas),
-# depósitos (suma), conversaciones con depósito, operadores distintos (evaluadas).
-_SUMMARY_KPIS_SQL = """
+# Sesiones descartadas de TODO agregado de depósito: las PATOLÓGICAS por tamaño, las que
+# superan ANOMALOUS_MESSAGE_MAX (250) mensajes reales. En prod hay una de 15.100 mensajes
+# con 3.025 imágenes del cliente. El router nunca las manda al LLM, pero `deposit_count` sí
+# se calcula y persiste igual (es un gate determinista, independiente del eval_status — ver
+# src/worker.py), así que se colaba en los KPIs: el 0,89% de las sesiones de `sistemas`
+# aportaba el 44,7% de los comprobantes (88.496 de 198.027), casi duplicando el número.
+#
+# Se filtra por la PROPIEDAD (message_count) y NO por `skip_reason='anomalous_size'`: en
+# decide_eligibility el chequeo de 'no_agent_reply' corre ANTES que el de tamaño, así que 16
+# sesiones de >250 mensajes quedaron con la etiqueta equivocada y se escapaban del filtro
+# con 2.310 comprobantes. La etiqueta es un efecto del orden de los ifs; el tamaño es el
+# hecho. Verificado: 0 sesiones 'anomalous_size' con <=250 mensajes, así que este predicado
+# es superset estricto del anterior.
+#
+# Los OTROS skips se conservan a propósito: `customer_media_only` es el cliente mandando el
+# comprobante sin que nadie responda, y eso es un depósito real.
+# coalesce defensivo: `message_count` es nullable en el DDL. Sin el coalesce, un NULL haría
+# `NOT (NULL > 250)` = NULL y el FILTER descartaría esa fila EN SILENCIO del total de
+# depósitos. Hoy no hay ningún NULL (0 de 126.347), y la idea es que siga sin importar.
+_ANOMALA = f"coalesce(cs.message_count, 0) > {ANOMALOUS_MESSAGE_MAX}"
+_NO_ANOMALA = f"NOT ({_ANOMALA})"
+
+# KPIs = renderKpis del front: total, evaluadas, sin evaluar, ★ promedio (solo evaluadas),
+# depósitos (suma), sesiones con depósito, operadores distintos (evaluadas), + lo EXCLUIDO
+# por sesión anómala (para declararlo en la UI en vez de esconder el descarte).
+_SUMMARY_KPIS_SQL = f"""
 SELECT count(*) AS total,
        count(*) FILTER (WHERE cs.eval_status = 'evaluated') AS evaluadas,
+       count(*) FILTER (WHERE cs.eval_status <> 'evaluated') AS no_evaluadas,
        avg(cs.stars) FILTER (WHERE cs.eval_status = 'evaluated') AS avg_stars,
-       coalesce(sum(cs.deposit_count), 0) AS depositos,
-       count(*) FILTER (WHERE cs.deposit_count > 0) AS dep_conv,
+       coalesce(sum(cs.deposit_count) FILTER (WHERE {_NO_ANOMALA}), 0) AS depositos,
+       count(*) FILTER (WHERE cs.deposit_count > 0 AND {_NO_ANOMALA}) AS dep_conv,
        count(DISTINCT coalesce(nullif(coalesce(u.name, cs.user_name), ''), cs.user_id::text))
-             FILTER (WHERE cs.eval_status = 'evaluated') AS operadores""" + _SCORES_JOINS
+             FILTER (WHERE cs.eval_status = 'evaluated') AS operadores,
+       coalesce(sum(cs.deposit_count) FILTER (WHERE {_ANOMALA}), 0) AS depositos_excluidos,
+       count(*) FILTER (WHERE {_ANOMALA} AND cs.deposit_count > 0) AS sesiones_excluidas,
+       -- Lo que se esconde se DECLARA: cuántos operadores están apagados en esta cuenta.
+       -- Si el dashboard oculta 31 operadores sin decirlo, los números mienten por omisión.
+       (SELECT count(*) FROM operator_status os2
+         WHERE os2.account = %(account)s AND os2.activo = false) AS operadores_ocultos""" + _SCORES_JOINS
 
 
 # "Pendiente de evaluar" = sesión CERRADA (end_at < now-6h, misma condición que el
@@ -176,7 +232,7 @@ def pending_sessions_count(cur, account: str, date_from=None, date_to=None) -> i
 
 # "Cierre rápido": sesión EVALUADA que cerró muy rápido (<10min) Y sin resolver (★<=2).
 # Señal DIAGNÓSTICA — la conversación concluyó rápido sin solucionar al usuario; puede
-# ser deficiencia de configuración (auto-close agresivo), no siempre culpa del agente.
+# ser deficiencia de configuración (auto-close agresivo), no siempre culpa del operador.
 # Un depósito resuelto en 3min NO cae acá (★>2). Medible gracias al fix de end_at.
 _FAST_CLOSE_SQL = """
 SELECT count(*) AS cierres_rapidos""" + _SCORES_JOINS + """
@@ -307,15 +363,22 @@ SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identi
  GROUP BY 1, 2"""
 
 
-def _build_ops_motivo(rows, top_n: int = 10) -> dict:
-    """{motivos:[...], operators:[{name, n, cells:{motivo:{n,avg}}}]}. Top-N por volumen.
-    Filas: (op, motivo, n, avg_stars)."""
+def _build_ops_motivo(rows, top_n: int | None = None) -> dict:
+    """{motivos:[...], operators:[{name, n, cells:{motivo:{n,avg}}}]}. Filas: (op, motivo,
+    n, avg_stars), ordenadas por volumen desc.
+
+    `top_n=None` (default) = TODOS los operadores. Es una TABLA: una fila por operador, así
+    que sumar operadores no degrada la legibilidad (scrollea dentro de la tarjeta). Antes
+    topaba en 10 y en `sistemas` (50 operadores) escondía 40 sin decirlo.
+    """
     by: dict = {}
     for op, motivo, n, avg in rows:
         o = by.setdefault(op, {"name": op, "n": 0, "cells": {}})
         o["n"] += int(n)
         o["cells"][motivo] = {"n": int(n), "avg": _coerce(avg)}
-    ops = sorted(by.values(), key=lambda x: (-x["n"], x["name"]))[:top_n]
+    ops = sorted(by.values(), key=lambda x: (-x["n"], x["name"]))
+    if top_n is not None:
+        ops = ops[:top_n]
     motivos = sorted({m for o in ops for m in o["cells"]})
     return {"motivos": motivos, "operators": ops}
 
@@ -335,9 +398,9 @@ def _build_dep_channel(rows) -> list[dict]:
     return out
 
 
-_DEP_CH_SQL = """
+_DEP_CH_SQL = f"""
 SELECT coalesce(t.channel, '—') AS canal, count(*) AS n,
-       count(*) FILTER (WHERE cs.deposit_count > 0) AS dep""" + _SCORES_JOINS + """
+       count(*) FILTER (WHERE cs.deposit_count > 0 AND {_NO_ANOMALA}) AS dep""" + _SCORES_JOINS + """
  GROUP BY 1"""
 
 
@@ -351,22 +414,32 @@ def deposit_by_channel(cur, account: str, **filters) -> list[dict]:
 # Evolución de la calidad por operador (renderQualityEvolution): ★ promedio por
 # mes, top-N operadores por volumen, mes-operador con <min_conv -> None (ruido).
 # Respeta filtros (a diferencia de los otros 3 cuadros full-scale de /api/charts).
-def _build_quality_evolution(rows, top_n: int = 8, min_conv: int = 5) -> dict:
-    """{months, operators:[{name, data:[★prom|None por mes]}]} desde filas
-    (mes, op, n, sum_stars). Puro/testeable."""
+def _build_quality_evolution(rows, top_n: int | None = None, min_conv: int = 5) -> dict:
+    """{months, operators:[{name, n, data:[★prom|None por mes]}]} desde filas
+    (mes, op, n, sum_stars). Puro/testeable.
+
+    `top_n=None` (default) = TODOS los operadores, ordenados por volumen desc. Este cuadro
+    dibuja UN mini-grafico POR operador, asi que agregar operadores no ensucia ningun
+    grafico: solo agrega tarjetitas. El front decide cuantas muestra.
+
+    `n` = sesiones evaluadas del operador (para ordenar/mostrar volumen en el front y para
+    distinguir "no tiene datos" de "no llega al minimo mensual").
+    """
     by: dict[str, dict] = {}
     for mes, op, n, sum_stars in rows:
         by.setdefault(op, {})[mes] = [float(sum_stars or 0), int(n)]
     months = sorted({m for ms in by.values() for m in ms})
     totals = {op: sum(v[1] for v in ms.values()) for op, ms in by.items()}
-    top = sorted(totals, key=lambda o: (-totals[o], o))[:top_n]
+    ranked = sorted(totals, key=lambda o: (-totals[o], o))
+    if top_n is not None:
+        ranked = ranked[:top_n]
     operators = []
-    for op in top:
+    for op in ranked:
         data = []
         for m in months:
             c = by[op].get(m)
             data.append(round(c[0] / c[1], 2) if c and c[1] >= min_conv else None)
-        operators.append({"name": op, "data": data})
+        operators.append({"name": op, "n": totals[op], "data": data})
     return {"months": months, "operators": operators}
 
 
@@ -391,14 +464,23 @@ def quality_evolution(cur, account: str, **filters) -> dict:
 _MOTIVO_ORDER = {m: i for i, m in enumerate(MOTIVOS)}
 
 
-def _build_quality_motivo(rows, top_n: int = 6, op_min_conv: int = 3, avg_min_conv: int = 5) -> dict:
-    """{months, motivos:[{motivo, operators:[{name, data}], avg:[★|None]}]} desde filas
-    (mes, motivo, op, n, sum_stars). PURO/testeable.
+def _build_quality_motivo(rows, top_n: int | None = None, op_min_conv: int = 3,
+                          avg_min_conv: int = 5) -> dict:
+    """{months, motivos:[{motivo, operators:[{name, n, data}], avg:[★|None], n_ops}]} desde
+    filas (mes, motivo, op, n, sum_stars). PURO/testeable.
 
-    Por cada motivo: una línea por OPERADOR (top-N por volumen, mes con <op_min_conv -> None)
-    + la línea de PROMEDIO del motivo (todos los operadores, mes con <avg_min_conv -> None).
-    op_min_conv es más bajo que avg_min_conv porque al abrir por operador los conteos
-    mensuales son chicos; el promedio agrega y aguanta un umbral mayor.
+    Por cada motivo: una línea por OPERADOR (ordenados por volumen desc, mes con
+    <op_min_conv -> None) + la línea de PROMEDIO del motivo (TODOS los operadores del
+    motivo, mes con <avg_min_conv -> None). op_min_conv es más bajo que avg_min_conv porque
+    al abrir por operador los conteos mensuales son chicos; el promedio agrega y aguanta un
+    umbral mayor.
+
+    OJO — a diferencia de _build_quality_evolution, acá todos los operadores comparten UN
+    mini-gráfico por motivo: cada operador es una LÍNEA más. Con 50 operadores es spaghetti
+    ilegible, así que el front SIEMPRE recorta y el corte tiene que ser visible. Por eso se
+    devuelve `n_ops` = cuántos operadores tiene el motivo en total, para que el front pueda
+    decir "8 de 37" en vez de mentir por omisión. `top_n=None` = sin recorte en el backend
+    (el recorte real lo hace el front, que sabe cuánto espacio tiene).
     """
     by: dict[str, dict[str, dict[str, list]]] = {}
     for mes, motivo, op, n, sum_stars in rows:
@@ -408,20 +490,24 @@ def _build_quality_motivo(rows, top_n: int = 6, op_min_conv: int = 3, avg_min_co
     for motivo in sorted(by, key=lambda m: (_MOTIVO_ORDER.get(m, len(_MOTIVO_ORDER)), m)):
         ops = by[motivo]
         totals = {op: sum(v[1] for v in ms.values()) for op, ms in ops.items()}
-        top = sorted(totals, key=lambda o: (-totals[o], o))[:top_n]
+        ranked = sorted(totals, key=lambda o: (-totals[o], o))
+        if top_n is not None:
+            ranked = ranked[:top_n]
         operators = []
-        for op in top:
+        for op in ranked:
             data = [
                 round(c[0] / c[1], 2) if (c := ops[op].get(m)) and c[1] >= op_min_conv else None
                 for m in months
             ]
-            operators.append({"name": op, "data": data})
+            operators.append({"name": op, "n": totals[op], "data": data})
         avg = []
         for m in months:
             s = sum(ms[m][0] for ms in ops.values() if m in ms)
             cnt = sum(ms[m][1] for ms in ops.values() if m in ms)
             avg.append(round(s / cnt, 2) if cnt >= avg_min_conv else None)
-        motivos.append({"motivo": motivo, "operators": operators, "avg": avg})
+        # n_ops = operadores TOTALES del motivo (antes de cualquier recorte del front).
+        motivos.append({"motivo": motivo, "operators": operators, "avg": avg,
+                        "n_ops": len(totals)})
     return {"months": months, "motivos": motivos}
 
 
@@ -632,7 +718,9 @@ def _transcript(msgs: list[dict]) -> list[dict]:
     for m in msgs:
         if m.get("is_note"):
             continue
-        role = "CLIENTE" if not m["from_me"] else ("BOT" if m.get("sent_from") == "CHATBOT" else "AGENTE")
+        # OPERADOR = nuestro personal de soporte. NO "AGENTE": el agente es el CLIENTE
+        # vendedor/afiliador (segmento `agente`, cola "Agente 👨👩"), del otro lado del chat.
+        role = "CLIENTE" if not m["from_me"] else ("BOT" if m.get("sent_from") == "CHATBOT" else "OPERADOR")
         out.append({"role": role, "text": (m.get("body") or "[media]").strip()[:800]})
     return out
 
@@ -647,6 +735,22 @@ _MONTH_WINDOW = """
    AND c.created_at >= (SELECT date_trunc('month', max(created_at))
                           FROM conversations WHERE account = %(account)s)
                         - make_interval(months => %(months_back)s)"""
+
+
+# Baja lógica en los cuadros FULL-SCALE de /api/charts. Estos no pasan por
+# `_scores_filters` (van sobre `conversations`, no sobre `conversation_scores`), así que
+# necesitan su propia cláusula: sin esto un operador apagado desaparecía de todo el
+# dashboard MENOS de estos dos, el peor de los dos mundos.
+#
+# OJO con el nombre: acá NO existe `conversation_scores.user_name`, así que el operador se
+# resuelve solo por `users.name`. El fallback tiene que ser el MISMO string que guarda
+# `operator_status` ('Operador sin identificar'), o el apagado no matchearía nunca.
+_OP_CHARTS = "coalesce(u.name, 'Operador sin identificar')"
+_SIN_APAGADOS_CHARTS = f"""
+   AND NOT EXISTS (
+     SELECT 1 FROM operator_status os
+      WHERE os.account = %(account)s AND os.activo = false
+        AND os.operator_name = {_OP_CHARTS})"""
 
 
 # --- §10: carga mensual por operador (segmento jugador). Operador = el user_id
@@ -664,12 +768,13 @@ conv_op AS (
     FROM msg_op ORDER BY conversation_id, n DESC
 )
 SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
-       coalesce(u.name, 'Sin identificar') AS op,
+       """ + _OP_CHARTS + """ AS op,
        count(*) AS conv
   FROM conversations c
   JOIN conv_op co ON co.conversation_id = c.id
   LEFT JOIN users u ON u.id = co.user_id
- WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND c.queue_id = ANY(%(qids)s)""" + _MONTH_WINDOW + """
+ WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND c.queue_id = ANY(%(qids)s)""" \
+    + _MONTH_WINDOW + "{apagados}" + """
  GROUP BY 1, 2
 """
 
@@ -699,12 +804,17 @@ def _build_load_series(rows, top_n: int) -> dict:
 
 
 def load_by_operator(cur, account: str, top_n: int = 7,
-                     window_months: int = DEFAULT_WINDOW_MONTHS) -> dict:
-    """Carga mensual por operador (jugadores), top-N + 'Otros', últimos N meses."""
+                     window_months: int = DEFAULT_WINDOW_MONTHS,
+                     inactivos: str = "ocultar") -> dict:
+    """Carga mensual por operador (jugadores), top-N + 'Otros', últimos N meses.
+
+    Los operadores apagados no aparecen (baja lógica). Con el filtro puesto, 'Otros' pasa a
+    ser "el resto de los ACTIVOS", que es lo que corresponde."""
     qids = _jugador_queue_ids(cur, account)
     if not qids:
         return {"months": [], "series": []}
-    cur.execute(_LOAD_SQL, {"account": account, "qids": qids, "months_back": window_months - 1})
+    sql = _LOAD_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS)
+    cur.execute(sql, {"account": account, "qids": qids, "months_back": window_months - 1})
     return _build_load_series(cur.fetchall(), top_n)
 
 
@@ -729,7 +839,7 @@ conv_dep AS MATERIALIZED (
     FROM messages WHERE account = %(account)s GROUP BY conversation_id
 )
 SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
-       coalesce(u.name, 'Sin identificar') AS op,
+       """ + _OP_CHARTS + """ AS op,
        count(*) AS conv,
        count(*) FILTER (WHERE cd.has_ctx AND cd.img > 0) AS con_dep
   FROM conversations c
@@ -738,7 +848,8 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
   LEFT JOIN users u ON u.id = co.user_id
   JOIN tickets t ON t.id = c.ticket_id
  WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s)
-   AND t.channel = 'WHATSAPP' AND c.created_at IS NOT NULL""" + _MONTH_WINDOW + """
+   AND t.channel = 'WHATSAPP' AND c.created_at IS NOT NULL""" \
+    + _MONTH_WINDOW + "{apagados}" + """
  GROUP BY 1, 2
 """
 
@@ -772,15 +883,18 @@ def _build_pct_series(rows, top_n: int, min_conv: int = 8) -> dict:
 
 
 def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8,
-                            window_months: int = DEFAULT_WINDOW_MONTHS) -> dict:
-    """§2: % depósito en WhatsApp por operador (jugadores), top-N + 'Otros', últimos N meses."""
+                            window_months: int = DEFAULT_WINDOW_MONTHS,
+                            inactivos: str = "ocultar") -> dict:
+    """§2: % depósito en WhatsApp por operador (jugadores), top-N + 'Otros', últimos N meses.
+    Los operadores apagados no aparecen (baja lógica)."""
     from src.deposits import RECHARGE_PATTERN
 
     qids = _jugador_queue_ids(cur, account)
     if not qids:
         return {"months": [], "series": []}
-    cur.execute(_DEP_PCT_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
-                               "months_back": window_months - 1})
+    sql = _DEP_PCT_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS)
+    cur.execute(sql, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
+                      "months_back": window_months - 1})
     return _build_pct_series(cur.fetchall(), top_n, min_conv)
 
 
@@ -797,7 +911,10 @@ WITH per_conv AS MATERIALIZED (
 SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
        count(*) AS conv,
        count(*) FILTER (WHERE pc.has_ctx AND pc.img > 0) AS con_dep,
-       count(*) FILTER (WHERE c.is_new_contact) AS nuevos
+       count(*) FILTER (WHERE c.is_new_contact) AS nuevos,
+       -- misma población que las barras del cuadro: de los NUEVOS del mes, cuántos
+       -- trajeron comprobante. Es el numerador que le faltaba a la línea.
+       count(*) FILTER (WHERE c.is_new_contact AND pc.has_ctx AND pc.img > 0) AS nuevos_con_dep
   FROM conversations c
   LEFT JOIN per_conv pc ON pc.conversation_id = c.id
  WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s) AND c.created_at IS NOT NULL""" + _MONTH_WINDOW + """
@@ -806,12 +923,30 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
 
 
 def _build_new_vs_deposit(rows) -> dict:
-    """{months, nuevos[], pct[]} desde filas (mes, conv, con_dep, nuevos). Puro."""
+    """{months, nuevos[], pct[], pct_nuevos[]} desde filas
+    (mes, conv, con_dep, nuevos, nuevos_con_dep). Puro.
+
+    DOS denominadores distintos, a propósito y ahora explícitos:
+    - `pct`        = con_dep / conv       -> % de TODAS las conversaciones del segmento
+                                             jugador que tuvieron comprobante (métrica §9).
+    - `pct_nuevos` = nuevos_con_dep / nuevos -> % de los jugadores NUEVOS del mes que
+                                             depositaron. ESTA es la que comparte población
+                                             con las barras del cuadro.
+    Antes solo existía `pct` y la leyenda decía "línea = % que depositó" al lado de barras
+    de jugadores nuevos, así que se leía como si fuera `pct_nuevos`. En julio de `sistemas`
+    eran 60,4% contra 33,8%: casi el doble.
+
+    `pct_nuevos` es None (no 0.0) cuando el mes no tuvo jugadores nuevos: "no hubo nuevos"
+    no es lo mismo que "ninguno depositó", y el 0 dibujaría una caída inexistente.
+    """
     rows = sorted(rows, key=lambda r: r[0])
     months = [r[0] for r in rows]
     nuevos = [int(r[3]) for r in rows]
     pct = [round(100.0 * int(r[2]) / int(r[1]), 1) if int(r[1]) else 0.0 for r in rows]
-    return {"months": months, "nuevos": nuevos, "pct": pct}
+    pct_nuevos = [
+        round(100.0 * int(r[4]) / int(r[3]), 1) if int(r[3]) else None for r in rows
+    ]
+    return {"months": months, "nuevos": nuevos, "pct": pct, "pct_nuevos": pct_nuevos}
 
 
 def new_vs_deposit_by_month(cur, account: str,
@@ -838,12 +973,24 @@ _CONV_OP_EXPR = ("CASE WHEN pc.user_id IS NULL THEN 'BOT / sin operador' "
                  "ELSE coalesce(nullif(u.name, ''), 'Operador sin identificar') END")
 
 
+# Baja lógica en la conversión. Tercera expresión distinta de "operador": acá cuelga de
+# `player_conversions.user_id` (el primer agente que tocó al jugador). 'BOT / sin operador'
+# no es una persona y nunca está en operator_status, así que jamás se esconde.
+_SIN_APAGADOS_CONV = f"""NOT EXISTS (
+     SELECT 1 FROM operator_status os
+      WHERE os.account = pc.account AND os.activo = false
+        AND os.operator_name = ({_CONV_OP_EXPR}))"""
+
+
 def _conversion_where(account: str, *, canal="all", segment="all", op="all",
-                      date_from=None, date_to=None, **_ignored) -> tuple[str, dict]:
+                      date_from=None, date_to=None, inactivos="ocultar",
+                      **_ignored) -> tuple[str, dict]:
     """(where, params) sobre player_conversions. Ignora filtros que no aplican al
     potencial (estado/rating/búsqueda). fecha = first_at (mes de entrada)."""
     where = ["pc.account = %(account)s"]
     params: dict = {"account": account}
+    if inactivos != "incluir":
+        where.append(_SIN_APAGADOS_CONV)
     if canal and canal != "all":
         where.append("pc.channel = %(canal)s"); params["canal"] = canal
     if segment and segment != "all":
@@ -957,18 +1104,24 @@ SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
  GROUP BY 1, 2"""
 
 
-def _build_conversion_passivity(rows, top_n: int = 8, min_conv: int = 5) -> dict:
-    """{months, operators:[{name, conv:[%|None], pasiva:[%|None]}]} para el cuadro
+def _build_conversion_passivity(rows, top_n: int | None = None, min_conv: int = 5) -> dict:
+    """{months, operators:[{name, n, conv:[%|None], pasiva:[%|None]}]} para el cuadro
     verde(conv)/rojo(pasiva) por operador. conv% sobre total; pasiva% sobre clasificadas.
-    Top-N operadores por volumen; mes-operador con <min_conv -> None (rompe la línea)."""
+    Mes-operador con <min_conv -> None (rompe la línea).
+
+    `top_n=None` (default) = TODOS los operadores, ordenados por volumen desc. Como
+    _build_quality_evolution, dibuja UN mini-gráfico POR operador -> sumar operadores no
+    degrada nada. El front decide cuántos muestra."""
     by: dict[str, dict] = {}
     for mes, op, n, conv, clasif, pasiva in rows:
         by.setdefault(op, {})[mes] = (int(n), int(conv), int(clasif), int(pasiva))
     months = sorted({m for ms in by.values() for m in ms})
     totals = {op: sum(v[0] for v in ms.values()) for op, ms in by.items()}
-    top = sorted(totals, key=lambda o: (-totals[o], o))[:top_n]
+    ranked = sorted(totals, key=lambda o: (-totals[o], o))
+    if top_n is not None:
+        ranked = ranked[:top_n]
     operators = []
-    for op in top:
+    for op in ranked:
         conv_s, pasv_s = [], []
         for m in months:
             c = by[op].get(m)
@@ -980,7 +1133,7 @@ def _build_conversion_passivity(rows, top_n: int = 8, min_conv: int = 5) -> dict
                 pasv_s.append(round(100.0 * c[3] / c[2], 1))
             else:
                 pasv_s.append(None)
-        operators.append({"name": op, "conv": conv_s, "pasiva": pasv_s})
+        operators.append({"name": op, "n": totals[op], "conv": conv_s, "pasiva": pasv_s})
     return {"months": months, "operators": operators}
 
 

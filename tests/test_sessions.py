@@ -14,9 +14,9 @@ BASE = datetime(2026, 1, 1, 8, 0, 0)
 
 
 def _ep(conv, hours, body=None, agent=None):
-    """Episodio: conversation_id, created_at = BASE + hours, last_agent_body, agent_id."""
+    """Episodio: conversation_id, created_at = BASE + hours, last_operator_body, operator_id."""
     return {"conversation_id": conv, "created_at": BASE + timedelta(hours=hours),
-            "last_agent_body": body, "agent_id": agent}
+            "last_operator_body": body, "operator_id": agent}
 
 
 # --- funcion PURA assign_sessions ---------------------------------------------
@@ -85,7 +85,7 @@ def test_corte_por_cambio_de_agente_aunque_gap_menor_y_sin_cierre():
 
 
 def test_no_corta_si_agente_nulo_en_algun_lado():
-    # agent_changed exige ambos no nulos: op1 -> None no corta (mergea).
+    # operator_changed exige ambos no nulos: op1 -> None no corta (mergea).
     eps = [_ep("a", 0, agent="op1"), _ep("b", 2, agent=None)]
     out = assign_sessions(eps)
     assert [o["sess_no"] for o in out] == [0, 0]

@@ -8,11 +8,11 @@ from src.router import decide_eligibility, decide_rubric
 
 
 def test_rubrica_human_si_hubo_operador_humano():
-    assert decide_rubric(agent_message_count=3, bot_message_count=2) == "human"
+    assert decide_rubric(operator_message_count=3, bot_message_count=2) == "human"
 
 
 def test_rubrica_bot_solo_si_todo_fue_bot():
-    assert decide_rubric(agent_message_count=0, bot_message_count=4) == "bot"
+    assert decide_rubric(operator_message_count=0, bot_message_count=4) == "bot"
 
 
 def test_solo_notas_internas_se_saltea():
@@ -50,7 +50,7 @@ def test_cliente_solo_media_se_saltea_si_agente_no_resolvio():
     # cliente mando solo imagenes (customer_text=0) y el agente no confirmo nada
     assert decide_eligibility(
         real_message_count=3, customer_message_count=2, business_message_count=1,
-        customer_text_count=0, agent_resolved=False,
+        customer_text_count=0, operator_resolved=False,
     ) == ("skipped", "customer_media_only")
 
 
@@ -59,5 +59,5 @@ def test_cliente_solo_media_se_evalua_si_agente_resolvio():
     # El motivo es inferible del agente -> NO se saltea (recupera ~2301 sesiones).
     assert decide_eligibility(
         real_message_count=3, customer_message_count=2, business_message_count=1,
-        customer_text_count=0, agent_resolved=True,
+        customer_text_count=0, operator_resolved=True,
     ) == ("evaluated", None)

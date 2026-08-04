@@ -240,7 +240,10 @@ def build_score_record(
         ),
         "resolution_seconds": resolution_seconds(c["created_at"], c.get("resolved_at")),
         "message_count": stats.message_count,
-        "agent_message_count": stats.agent_message_count,
+        # La COLUMNA conserva el nombre legacy `agent_message_count`; el atributo de
+        # MessageStats ya es `operator_message_count` (ver src/metrics.py). Renombrar la
+        # columna exigiria migrar conversation_scores sin ganancia visible: nadie la ve.
+        "agent_message_count": stats.operator_message_count,
         "bot_message_count": stats.bot_message_count,
         "contact_message_count": stats.contact_message_count,
         "was_unassigned": was_unassigned(c.get("user_id")),

@@ -2,6 +2,7 @@
 esta scopeada por cuenta (datos vs sistemas conviven en la misma BD)."""
 from decimal import Decimal
 
+from src.router import ANOMALOUS_MESSAGE_MAX
 from src.queries import (
     _build_dep_channel,
     _build_load_series,
@@ -16,6 +17,8 @@ from src.queries import (
     _build_quality_evolution,
     _build_quality_motivo,
     _conversion_where,
+    deposit_pct_by_operator,
+    load_by_operator,
     _dist_from_labels,
     _scores_filters,
     _sort_convs,
@@ -127,8 +130,14 @@ def test_scored_rows_aligera_payload_de_la_lista():
 
 
 def test_scores_filters_base_solo_cuenta():
+    """Sin filtros del usuario queda el scope de cuenta + la baja lógica de operadores
+    (siempre presente por default; ver test_scores_filters_esconde_operadores_apagados)."""
     where, params = _scores_filters("datos")
-    assert where == "cs.account = %(account)s"
+    assert where.startswith("cs.account = %(account)s")
+    # ninguna condición del USUARIO se cuela cuando no se pidió ninguna
+    for campo in ("cs.eval_status", "cs.motivo", "cs.segment", "t.channel", "cs.stars",
+                  "ILIKE", "cs.conversation_created_at"):
+        assert campo not in where
     assert params == {"account": "datos"}
 
 
@@ -146,6 +155,44 @@ def test_scores_filters_aplica_cada_filtro():
     assert "cs.conversation_created_at <= %(dto)s" in where and params["dto"] == "2026-06-30"
     # búsqueda: mismos campos que matchBase del front (cliente, número, operador)
     assert "ILIKE %(q)s" in where and params["q"] == "%juan%"
+
+
+def test_scores_filters_esconde_operadores_apagados_por_DEFAULT():
+    """Baja lógica: un operador apagado desaparece de TODO lo que sale de
+    conversation_scores — KPIs incluidos, no solo de los cuadros por operador. En `sistemas`
+    son 31 operadores y 27.398 sesiones históricas que ensuciaban promedios y rankings.
+
+    Se filtra con NOT EXISTS contra operator_status y NO con una lista de nombres traída
+    desde Python: así `_scores_filters` sigue siendo puro (account + kwargs -> where,
+    params) y no necesita un cursor."""
+    where, params = _scores_filters("sistemas")
+    assert "NOT EXISTS" in where and "operator_status" in where
+    assert "os.activo = false" in where
+    # matchea por el nombre RESUELTO, el mismo con el que agrupan los cuadros
+    assert "coalesce(u.name, cs.user_name)" in where
+    # sin parámetros nuevos: el account ya está en el WHERE base
+    assert set(params) == {"account"}
+
+
+def test_scores_filters_incluir_inactivos_saca_el_filtro():
+    """La baja es LÓGICA: los datos siguen ahí y tiene que haber forma de verlos. Sin esta
+    salida, apagar a alguien sería una eliminación de hecho."""
+    where, _ = _scores_filters("sistemas", inactivos="incluir")
+    assert "operator_status" not in where
+
+
+def test_summary_kpis_declara_cuantos_operadores_quedaron_ocultos():
+    """Mismo criterio que con las sesiones anómalas: lo que se excluye se DECLARA. Si el
+    dashboard esconde 31 operadores sin decirlo, los números mienten por omisión."""
+    cur = _FakeCursor(
+        rows=[], description=["total", "evaluadas", "no_evaluadas", "avg_stars", "depositos",
+                              "dep_conv", "operadores", "depositos_excluidos",
+                              "sesiones_excluidas", "operadores_ocultos"],
+        one=(120, 100, 20, Decimal("3.20"), 45, 30, 8, 900, 3, 31))
+    out = summary_kpis(cur, "sistemas")
+    assert out["operadores_ocultos"] == 31
+    query, _ = cur.executed[0]
+    assert "operadores_ocultos" in query
 
 
 def test_scores_filters_rating_mapea_label_a_estrella():
@@ -171,6 +218,43 @@ def test_summary_kpis_agrega_server_side_scopeado_por_cuenta():
     assert out["avg_stars"] == 3.2 and isinstance(out["avg_stars"], float)
     assert out["total"] == 120 and out["evaluadas"] == 100 and out["operadores"] == 8
     assert "pendientes" in out  # sesiones cerradas aún sin scorear (backfill en curso)
+
+
+def test_summary_kpis_excluye_sesiones_anomalas_de_los_depositos():
+    """Las sesiones skipeadas por `anomalous_size` (>250 mensajes) son blobs patologicos:
+    en prod hay conversaciones de 15.100 mensajes con 3.025 imagenes del cliente. Nunca se
+    evaluaron, pero deposit_count SI se calcula y se persiste, y aportaba el 44,7% de los
+    comprobantes de `sistemas` (88.496 de 198.027) desde el 0,89% de las sesiones. Los
+    agregados de deposito tienen que dejarlas afuera; el resto de los skips se queda
+    (customer_media_only = el cliente mando el comprobante y nadie respondio: es real)."""
+    cur = _FakeCursor(
+        rows=[], description=["total", "evaluadas", "no_evaluadas", "avg_stars", "depositos",
+                              "dep_conv", "operadores", "depositos_excluidos", "sesiones_excluidas"],
+        one=(120, 100, 20, Decimal("3.20"), 45, 30, 8, 900, 3))
+    out = summary_kpis(cur, "sistemas")
+    query, _ = cur.executed[0]
+    # Se filtra por la PROPIEDAD (tamaño) y no por la etiqueta `skip_reason`: en
+    # decide_eligibility el chequeo de 'no_agent_reply' corre ANTES que el de tamaño, así
+    # que 16 sesiones de >250 mensajes quedaron etiquetadas 'no_agent_reply' y se escapaban
+    # con 2.310 comprobantes. El umbral sale de router.ANOMALOUS_MESSAGE_MAX, no hardcodeado.
+    # coalesce: message_count es nullable y un NULL descartaría la fila del FILTER en silencio
+    assert f"coalesce(cs.message_count, 0) > {ANOMALOUS_MESSAGE_MAX}" in query
+    assert "sum(cs.deposit_count) FILTER (WHERE NOT" in query
+    assert "count(*) FILTER (WHERE cs.deposit_count > 0 AND NOT" in query
+    # ...y ademas se reporta lo excluido, para poder declararlo en la UI en vez de esconderlo
+    assert out["depositos_excluidos"] == 900 and out["sesiones_excluidas"] == 3
+    # el filtro de estado tambien se declara: cuantas quedaron sin evaluar
+    assert out["no_evaluadas"] == 20
+
+
+def test_deposit_by_channel_excluye_sesiones_anomalas():
+    """Mismo criterio que los KPIs: la tarjeta de % deposito por canal no puede contar
+    las sesiones anomalas, o el porcentaje de un canal se dispara por un solo blob."""
+    cur = _FakeCursor(rows=[], description=["canal", "n", "dep"])
+    deposit_by_channel(cur, "datos")
+    query, _ = cur.executed[0]
+    # coalesce: message_count es nullable y un NULL descartaría la fila del FILTER en silencio
+    assert f"coalesce(cs.message_count, 0) > {ANOMALOUS_MESSAGE_MAX}" in query
 
 
 def test_pending_sessions_count_gate_6h_y_scope():
@@ -243,7 +327,9 @@ def test_deposit_by_channel_sql():
     cur = _FakeCursor(rows=[], description=["canal", "n", "dep"])
     deposit_by_channel(cur, "datos")
     query, _ = cur.executed[0]
-    assert "FILTER (WHERE cs.deposit_count > 0)" in query
+    # el conteo sigue siendo por deposit_count>0; el filtro extra de sesiones anómalas
+    # lo cubre test_deposit_by_channel_excluye_sesiones_anomalas.
+    assert "FILTER (WHERE cs.deposit_count > 0" in query
     assert "GROUP BY 1" in query
 
 
@@ -400,11 +486,81 @@ def test_build_pct_series_otros_agrega_conv_y_dep_del_resto():
 
 
 def test_build_new_vs_deposit_ordena_y_calcula_pct():
-    rows = [("2026-02", 50, 10, 30), ("2026-01", 100, 42, 57)]
+    # filas: (mes, conv, con_dep, nuevos, nuevos_con_dep)
+    rows = [("2026-02", 50, 10, 30, 6), ("2026-01", 100, 42, 57, 19)]
     out = _build_new_vs_deposit(rows)
     assert out["months"] == ["2026-01", "2026-02"]        # ordenado por mes
     assert out["nuevos"] == [57, 30]
     assert out["pct"] == [42.0, 20.0]                      # 42/100 y 10/50
+
+
+def test_build_new_vs_deposit_expone_el_pct_DE_LOS_NUEVOS():
+    """El cuadro dibuja barras de jugadores NUEVOS y una línea de % depósito, pero ese %
+    se calcula sobre TODAS las conversaciones del segmento, no sobre los nuevos: son
+    denominadores distintos y la leyenda ('línea = % que depositó') hacía leer el segundo
+    como si fuera el primero. En prod, julio de `sistemas`: 60,4% graficado contra 33,8%
+    real de los nuevos. Se agrega la serie coherente con las barras, sin perder la vieja."""
+    rows = [("2026-01", 100, 42, 57, 19), ("2026-02", 50, 10, 30, 6)]
+    out = _build_new_vs_deposit(rows)
+    # 19 de 57 nuevos y 6 de 30 nuevos
+    assert out["pct_nuevos"] == [33.3, 20.0]
+    # y la serie global sigue estando, con su propio denominador
+    assert out["pct"] == [42.0, 20.0]
+
+
+def test_build_new_vs_deposit_sin_nuevos_no_divide_por_cero():
+    out = _build_new_vs_deposit([("2026-03", 10, 4, 0, 0)])
+    assert out["pct_nuevos"] == [None]      # None, no 0.0: "no hubo nuevos" != "0% depositó"
+    assert out["pct"] == [40.0]
+
+
+class _CursorSecuencia:
+    """fetchall() devuelve una tanda distinta por llamada. Necesario para los cuadros
+    full-scale: la 1ra la consume `_jugador_queue_ids` (filas de 2) y la 2da el builder
+    (filas de 3 o 4). Con un solo set de filas el builder revienta al desempacar."""
+
+    def __init__(self, *tandas):
+        self._tandas = list(tandas)
+        self.executed = []
+        self.description = []
+
+    def execute(self, query, params=None):
+        self.executed.append((query, params))
+        return self
+
+    def fetchall(self):
+        return self._tandas.pop(0) if self._tandas else []
+
+
+def test_charts_full_scale_tambien_esconden_operadores_apagados():
+    """Los dos cuadros de /api/charts NO pasan por `_scores_filters` (van full-scale sobre
+    conversations), así que necesitan su propia cláusula. Si no, un operador apagado
+    desaparecía de todo el dashboard MENOS de estos dos — el peor de los dos mundos."""
+    for fn in (load_by_operator, deposit_pct_by_operator):
+        cur = _CursorSecuencia([("q1", "Jugadores")], [])
+        fn(cur, "sistemas")
+        query = cur.executed[-1][0]
+        assert "operator_status" in query, f"{fn.__name__} no filtra apagados"
+        assert "os.activo = false" in query
+        # acá el nombre se resuelve SOLO por users.name (no hay conversation_scores), y el
+        # fallback tiene que ser el MISMO string que guarda operator_status.
+        assert "'Operador sin identificar'" in query
+
+
+def test_charts_full_scale_con_inactivos_incluir_no_filtran():
+    for fn in (load_by_operator, deposit_pct_by_operator):
+        cur = _CursorSecuencia([("q1", "Jugadores")], [])
+        fn(cur, "sistemas", inactivos="incluir")
+        assert "operator_status" not in cur.executed[-1][0]
+
+
+def test_conversion_where_esconde_apagados_y_deja_la_salida():
+    """La conversión agrega player_conversions y resuelve el operador por pc.user_id, otra
+    expresión más. Mismo criterio: se esconden por default, con salida explícita."""
+    where, _ = _conversion_where("sistemas")
+    assert "operator_status" in where and "os.activo = false" in where
+    where2, _ = _conversion_where("sistemas", inactivos="incluir")
+    assert "operator_status" not in where2
 
 
 def test_conversion_where_solo_filtros_que_aplican_al_potencial():

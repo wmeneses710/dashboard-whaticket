@@ -111,7 +111,7 @@ def main() -> None:
                 ctx = "\n".join(f"- otra visita, cliente: {_first_client(o)}"
                                 for o in scoreables if o is not ep)
                 stats = message_stats(ep["raw"])
-                rubric = decide_rubric(agent_message_count=stats.agent_message_count,
+                rubric = decide_rubric(operator_message_count=stats.operator_message_count,
                                        bot_message_count=stats.bot_message_count)
                 try:
                     res = score_conversation(rubric=rubric, target_messages=ep["raw"],
@@ -128,7 +128,7 @@ def main() -> None:
             whole_star = None
             if whole:
                 st = message_stats(whole)
-                rub = decide_rubric(agent_message_count=st.agent_message_count,
+                rub = decide_rubric(operator_message_count=st.operator_message_count,
                                     bot_message_count=st.bot_message_count)
                 try:
                     res = score_conversation(rubric=rub, target_messages=whole,

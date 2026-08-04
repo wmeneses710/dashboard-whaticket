@@ -4,7 +4,7 @@ docs/diseno-evaluacion-unificada.md seccion 6).
 El helper PURO evaluate_session corre message_stats + decide_rubric +
 decide_eligibility sobre el transcript MERGEADO de la sesion (todos los episodios,
 orden cronologico global). Es lo que mata los "skips fabricados": si el agente
-respondio en un episodio hermano, al mergear la sesion tiene agent_message_count>0
+respondio en un episodio hermano, al mergear la sesion tiene operator_message_count>0
 y se evalua en vez de saltear falso no_agent_reply.
 
 Lo puro se valida con datos en memoria (sin BD). Para fetch_session_messages se usa
@@ -33,19 +33,19 @@ def test_episodio_cliente_solo_aislado_seria_skip_no_agent_reply():
     # Este es el skip que HOY se fabrica al evaluar por conversacion.
     ep1 = [_msg(False, "hola, estan?"), _msg(False, "sigo esperando")]
     stats, rubric, eval_status, skip_reason = evaluate_session(ep1)
-    assert stats.agent_message_count == 0
+    assert stats.operator_message_count == 0
     assert (eval_status, skip_reason) == ("skipped", "no_agent_reply")
 
 
 def test_sesion_mergeada_absorbe_el_skip_fabricado():
     # CLAVE de la pieza: la MISMA sesion tiene ep1 solo-cliente + ep2 con respuesta
-    # del agente. Mergeada -> agent_message_count>0 -> se EVALUA (no skip fabricado).
+    # del agente. Mergeada -> operator_message_count>0 -> se EVALUA (no skip fabricado).
     ep1 = [_msg(False, "hola, estan?"), _msg(False, "sigo esperando")]
     ep2 = [_msg(False, "buenas, retomo"),
            _msg(True, "hola! si, contame", user_id="op1")]
     merged = ep1 + ep2  # orden cronologico global
     stats, rubric, eval_status, skip_reason = evaluate_session(merged)
-    assert stats.agent_message_count > 0
+    assert stats.operator_message_count > 0
     assert (eval_status, skip_reason) == ("evaluated", None)
     assert rubric == "human"
 
@@ -57,7 +57,7 @@ def test_sesion_genuinamente_sin_agente_sigue_skipped():
     ep2 = [_msg(False, "alguien?"), _msg(False, "?")]
     merged = ep1 + ep2
     stats, rubric, eval_status, skip_reason = evaluate_session(merged)
-    assert stats.agent_message_count == 0
+    assert stats.operator_message_count == 0
     assert (eval_status, skip_reason) == ("skipped", "no_agent_reply")
 
 
@@ -65,7 +65,7 @@ def test_sesion_solo_bot_es_rubric_bot():
     # Negocio 100% bot en la sesion -> rubrica bot (mismo criterio que por conversacion).
     merged = [_msg(False, "hola"), _msg(True, "soy un bot", sent_from=BOT)]
     stats, rubric, eval_status, skip_reason = evaluate_session(merged)
-    assert stats.agent_message_count == 0
+    assert stats.operator_message_count == 0
     assert stats.bot_message_count == 1
     assert rubric == "bot"
     assert eval_status == "evaluated"

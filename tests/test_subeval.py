@@ -53,7 +53,7 @@ def test_verify_uplift_manda_motivo_y_transcript():
     llm = FakeLLM({"uplift_real": True})
     verify_uplift(MSGS, "retiro", llm)
     system, user, schema = llm.calls[0]
-    assert "auditor" in system.lower() and "retiro" in user and "Agente:" in user
+    assert "auditor" in system.lower() and "retiro" in user and "Operador:" in user
 
 
 # --- build_recomendacion --------------------------------------------------

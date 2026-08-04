@@ -7,16 +7,18 @@ elige cual traer. Config por entorno (EasyPanel). Ver src/config.py.
 from __future__ import annotations
 
 import logging
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, field_validator
 
-from src import queries
+from src import operators_status, queries
 from src.config import load_config
 from src.worker import run_worker_loop
 
@@ -61,13 +63,47 @@ def ensure_indexes() -> None:
         log.warning("ensure_indexes: sin conexión a la BD (%s); se omite", exc)
 
 
+def seed_operator_status() -> None:
+    """Asegura `operator_status` y la SIEMBRA desde config/operadores.json (idempotente).
+
+    Corre en cada arranque del contenedor. La siembra NO PISA (ON CONFLICT DO NOTHING): si
+    alguien apagó un operador desde el modal en producción, ese cambio vive en la BD y un
+    deploy no puede borrarlo. El archivo solo llena huecos — operadores nuevos, o una base
+    recién restaurada. Para que el archivo gane hay que pedirlo a mano con
+    `scripts/load_operadores.py --pisar`.
+
+    Falla suave: si la BD no está o el archivo tiene un error, el dashboard arranca igual y
+    simplemente no habrá nadie apagado (default = todos visibles, que es el lado seguro)."""
+    log = logging.getLogger("uvicorn.error")
+    try:
+        operadores = operators_status.load_config()
+        with psycopg.connect(cfg.database_url, connect_timeout=8) as c:
+            with c.cursor() as cur:
+                operators_status.ensure_table(cur)
+                n = operators_status.seed_from_config(cur, operadores)
+                apagados = {
+                    cuenta: len(operators_status.inactive_names(cur, cuenta))
+                    for cuenta in operadores.get("cuentas", {})
+                }
+            c.commit()
+        log.info("operator_status: %s filas sembradas · apagados por cuenta: %s", n, apagados)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("operator_status: no se pudo sembrar (%s); nadie queda apagado", exc)
+
+
+def _bootstrap() -> None:
+    """Tareas de arranque que no deben bloquear el event loop, en orden de importancia."""
+    ensure_indexes()
+    seed_operator_status()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Arranca el worker de scoring en el mismo contenedor si esta habilitado."""
     # En un thread aparte: el build CONCURRENTLY puede tardar segundos y no debe
     # bloquear el arranque ni el event loop. Mientras tanto el API responde (más
     # lento, con statement_timeout como red de seguridad).
-    threading.Thread(target=ensure_indexes, daemon=True, name="ensure-indexes").start()
+    threading.Thread(target=_bootstrap, daemon=True, name="bootstrap").start()
     stop = threading.Event()
     if cfg.scoring_enabled:
         thread = threading.Thread(
@@ -127,12 +163,17 @@ def _filters(
     rating: str = "all",
     search: str = "",
     motivo: str = "all",
+    inactivos: str = "ocultar",
 ) -> dict:
     """Filtros del dashboard (matchBase del front) como dependencia común. `from`/`to`
-    llegan como alias porque `from` es palabra reservada en Python."""
+    llegan como alias porque `from` es palabra reservada en Python.
+
+    `inactivos`: 'ocultar' (default) esconde a los operadores apagados de TODO lo que sale
+    de conversation_scores; 'incluir' los trae de vuelta. La baja es lógica, así que la
+    salida tiene que existir."""
     return {"estado": estado, "segment": segment, "canal": canal, "op": op,
             "date_from": date_from, "date_to": date_to, "rating": rating,
-            "search": search, "motivo": motivo}
+            "search": search, "motivo": motivo, "inactivos": inactivos}
 
 
 @app.get("/api/options")
@@ -187,15 +228,23 @@ def conversion_cohort(account: str = Query(..., description="datos | sistemas"),
 
 
 @app.get("/api/charts")
-def charts(account: str = Query(..., description="datos | sistemas")) -> dict:
+def charts(account: str = Query(..., description="datos | sistemas"),
+           inactivos: str = "ocultar") -> dict:
     """Agregados FULL-SCALE para los cuadros del análisis (deterministas, sobre el
     segmento jugador; no dependen del scoring LLM): carga por operador, % depósito
-    en WhatsApp por operador y nuevos jugadores vs % depósito por mes."""
+    en WhatsApp por operador y nuevos jugadores vs % depósito por mes.
+
+    Estos cuadros ignoran los filtros del dashboard a propósito (ventana fija), con UNA
+    excepción: `inactivos`. Si no la respetaran, un operador apagado seguiría apareciendo
+    acá y la baja lógica tendría un agujero justo a la vista. `new_vs_deposit_by_month` no
+    lo necesita: agrega por mes, sin abrir por operador."""
     win = cfg.charts_window_months
     with _conn() as c, c.cursor() as cur:
         return {
-            "load_by_operator": queries.load_by_operator(cur, account, window_months=win),
-            "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account, window_months=win),
+            "load_by_operator": queries.load_by_operator(cur, account, window_months=win,
+                                                         inactivos=inactivos),
+            "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account, window_months=win,
+                                                                       inactivos=inactivos),
             "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account, window_months=win),
             "window_months": win,
         }
@@ -209,6 +258,87 @@ def conversation(cid: str) -> dict:
     if detail is None:
         raise HTTPException(status_code=404, detail="conversacion no encontrada")
     return detail
+
+
+# =============================================================================
+# Operadores: prender/apagar (baja lógica). LECTURA abierta, ESCRITURA con token.
+#
+# La lectura no lleva token porque expone lo mismo que los cuadros ya muestran (nombres y
+# volumen): una barrera ahí no protegería nada. La escritura sí, porque apagar operadores
+# cambia lo que todo el mundo ve.
+# =============================================================================
+def require_admin(token: str | None = Header(None, alias="X-Admin-Token")) -> None:
+    """Token compartido (DASHBOARD_ADMIN_TOKEN). FALLA CERRADA: si no está configurado,
+    escribir es imposible. Al revés —abierto por default— un despliegue al que se le olvidó
+    la variable dejaría a cualquiera apagando operadores sin que nadie se entere.
+
+    `compare_digest` y no `==`: comparar secretos con == filtra su largo y su prefijo por
+    el tiempo de respuesta."""
+    if not cfg.admin_token:
+        raise HTTPException(
+            status_code=503,
+            detail="escritura deshabilitada: falta configurar DASHBOARD_ADMIN_TOKEN",
+        )
+    if not token or not secrets.compare_digest(token, cfg.admin_token):
+        raise HTTPException(status_code=401, detail="token invalido o ausente")
+
+
+class OperadorFlag(BaseModel):
+    operador: str
+    activo: bool
+
+
+class OperadoresUpdate(BaseModel):
+    account: str
+    operadores: list[OperadorFlag]
+
+    @field_validator("account")
+    @classmethod
+    def _cuenta_no_vacia(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("account no puede estar vacio")
+        return v.strip()
+
+    @field_validator("operadores")
+    @classmethod
+    def _nombres_no_vacios(cls, v: list[OperadorFlag]) -> list[OperadorFlag]:
+        # Un nombre vacío crearía una fila fantasma que nunca matchea a nadie y que
+        # tampoco se puede borrar desde la UI.
+        for op in v:
+            if not op.operador.strip():
+                raise ValueError("hay un operador con nombre vacio")
+        return v
+
+
+@app.get("/api/operators")
+def operators(account: str = Query(..., description="datos | sistemas")) -> dict:
+    """Operadores de la cuenta con su actividad y si están prendidos. Alimenta el modal."""
+    with _conn() as c, c.cursor() as cur:
+        operators_status.ensure_table(cur)
+        filas = operators_status.admin_rows(cur, account)
+    return {
+        "account": account,
+        "operadores": filas,
+        # El umbral con el que el modal pre-marca al apretar "sugerir por actividad". 100 en
+        # 30 dias reproduce exacto la lista de activos que dio el negocio (validado sobre
+        # los datos reales de las dos cuentas).
+        "umbral_sugerido": 100,
+        "dias_sugeridos": 30,
+        "escritura_habilitada": bool(cfg.admin_token),
+    }
+
+
+@app.put("/api/operators", dependencies=[Depends(require_admin)])
+def operators_update(body: OperadoresUpdate) -> dict:
+    """Prende/apaga operadores de UNA cuenta, en tanda. Baja LOGICA: no borra nada, solo
+    los saca de los cuadros."""
+    pares = [(op.operador.strip(), op.activo) for op in body.operadores]
+    with _conn() as c:
+        with c.cursor() as cur:
+            operators_status.ensure_table(cur)
+            n = operators_status.set_many(cur, body.account, pares)
+        c.commit()
+    return {"account": body.account, "actualizados": n}
 
 
 @app.get("/robots.txt", response_class=PlainTextResponse)

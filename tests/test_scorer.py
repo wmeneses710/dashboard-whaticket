@@ -14,12 +14,12 @@ NEUTRAL = [
     {"from_me": False, "is_note": False, "body": "¿una consulta?"},
     {"from_me": True, "is_note": False, "body": "buenas, decime"},
 ]
-# Deposito con confirmacion del agente (dispara agent_resolved).
+# Deposito con confirmacion del agente (dispara operator_resolved).
 MSGS = [
     {"from_me": False, "is_note": False, "body": "no me llego la recarga"},
     {"from_me": True, "is_note": False, "body": "ya te la acredito"},
 ]
-# Con EMPUJE concreto del agente (link) -> agent_pushed=True. Necesario para que
+# Con EMPUJE concreto del agente (link) -> operator_pushed=True. Necesario para que
 # buena/excelente sobrevivan el cap de uplift (PIEZA 2).
 PUSH = [
     {"from_me": False, "is_note": False, "body": "quiero el bono"},
@@ -310,7 +310,7 @@ def test_confuso_sin_resolucion_baja_a_deficiente():
 
 
 def test_confuso_no_baja_si_el_agente_resolvio_determinista():
-    # MSGS tiene "acredito" -> agent_resolved=True protege del confuso difuso del LLM
+    # MSGS tiene "acredito" -> operator_resolved=True protege del confuso difuso del LLM
     r = score_by_motivo(target_messages=MSGS, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="deposito", claridad="confuso")))
     assert r.rating_label == "aceptable" and r.stars == 3

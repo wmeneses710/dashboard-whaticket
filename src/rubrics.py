@@ -1,8 +1,8 @@
 """Rubricas de scoring y mapeo determinista etiqueta -> estrella.
 
 Dos rubricas segun QUIEN atendio la conversacion (no por segmento de negocio):
-  - human: la atendio un agente (conversations.user_id presente)
-  - bot:   la atendio el chatbot (sin agente)
+  - human: la atendio un operador (conversations.user_id presente)
+  - bot:   la atendio el chatbot (sin operador)
 
 El scoring es HOLISTICO: el LLM lee la conversacion, llena las dimensiones como
 evidencia cualitativa y elige UNA sola etiqueta (rating_label). La estrella es
@@ -270,7 +270,7 @@ def label_from_facts(
     = no-op: ni baja ni impide subir). `friccion`: senal (determinista + refuerzo
     del LLM) de que el cliente tuvo que reinsistir sin respuesta.
     `confuso_corroborado`: gate para que un 'confuso' del LLM sin corroboracion
-    determinista (el cliente ni pregunto ni reinsistio, o el agente resolvio/empujo)
+    determinista (el cliente ni pregunto ni reinsistio, o el operador resolvio/empujo)
     no hunda la nota a 'deficiente' sin evidencia real de que hizo falta aclarar.
     """
     if hubo_maltrato_grave:

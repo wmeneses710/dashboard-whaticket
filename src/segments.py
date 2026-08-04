@@ -1,8 +1,20 @@
 """Mapeo cola (queueName) -> segmento de negocio.
 
+El segmento dice QUIEN ESTA DEL OTRO LADO del chat (el cliente), NO quien atiende:
+quien atiende es SIEMPRE un OPERADOR (personal de soporte, tabla `users`). Los dos
+publicos principales:
+  - jugador: el usuario final que apuesta.
+  - agente:  el vendedor/afiliador que trae usuarios y opera una caja (carga y
+             descarga saldo). Es un CLIENTE nuestro, no personal nuestro. En
+             `sistemas` es la cola de mayor volumen ("Agente 👨👩").
+
 La segmentacion NO es por cuenta sino por cola: una misma cuenta puede tener
-jugadores y agentes. Cada segmento se evalua con una rubrica distinta
-(jugador = conversion/atencion; agente = satisfaccion/resolucion).
+jugadores y agentes.
+
+OJO: hoy el segmento NO entra en el scoring. La rubrica se elige por MOTIVO
+(src/rubrics.py) y `score_by_motivo` nunca recibe el segmento -> un agente se
+califica con la misma vara comercial que un jugador (uplift = empujar registro/
+deposito), que para un vendedor profesional no aplica. Es una deuda conocida.
 
 Nombres de cola observados en la data real (jun-2026):
   sistemas: "Agente 👨👩", "Jugadores", "", "Departamento de Makerting", "Prueba"

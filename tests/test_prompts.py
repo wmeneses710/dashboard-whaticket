@@ -22,10 +22,12 @@ def test_transcript_excluye_notas_internas():
     assert "no me llego la recarga" in t
 
 
-def test_transcript_rotula_cliente_y_agente():
+def test_transcript_rotula_cliente_y_operador():
     t = format_transcript(MSGS_HUMAN, "human")
     assert "Cliente:" in t
-    assert "Agente:" in t
+    # OPERADOR, no "Agente": el agente es el CLIENTE vendedor (segmento `agente`).
+    assert "Operador:" in t
+    assert "Agente:" not in t
 
 
 def test_transcript_bot_rotula_al_bot():
@@ -33,10 +35,10 @@ def test_transcript_bot_rotula_al_bot():
     assert "Bot:" in t
 
 
-def test_transcript_motivo_rotula_negocio_como_agente():
-    # Con una rubrica de motivo (no esta en _BUSINESS_LABEL) el negocio se rotula 'Agente'.
+def test_transcript_motivo_rotula_negocio_como_operador():
+    # Con una rubrica de motivo (no esta en _BUSINESS_LABEL) el negocio se rotula 'Operador'.
     t = format_transcript(MSGS_HUMAN, "deposito")
-    assert "Agente:" in t and "Cliente:" in t
+    assert "Operador:" in t and "Cliente:" in t
 
 
 def test_transcript_trunca_conversaciones_muy_largas():

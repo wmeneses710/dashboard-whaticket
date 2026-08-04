@@ -13,14 +13,14 @@ from __future__ import annotations
 ANOMALOUS_MESSAGE_MAX = 250
 
 
-def decide_rubric(*, agent_message_count: int, bot_message_count: int) -> str:
+def decide_rubric(*, operator_message_count: int, bot_message_count: int) -> str:
     """Rubrica segun QUIEN respondio de verdad (por sent_from), no por asignacion.
 
     'bot' solo si TODO el negocio fue bot (el ~0,04% puro bot); en cuanto hubo un
     operador humano es 'human'. Los mixtos (bot saluda + humano atiende) son
     'human': la calidad la puso la persona.
     """
-    if agent_message_count > 0:
+    if operator_message_count > 0:
         return "human"
     if bot_message_count > 0:
         return "bot"
@@ -33,30 +33,30 @@ def decide_eligibility(
     customer_message_count: int,
     business_message_count: int,
     customer_text_count: int | None = None,
-    agent_resolved: bool = False,
+    operator_resolved: bool = False,
 ) -> tuple[str, str | None]:
     """Devuelve (eval_status, skip_reason).
 
     `business_message_count` = mensajes del negocio (humano + bot, from_me).
     `customer_text_count` = mensajes del cliente con TEXTO legible (opcional por
-    compatibilidad). `agent_resolved` = senal determinista de que el agente atendio
+    compatibilidad). `operator_resolved` = senal determinista de que el operador atendio
     (confirmo la transaccion o mando el comprobante; ver src/signals.py). Orden: sin
-    contenido real -> sin cliente -> cliente solo media (y agente NO resolvio) ->
+    contenido real -> sin cliente -> cliente solo media (y operador NO resolvio) ->
     sin respuesta del negocio -> tamaño anomalo -> evaluable.
 
     Sin respuesta del negocio no hay accion que evaluar (p. ej. una visita con
     solo un "Gracias" del cliente). Si el cliente SOLO mando imagenes/audio
     (customer_text_count == 0) el LLM no puede leer su intencion... SALVO que el
-    agente haya resuelto: en el flujo estandar de deposito el cliente manda solo el
-    comprobante y el agente confirma ("saldo disponible"), asi que el motivo es
-    inferible del agente y NO se debe saltear (la auditoria mostro que este skip
+    operador haya resuelto: en el flujo estandar de deposito el cliente manda solo el
+    comprobante y el operador confirma ("saldo disponible"), asi que el motivo es
+    inferible del operador y NO se debe saltear (la auditoria mostro que este skip
     tiraba a la basura el motivo de mayor volumen).
     """
     if real_message_count == 0:
         return "skipped", "internal_notes_only"
     if customer_message_count == 0:
         return "skipped", "no_customer_reply"
-    if customer_text_count is not None and customer_text_count == 0 and not agent_resolved:
+    if customer_text_count is not None and customer_text_count == 0 and not operator_resolved:
         return "skipped", "customer_media_only"
     if business_message_count == 0:
         return "skipped", "no_agent_reply"

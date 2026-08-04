@@ -1,7 +1,7 @@
-"""Senales deterministas de RESOLUCION del agente (capa sin LLM).
+"""Senales deterministas de RESOLUCION del operador (capa sin LLM).
 
 Corrige la dureza sistematica del modelo detectada en la auditoria: el LLM hunde
-por debajo del piso interacciones donde el agente SI atendio el motivo, porque
+por debajo del piso interacciones donde el operador SI atendio el motivo, porque
 (a) confirmo la transaccion con una plantilla ("ing"/"listo"/"saldo disponible"),
 (b) mando el comprobante/tutorial como media que el modelo no puede leer, o
 (c) el cliente abandono despues de una respuesta accionable.
@@ -11,7 +11,7 @@ PISO (nunca sube a buena/excelente; solo evita el deficiente/mala injusto) y par
 que el router no saltee un deposito estandar como 'customer_media_only'.
 
 Mensajes = dicts con: from_me, is_note, body, media_type, sent_from.
-Se evalua SOLO al agente HUMANO (from_me, no nota, sent_from != CHATBOT).
+Se evalua SOLO al operador HUMANO (from_me, no nota, sent_from != CHATBOT).
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import unicodedata
 
 from src.metrics import _is_bot
 
-# Confirmacion transaccional del agente. Tokens reales del dataset (plantillas y
+# Confirmacion transaccional del operador. Tokens reales del dataset (plantillas y
 # taquigrafia de operador): "ing"/"ingreso"/"ingresado", "acreditado", "cargado",
 # "realizado/procesado/reflejado/abonado", "listo", "en breve", "disponible"
 # (saldo disponible). Deliberadamente SIN tokens genericos ("hecho") para no
@@ -33,44 +33,44 @@ CONFIRMATION_PATTERN = (
 _CONFIRMATION_RE = re.compile(CONFIRMATION_PATTERN, re.IGNORECASE)
 
 
-def _is_agent(m: dict) -> bool:
-    """Agente humano: enviado por el negocio (from_me), no nota, no bot."""
+def _is_operator(m: dict) -> bool:
+    """Operador humano: enviado por el negocio (from_me), no nota, no bot."""
     return bool(m.get("from_me")) and not m.get("is_note") and not _is_bot(m)
 
 
-def agent_confirmation(messages: list[dict]) -> bool:
-    """True si algun mensaje del AGENTE confirma la transaccion (token de plantilla)."""
+def operator_confirmation(messages: list[dict]) -> bool:
+    """True si algun mensaje del OPERADOR confirma la transaccion (token de plantilla)."""
     return any(
         _CONFIRMATION_RE.search(m.get("body") or "")
         for m in messages
-        if _is_agent(m)
+        if _is_operator(m)
     )
 
 
 # Tipos de media REAL (comprobante, tutorial en video, audio, doc). Se excluyen a
-# proposito 'chat'/'missed'/'template'/'location', que NO son un adjunto del agente
+# proposito 'chat'/'missed'/'template'/'location', que NO son un adjunto del operador
 # (un texto guardado como 'chat' no debe contar como "mando el comprobante/tutorial").
 _MEDIA_TYPES = frozenset({"image", "video", "audio", "voice", "ptt", "document",
                           "application", "sticker", "viewonce"})
 
 
-def agent_sent_media(messages: list[dict]) -> bool:
-    """True si el AGENTE mando MEDIA real (comprobante de retiro, video-tutorial, etc.).
+def operator_sent_media(messages: list[dict]) -> bool:
+    """True si el OPERADOR mando MEDIA real (comprobante de retiro, video-tutorial, etc.).
 
     El modelo no puede leer la media; asumir fracaso por eso es el error #3 de la
-    auditoria. Si el agente la mando, es evidencia de que atendio.
+    auditoria. Si el operador la mando, es evidencia de que atendio.
     """
     return any(
-        _is_agent(m) and (m.get("media_type") or "").strip().lower() in _MEDIA_TYPES
+        _is_operator(m) and (m.get("media_type") or "").strip().lower() in _MEDIA_TYPES
         for m in messages
     )
 
 
 def client_abandoned(messages: list[dict]) -> bool:
-    """True si el ULTIMO mensaje real (sin notas) lo mando el agente.
+    """True si el ULTIMO mensaje real (sin notas) lo mando el operador.
 
     Es decir, el cliente no volvio a responder tras la ultima intervencion del
-    agente: la falta de cierre es del cliente, no del agente (trampa #2).
+    operador: la falta de cierre es del cliente, no del operador (trampa #2).
     """
     real = [m for m in messages if not m.get("is_note")]
     if not real:
@@ -81,7 +81,7 @@ def client_abandoned(messages: list[dict]) -> bool:
 # ¿El cliente planteó una CONSULTA contestable? (signo de pregunta o palabra interrogativa).
 # Si NO, en 'info' no hay nada que "no responder": el piso se cumple respondiendo cordial
 # (trampa de abandono/sin-necesidad). Evita el falso deficiente del saludo/gracias/abandono,
-# SIN pisar el caso legítimo donde el cliente sí preguntó algo y el agente lo evadió.
+# SIN pisar el caso legítimo donde el cliente sí preguntó algo y el operador lo evadió.
 # Se normalizan acentos (á->a) para no fallar por acentos compuestos/descompuestos o faltantes.
 _Q_WORDS_RE = re.compile(
     r"\b(como|cuand|cuant|donde|que|cual|por que|se puede|puedo|"
@@ -127,10 +127,10 @@ def client_reasked(messages: list[dict], *, min_run: int = 4) -> bool:
     """True si hubo FRICCION: el cliente tuvo que reinsistir sin respuesta del negocio.
 
     Senal determinista de que el cliente quedo colgado (agnostica al motivo): una
-    corrida de mensajes CONSECUTIVOS del cliente SIN respuesta del negocio (agente o
+    corrida de mensajes CONSECUTIVOS del cliente SIN respuesta del negocio (operador o
     bot). Dispara si la corrida llega a `min_run`, o si en una corrida de >=2 el
     cliente manda un ping de desesperacion ("?", "ayuda", "me responden"). El caso
-    multi-transaccion (cliente manda mucho pero el agente contesta entre medio) NO
+    multi-transaccion (cliente manda mucho pero el operador contesta entre medio) NO
     dispara, porque cada respuesta del negocio corta la corrida.
     """
     run = 0
@@ -138,7 +138,7 @@ def client_reasked(messages: list[dict], *, min_run: int = 4) -> bool:
     for m in messages:
         if m.get("is_note"):
             continue
-        if m.get("from_me"):  # el negocio (agente o bot) respondio -> corta la corrida
+        if m.get("from_me"):  # el negocio (operador o bot) respondio -> corta la corrida
             run = 0
             run_has_ping = False
             continue
@@ -150,18 +150,18 @@ def client_reasked(messages: list[dict], *, min_run: int = 4) -> bool:
     return False
 
 
-def agent_resolved(messages: list[dict]) -> bool:
-    """El agente atendio el motivo de forma determinista: confirmo o mando media.
+def operator_resolved(messages: list[dict]) -> bool:
+    """El operador atendio el motivo de forma determinista: confirmo o mando media.
 
     Senal combinada que usan el scorer (piso) y el router (no skipear un deposito
     estandar donde el cliente solo mando el comprobante).
     """
-    return agent_confirmation(messages) or agent_sent_media(messages)
+    return operator_confirmation(messages) or operator_sent_media(messages)
 
 
-# Empuje comercial del agente (eje 'atencion'=empujo): manda un LINK (registro/
+# Empuje comercial del operador (eje 'atencion'=empujo): manda un LINK (registro/
 # recarga), invita explicitamente, o presenta un bono ATADO a una recarga. La
-# auditoria mostro que el modelo marca 'pasivo' aunque el agente claramente empuja.
+# auditoria mostro que el modelo marca 'pasivo' aunque el operador claramente empuja.
 PUSH_PATTERN = (
     r"https?://|t[ei] invit|aprovech|no te pierdas|reg[íi]strate|"
     r"obten[eé]s un bono|obtienes un bono|por tu (primera|segunda|pr[oó]xima) recarga|"
@@ -172,9 +172,9 @@ PUSH_PATTERN = (
 )
 _PUSH_RE = re.compile(PUSH_PATTERN, re.IGNORECASE)
 
-# Maltrato GRAVE del agente (unico gatillo legitimo de 'mala'=1 estrella). Patron
+# Maltrato GRAVE del operador (unico gatillo legitimo de 'mala'=1 estrella). Patron
 # DELIBERADAMENTE conservador y de alta precision: insultos/agresion explicitos.
-# Casi nunca dispara (el maltrato del agente es rarisimo), asi que 'mala' queda
+# Casi nunca dispara (el maltrato del operador es rarisimo), asi que 'mala' queda
 # reservado a evidencia real y todo lo demas cae a 'deficiente' (ver scorer).
 MALTRATO_PATTERN = (
     r"\b(idiota|est[uú]pid\w*|imb[eé]cil|c[aá]llate|no me molest\w*|no jodas|"
@@ -183,14 +183,14 @@ MALTRATO_PATTERN = (
 _MALTRATO_RE = re.compile(MALTRATO_PATTERN, re.IGNORECASE)
 
 
-def agent_pushed(messages: list[dict]) -> bool:
-    """True si el AGENTE empujo conversion/retencion (link, invitacion, bono por recarga).
+def operator_pushed(messages: list[dict]) -> bool:
+    """True si el OPERADOR empujo conversion/retencion (link, invitacion, bono por recarga).
 
     Señal AMPLIA: sirve para el PISO del front-of-funnel (explicar la promo YA cuenta) y
     para el eje atencion. Para el UPLIFT (buena/excelente) es demasiado laxa -> usar
-    agent_strong_uplift, que exige una accion concreta (no la mera explicacion de la promo).
+    operator_strong_uplift, que exige una accion concreta (no la mera explicacion de la promo).
     """
-    return any(_PUSH_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+    return any(_PUSH_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
 
 
 # UPLIFT CONCRETO (para licenciar buena/excelente): un LINK, o una invitacion IMPERATIVA a
@@ -207,23 +207,23 @@ STRONG_UPLIFT_PATTERN = (
 _STRONG_UPLIFT_RE = re.compile(STRONG_UPLIFT_PATTERN, re.IGNORECASE)
 
 
-def agent_strong_uplift(messages: list[dict]) -> bool:
-    """True si el AGENTE hizo un empuje CONCRETO (link o invitacion explicita a convertir)."""
-    return any(_STRONG_UPLIFT_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+def operator_strong_uplift(messages: list[dict]) -> bool:
+    """True si el OPERADOR hizo un empuje CONCRETO (link o invitacion explicita a convertir)."""
+    return any(_STRONG_UPLIFT_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
 
 
-def agent_maltrato(messages: list[dict]) -> bool:
-    """True si hay maltrato GRAVE del agente (insulto/agresion explicita)."""
-    return any(_MALTRATO_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+def operator_maltrato(messages: list[dict]) -> bool:
+    """True si hay maltrato GRAVE del operador (insulto/agresion explicita)."""
+    return any(_MALTRATO_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
 
 
-# Credenciales de alta manual: la cuenta se creo desde el operador y el AGENTE le
+# Credenciales de alta manual: la cuenta se creo desde el operador y el OPERADOR le
 # entrega usuario/contrasena al cliente. Es evidencia determinista de alto valor
 # para el coaching (Capa 1 de recomendaciones): sugiere pedirle al cliente que
 # cambie la contrasena en su primer ingreso.
 # ENTREGA de credenciales: exige que despues de la etiqueta venga un VALOR en la
 # MISMA linea ([ \t] no cruza saltos), o una frase inequivoca de entrega ("tu
-# usuario es X", "tus credenciales de acceso"). Asi NO dispara cuando el agente
+# usuario es X", "tus credenciales de acceso"). Asi NO dispara cuando el operador
 # PIDE los datos ("envíame tu usuario", un formulario "usuario: ____").
 # Patrones SIN acentos (se comparan sobre el texto normalizado con _strip_accents,
 # que ademas pasa a minusculas). Asi "contrasena" cubre "contraseña" y los verbos
@@ -236,7 +236,7 @@ CREDENTIALS_PATTERN = (
 )
 _CREDENTIALS_RE = re.compile(CREDENTIALS_PATTERN)
 
-# Verbos de PEDIDO: si el agente ESTA pidiendo los datos (no entregandolos), no
+# Verbos de PEDIDO: si el operador ESTA pidiendo los datos (no entregandolos), no
 # cuenta como entrega aunque haya una etiqueta con dos puntos y un valor.
 ASK_CREDENTIALS_PATTERN = (
     r"envia|enviame|pasame|pasa |mandame|manda |indica|indicame|"
@@ -245,12 +245,12 @@ ASK_CREDENTIALS_PATTERN = (
 _ASK_CREDENTIALS_RE = re.compile(ASK_CREDENTIALS_PATTERN)
 
 
-def agent_sent_credentials(messages: list[dict]) -> bool:
-    """True si el AGENTE ENTREGO credenciales (usuario/contrasena con su valor) de
+def operator_sent_credentials(messages: list[dict]) -> bool:
+    """True si el OPERADOR ENTREGO credenciales (usuario/contrasena con su valor) de
     una cuenta creada por el operador. Distingue entregar de PEDIR: un mensaje que
     pide los datos (verbo de pedido) no cuenta aunque tenga una etiqueta con valor."""
     for m in messages:
-        if not _is_agent(m):
+        if not _is_operator(m):
             continue
         body = _strip_accents(m.get("body") or "")
         if _CREDENTIALS_RE.search(body) and not _ASK_CREDENTIALS_RE.search(body):
@@ -258,20 +258,20 @@ def agent_sent_credentials(messages: list[dict]) -> bool:
     return False
 
 
-# Enlace de registro (con codigo de afiliado) que el AGENTE manda al cliente para
-# completar el alta. Distinto de agent_pushed/agent_strong_uplift (que son mas
+# Enlace de registro (con codigo de afiliado) que el OPERADOR manda al cliente para
+# completar el alta. Distinto de operator_pushed/operator_strong_uplift (que son mas
 # amplios): esta senal es especifica del ENLACE de registro, para detectar cuando
-# el agente NO lo mando (y hay que recomendar que lo mande).
+# el operador NO lo mando (y hay que recomendar que lo mande).
 REGISTER_LINK_PATTERN = r"(https?://\S*/register|sorti\.ec/register)"
 _REGISTER_LINK_RE = re.compile(REGISTER_LINK_PATTERN, re.IGNORECASE)
 
 
-def agent_sent_register_link(messages: list[dict]) -> bool:
-    """True si el AGENTE mando un enlace de registro (sorti.ec/register o URL con /register)."""
-    return any(_REGISTER_LINK_RE.search(m.get("body") or "") for m in messages if _is_agent(m))
+def operator_sent_register_link(messages: list[dict]) -> bool:
+    """True si el OPERADOR mando un enlace de registro (sorti.ec/register o URL con /register)."""
+    return any(_REGISTER_LINK_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
 
 
-# Mencion de "app"/"aplicacion" por CUALQUIERA (cliente o agente): el negocio no
+# Mencion de "app"/"aplicacion" por CUALQUIERA (cliente o operador): el negocio no
 # tiene app disponible, asi que esta senal sirve para recomendar guiar al cliente
 # a la web en vez de prometer o buscar una app inexistente.
 APP_MENTIONED_PATTERN = r"\bapp\b|aplicaci[oó]n|desc[aá]rga\w*\s+la\s+app"
@@ -279,7 +279,7 @@ _APP_MENTIONED_RE = re.compile(APP_MENTIONED_PATTERN, re.IGNORECASE)
 
 
 def app_mentioned(messages: list[dict]) -> bool:
-    """True si algun mensaje (cliente o agente), sin contar notas, menciona la app."""
+    """True si algun mensaje (cliente o operador), sin contar notas, menciona la app."""
     return any(
         _APP_MENTIONED_RE.search(m.get("body") or "")
         for m in messages

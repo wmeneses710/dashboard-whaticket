@@ -29,7 +29,7 @@ def resolution_seconds(created_at: datetime, resolved_at: datetime | None) -> fl
 
 
 def was_unassigned(user_id) -> bool:
-    """True si la conversacion nunca tuvo un agente asignado (la atendio el bot)."""
+    """True si la conversacion nunca tuvo un operador asignado (la atendio el bot)."""
     return user_id is None
 
 
@@ -41,7 +41,7 @@ def _is_bot(message: dict) -> bool:
 @dataclass(frozen=True)
 class MessageStats:
     message_count: int          # mensajes reales (sin notas)
-    agent_message_count: int    # negocio humano (from_me, no bot), sin notas
+    operator_message_count: int    # negocio humano (from_me, no bot), sin notas
     bot_message_count: int      # negocio bot (sent_from=CHATBOT), sin notas
     contact_message_count: int  # cliente (from_me=False), sin notas
     # cliente con TEXTO legible (body no vacio). Si es 0 pero contact_message_count>0,
@@ -59,7 +59,7 @@ def message_stats(messages: list[dict]) -> MessageStats:
     contact_text = sum(1 for m in contact if (m.get("body") or "").strip())
     return MessageStats(
         message_count=len(real),
-        agent_message_count=agent,
+        operator_message_count=agent,
         bot_message_count=bot,
         contact_message_count=len(contact),
         contact_text_message_count=contact_text,

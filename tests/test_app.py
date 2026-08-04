@@ -1,6 +1,8 @@
 """Tests de los endpoints de agregación (B2). Los endpoints son glue fino: mapean
 los query params (incl. alias from/to) a los filtros y llaman al query layer (ya
 probado en test_queries). Se mockea la conexión y el query layer para no tocar BD."""
+import dataclasses
+
 import src.app as appmod
 from fastapi.testclient import TestClient
 
@@ -16,6 +18,14 @@ class _DummyCtx:
 
     def cursor(self):
         return _DummyCtx()
+
+    # Los endpoints de ESCRITURA commitean; los de lectura no. El doble tiene que
+    # soportar las dos formas sin fingir que la escritura pasó por una BD real.
+    def commit(self):
+        return None
+
+    def rollback(self):
+        return None
 
 
 def _stub(monkeypatch, name):
@@ -89,6 +99,75 @@ def test_conversion_cohort_endpoint(monkeypatch):
     r = client.get("/api/conversion/cohort", params={"account": "sistemas", "op": "Virginia"})
     assert r.status_code == 200 and isinstance(r.json(), list)
     assert calls["account"] == "sistemas" and calls["kwargs"]["op"] == "Virginia"
+
+
+# --- operadores: lectura abierta, ESCRITURA con token ------------------------
+
+def _stub_ops(monkeypatch, rows=None):
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    monkeypatch.setattr(appmod.operators_status, "ensure_table", lambda cur: None)
+    monkeypatch.setattr(appmod.operators_status, "admin_rows",
+                        lambda cur, account: rows if rows is not None else [])
+    aplicados = []
+    monkeypatch.setattr(appmod.operators_status, "set_many",
+                        lambda cur, account, pares, updated_by="ui":
+                            aplicados.append((account, pares, updated_by)) or len(pares))
+    return aplicados
+
+
+def test_get_operators_no_pide_token(monkeypatch):
+    """La lectura expone lo mismo que los cuadros ya muestran (nombres y volumen), así que
+    no se le pone una barrera que no protege nada."""
+    _stub_ops(monkeypatch, rows=[{"operador": "Mel", "activo": True, "sesiones": 2840,
+                                  "recientes": 1821, "ultima_actividad": "2026-08-04"}])
+    r = client.get("/api/operators", params={"account": "sistemas"})
+    assert r.status_code == 200
+    assert r.json()["operadores"][0]["operador"] == "Mel"
+    assert r.json()["umbral_sugerido"] == 100
+
+
+def test_put_operators_SIN_token_configurado_queda_CERRADO(monkeypatch):
+    """Falla CERRADA: si nadie configuró DASHBOARD_ADMIN_TOKEN, escribir es imposible.
+    Al revés (abierto por default) un despliegue sin la variable dejaría a cualquiera
+    apagando operadores sin que nadie se entere."""
+    _stub_ops(monkeypatch)
+    monkeypatch.setattr(appmod, "cfg", dataclasses.replace(appmod.cfg, admin_token=""))
+    r = client.put("/api/operators", json={"account": "sistemas", "operadores": []})
+    assert r.status_code == 503
+    assert "token" in r.json()["detail"].lower()
+
+
+def test_put_operators_token_incorrecto_o_ausente(monkeypatch):
+    _stub_ops(monkeypatch)
+    monkeypatch.setattr(appmod, "cfg", dataclasses.replace(appmod.cfg, admin_token="secreto-real"))
+    body = {"account": "sistemas", "operadores": [{"operador": "Mel", "activo": False}]}
+    assert client.put("/api/operators", json=body).status_code == 401
+    assert client.put("/api/operators", json=body,
+                      headers={"X-Admin-Token": "otro"}).status_code == 401
+
+
+def test_put_operators_con_token_valido_aplica(monkeypatch):
+    aplicados = _stub_ops(monkeypatch)
+    monkeypatch.setattr(appmod, "cfg", dataclasses.replace(appmod.cfg, admin_token="secreto-real"))
+    body = {"account": "sistemas",
+            "operadores": [{"operador": "MariCruz", "activo": False},
+                           {"operador": "Mel", "activo": True}]}
+    r = client.put("/api/operators", json=body, headers={"X-Admin-Token": "secreto-real"})
+    assert r.status_code == 200 and r.json()["actualizados"] == 2
+    account, pares, _ = aplicados[0]
+    assert account == "sistemas"
+    assert pares == [("MariCruz", False), ("Mel", True)]
+
+
+def test_put_operators_rechaza_body_vacio_o_sin_cuenta(monkeypatch):
+    _stub_ops(monkeypatch)
+    monkeypatch.setattr(appmod, "cfg", dataclasses.replace(appmod.cfg, admin_token="t"))
+    h = {"X-Admin-Token": "t"}
+    assert client.put("/api/operators", json={"operadores": []}, headers=h).status_code == 422
+    # nombre vacío: apagaría una fila fantasma
+    r = client.put("/api/operators", headers=h,
+                   json={"account": "x", "operadores": [{"operador": "  ", "activo": False}]})
+    assert r.status_code == 422
 
 
 def test_robots_txt_no_indexar():

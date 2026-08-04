@@ -29,7 +29,7 @@ class LLM(Protocol):
 
 _VERIFY_SYSTEM = """\
 Sos un auditor ESTRICTO de calidad de atencion. Mira SOLO esta interaccion y decidi UNA cosa:
-¿el AGENTE hizo un esfuerzo EXTRA real, mas alla de atender el motivo minimo?
+¿el OPERADOR hizo un esfuerzo EXTRA real, mas alla de atender el motivo minimo?
 
 CUENTA como esfuerzo extra: empujar un registro/deposito CONCRETO (mandar link, pedir los
 datos, invitar a recargar), ofrecer un bono puntual, retener (invitar a volver a jugar),
@@ -70,8 +70,8 @@ def verify_uplift(target_messages: list[dict], motivo: str, llm: LLM) -> dict:
 # --- Generador de recomendacion (coaching) --------------------------------
 
 _RECOM_SYSTEM = """\
-Eres un coach de agentes de atencion al cliente de una plataforma de apuestas. Basandote en
-la conversacion, da UN consejo concreto y accionable (1 frase) de como el agente pudo llegar
+Eres un coach de operadores de atencion al cliente de una plataforma de apuestas. Basandote en
+la conversacion, da UN consejo concreto y accionable (1 frase) de como el operador pudo llegar
 al SIGUIENTE nivel en este motivo — usa la accion extra esperada del motivo (el UPLIFT).
 Debe ser ESPECIFICO a lo que paso, no generico. Si ya fue excelente, devuelve "".
 

@@ -58,13 +58,13 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
     operator_id = primary_operator(msgs)
     op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
     rubric = decide_rubric(
-        agent_message_count=stats.agent_message_count,
+        operator_message_count=stats.operator_message_count,
         bot_message_count=stats.bot_message_count,
     )
     eval_status, skip_reason = decide_eligibility(
         real_message_count=stats.message_count,
         customer_message_count=stats.contact_message_count,
-        business_message_count=stats.agent_message_count + stats.bot_message_count,
+        business_message_count=stats.operator_message_count + stats.bot_message_count,
         customer_text_count=stats.contact_text_message_count,
     )
     score = None

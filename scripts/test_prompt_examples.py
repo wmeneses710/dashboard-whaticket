@@ -54,15 +54,15 @@ def run(name: str, msgs: list[dict], llm) -> None:
     status, reason = decide_eligibility(
         real_message_count=stats.message_count,
         customer_message_count=stats.contact_message_count,
-        business_message_count=stats.agent_message_count + stats.bot_message_count,
+        business_message_count=stats.operator_message_count + stats.bot_message_count,
         customer_text_count=stats.contact_text_message_count,
     )
     print(f"### {name}  (cliente={stats.contact_message_count}, "
-          f"con texto={stats.contact_text_message_count}, agente={stats.agent_message_count})")
+          f"con texto={stats.contact_text_message_count}, agente={stats.operator_message_count})")
     if status != "evaluated":
         print(f"  ELEGIBILIDAD -> SKIP ({reason})  ✅ no se scorea\n")
         return
-    rubric = decide_rubric(agent_message_count=stats.agent_message_count,
+    rubric = decide_rubric(operator_message_count=stats.operator_message_count,
                            bot_message_count=stats.bot_message_count)
     res = score_conversation(rubric=rubric, target_messages=msgs, thread_context="", llm=llm)
     print(f"  SCORE -> {res.stars}★ {res.rating_label}")

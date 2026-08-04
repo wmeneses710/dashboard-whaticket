@@ -68,9 +68,19 @@
   .snapshot { font-size:12px; color:var(--muted); margin:16px 0 22px; }
   .snapshot b { color:var(--ink); font-weight:640; }
 
-  /* Filters */
-  .filters { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:22px; }
-  .filters > div { display:flex; flex-direction:column; gap:5px; }
+  /* Filters
+     GRILLA de 7 columnas, no flex-wrap: con flex los controles wrapeaban distinto en cada
+     ancho y el botón "Limpiar" caía en cualquier lado. Ahora el reparto es fijo:
+     fila 1 = los 7 selects (1 columna cada uno) · fila 2 = rango de fechas (3) +
+     búsqueda (3) + limpiar (1) = 7. Dos filas prolijas, mismas posiciones siempre.
+     Si se agrega un control hay que recontar: la suma de cada fila tiene que dar 7. */
+  .filters { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:12px; align-items:end; margin-bottom:12px; }
+  @media (max-width:1240px){ .filters{ grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  @media (max-width:900px){ .filters{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
+  .filters > div { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .filters select { width:100%; }
+  .filters .dr-group { grid-column:span 3; }
+  @media (max-width:900px){ .filters .dr-group{ grid-column:span 2; } }
   .filters label { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); font-weight:600; }
   select, input[type=search], input[type=datetime-local] { font-family:inherit; font-size:13px; color:var(--ink); background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 11px; cursor:pointer; transition:border-color .12s; }
   select:hover, input[type=search]:hover, input[type=datetime-local]:hover { border-color:var(--faint); }
@@ -79,9 +89,28 @@
   .filters .dr-group { display:flex; flex-direction:row; gap:10px; align-items:flex-end; background:var(--surface-2); border:1px solid var(--border); border-radius:11px; padding:7px 10px; }
   .dr-group > div { display:flex; flex-direction:column; gap:4px; }
   input[type=search] { width:100%; cursor:text; }
-  .filters .search { flex:1; min-width:190px; }
-  .btn-reset { border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px 13px; font-size:12.5px; cursor:pointer; font-family:inherit; transition:border-color .12s,color .12s; }
-  .btn-reset:hover { color:var(--ink); border-color:var(--accent); }
+  .filters .search { grid-column:span 3; }
+  @media (max-width:900px){ .filters .search{ grid-column:span 2; } }
+  .btn-reset { border:1px solid var(--border); background:transparent; color:var(--muted); border-radius:9px; padding:8px 13px; font-size:12.5px; cursor:pointer; font-family:inherit; transition:border-color .12s,color .12s; height:36px; }
+  .btn-reset:hover:not([disabled]) { color:var(--ink); border-color:var(--accent); }
+  .btn-reset[disabled] { opacity:.4; cursor:default; }
+  /* Control con valor distinto del default: se marca para que se vea DÓNDE está el filtro
+     sin tener que leer los 9 controles uno por uno. */
+  .filters select.on, .filters input.on { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 15%, transparent); }
+
+  /* Filtros activos (chips). Necesarios sobre todo para `rating`, que se activa
+     clickeando la Distribución y NO tiene control en la barra: sin el chip, el único
+     rastro de que está filtrando es la fila resaltada dentro de ese cuadro. */
+  .active-filters { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:0 0 20px; }
+  .af-lead { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); font-weight:600; }
+  .af { display:inline-flex; align-items:center; gap:7px; font-size:11.5px; background:var(--accent-soft); color:var(--accent);
+        border:1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius:999px; padding:3px 4px 3px 10px; }
+  .af .k { opacity:.7; font-weight:600; }
+  .af .v { font-weight:640; }
+  .af button { border:none; background:transparent; color:inherit; cursor:pointer; font-size:12px; line-height:1;
+               width:19px; height:19px; border-radius:50%; display:grid; place-items:center; font-family:inherit; }
+  .af button:hover { background:color-mix(in srgb, var(--accent) 22%, transparent); }
+  .af-none { font-size:12px; color:var(--faint); }
 
   /* KPI stat tiles */
   /* Columnas = ceil(total/2) via --kpi-cols (lo setea el front) -> reparte los KPIs
@@ -91,6 +120,27 @@
   @media (max-width:760px){ .kpis{ grid-template-columns:repeat(2,1fr);} }
   .tile { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:17px 18px; box-shadow:var(--shadow); min-width:0; }
   .tile .k { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); font-weight:600; }
+  /* Marca discreta de "hay explicación en el tooltip". */
+  .tile .k-info { color:var(--faint); margin-left:5px; font-size:10px; cursor:help; }
+
+  /* Tooltip propio. El atributo `title` nativo tarda ~1-2s en aparecer y ese retardo NO se
+     puede configurar por CSS ni por JS, así que la única salida es no usarlo. Acá el delay
+     es de 80ms: se siente instantáneo pero no dispara al pasar el mouse de largo.
+     max-width 260px entra dentro del ancho de un tile (~276px a 5 columnas), así que el
+     globo nunca se sale de la página ni en el tile de la última columna. */
+  .tip { position:relative; }
+  .tip::after {
+    content:attr(data-tip); position:absolute; left:0; top:calc(100% + 7px); z-index:40;
+    width:max-content; max-width:260px; white-space:normal; text-align:left;
+    background:var(--ink); color:var(--bg);
+    font-size:11.5px; font-weight:400; line-height:1.45; letter-spacing:0; text-transform:none;
+    padding:8px 10px; border-radius:8px; box-shadow:var(--shadow-lg);
+    opacity:0; visibility:hidden; transform:translateY(-3px); pointer-events:none;
+    transition:opacity .12s ease, transform .12s ease, visibility .12s;
+  }
+  .tip:hover::after, .tip:focus-visible::after {
+    opacity:1; visibility:visible; transform:none; transition-delay:.08s;
+  }
   .tile .v { font-size:34px; font-weight:700; letter-spacing:-.025em; margin-top:8px; line-height:1.05; }
   /* Valores de TEXTO (Canal top, Tendencia): más chicos y con elipsis, no se cortan. */
   .tile .v.sm { font-size:21px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
@@ -101,7 +151,12 @@
   /* .cols: IGUAL altura por fila (stretch, default). Operadores (más corto) LLENA esa
      altura via flex (.ops-card) y scrollea adentro, con el botón 'Ver todos' al FONDO —
      así usa el alto completo de la igualdad en vez de flotar arriba. */
-  .cols { display:grid; grid-template-columns:1.7fr 1fr; gap:16px; margin-bottom:16px; }
+  /* Fila de operadores: RESUMEN (Operadores, 4 columnas) a la izquierda y DETALLE
+     (★ por operador y motivo, 1 + N motivos) a la derecha, que se lleva el ancho porque
+     tiene 8 columnas. Antes esta fila era 1.7fr/1fr con "Conversión por operador" a la
+     izquierda; al desactivarse ese cuadro la matriz subió acá en su lugar (si quedaba
+     sola, Operadores a ancho completo se veía vacía: 4 columnas estiradas a 1600px). */
+  .cols { display:grid; grid-template-columns:1fr 1.7fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .col-stack{ display:flex; flex-direction:column; gap:16px; }
   /* Fila de 3 cuadros chicos (distribución · % depósito · calidad por motivo) */
@@ -120,6 +175,32 @@
   .conv-legend i.dash { background:none !important; border-top:3px dashed var(--r-mala); height:0; }
   .conv-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(235px,1fr)); gap:12px 16px; }
   .conv-mini h4 { font-size:12px; font-weight:640; margin:0 0 3px; letter-spacing:-.01em; }
+  .conv-mini h4 .vol { font-weight:500; color:var(--faint); font-size:10.5px; }
+  /* Placeholder cuando el operador no tiene NINGÚN mes que llegue al mínimo: un canvas
+     vacío se lee como gráfico roto; este texto dice por qué está vacío. */
+  .no-points { height:128px; display:grid; place-items:center; text-align:center; font-size:10.5px;
+               color:var(--faint); background:var(--surface-2); border-radius:8px; padding:0 8px; }
+  /* Toggle "ver todos / ver top N" dentro del encabezado de la tarjeta. */
+  .card-toggle { float:right; margin:-2px 0 0 10px; border:1px solid var(--border); background:transparent;
+                 color:var(--muted); border-radius:8px; padding:4px 10px; font-size:11px; font-weight:600;
+                 font-family:inherit; cursor:pointer; transition:border-color .12s,color .12s; }
+  .card-toggle:hover { color:var(--accent); border-color:var(--accent); }
+  /* Cuántos se están viendo de cuántos hay: el corte tiene que ser explícito, nunca silencioso. */
+  .shown-note { color:var(--faint); font-size:11px; }
+
+  /* Modal de operadores */
+  .ops-auth { display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; }
+  .ops-auth label { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--faint); font-weight:600; display:block; margin-bottom:5px; }
+  .ops-auth input[type=password] { width:100%; font-family:inherit; font-size:13px; color:var(--ink);
+    background:var(--surface); border:1px solid var(--border); border-radius:9px; padding:8px 11px; }
+  .ops-auth .btn-reset { height:36px; }
+  .ops-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .ops-table th { text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--faint); font-weight:600; padding:0 8px 8px; position:sticky; top:0; background:var(--surface); }
+  .ops-table td { padding:8px; border-top:1px solid var(--border); }
+  .ops-table input[type=checkbox] { width:16px; height:16px; cursor:pointer; accent-color:var(--accent); }
+  /* Apagado: se ve atenuado pero sigue legible — no desaparece, es una baja lógica. */
+  .ops-table tr.op-off td { opacity:.5; }
 
   /* Distribution */
   .distrow { display:grid; grid-template-columns:118px 1fr; align-items:center; gap:12px; margin:0 -8px 7px; padding:5px 8px; border-radius:8px; font-size:12.5px; cursor:pointer; transition:background .1s,opacity .1s; }
@@ -145,12 +226,17 @@
   .minibar span + span { border-left:2px solid var(--surface); }
   tr.op:hover .minibar span + span { border-left-color:var(--surface-2); }
   .ops-scroll { overflow-x:auto; }
-  /* Operadores comparte fila (igual altura) con Conversión por operador. La tabla LLENA
-     esa altura y scrollea adentro; el botón 'Ver todos' queda al FONDO — usa el alto
-     completo de la igualdad, no flota arriba. Requiere align-items:stretch en .cols. */
+  /* Operadores comparte fila (igual altura) con la matriz ★ por operador y motivo. La
+     tabla LLENA esa altura y scrollea adentro (puede tener ~50 operadores contra las 10
+     filas de la matriz), en vez de estirar la fila entera. Requiere align-items:stretch
+     en .cols, que es el default del grid. */
   .ops-card { display:flex; flex-direction:column; }
-  .ops-card .ops-body { flex:1 1 0; min-height:0; display:flex; flex-direction:column; }
-  .ops-card .ops-scroll { flex:1 1 0; min-height:0; overflow-y:auto; }
+  .ops-card .ops-body { display:flex; flex-direction:column; min-height:0; }
+  /* Tope EXPLÍCITO en px, no flex:1: las dos tarjetas de la fila scrollean adentro, y si
+     ninguna tuviera altura propia la altura de la fila se resolvería circular (cada una
+     esperando a la otra) y colapsaría al alto del encabezado. Con 50 operadores la tabla
+     mediría ~1800px; así crece hasta 460 y de ahí scrollea. */
+  .ops-card .ops-scroll { max-height:460px; overflow:auto; }
 
   /* Client cards (grouped by contact) */
   .tk { border:1px solid var(--border); border-radius:var(--radius); margin-bottom:11px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow); transition:border-color .12s; }
@@ -251,6 +337,8 @@
       <button v-else class="toggle" id="refreshBtn" type="button"
               title="Traer las sesiones scoreadas desde la última carga" @click="refresh">
         ↻ Actualizar</button>
+      <button class="toggle" type="button" @click="openOps"
+              title="Prender o apagar operadores de esta cuenta (baja lógica: no borra nada)">Operadores</button>
       <button class="toggle" type="button" @click="toggleTheme">Tema</button>
     </div>
   </header>
@@ -259,43 +347,64 @@
 
   <div class="filters">
     <div><label>Estado</label>
-      <select v-model="filters.estado"><option value="all">Todas</option><option value="evaluated">Evaluadas</option><option value="skipped">Sin evaluar</option></select></div>
+      <select v-model="filters.estado" :class="{on: filters.estado!=='all'}"><option value="all">Todas</option><option value="evaluated">Evaluadas</option><option value="skipped">Sin evaluar</option></select></div>
     <div><label>Segmento</label>
-      <select v-model="filters.segment"><option value="all">Todos</option>
-        <option v-for="s in options.segments" :key="s" :value="s">{{ cap(s) }}</option></select></div>
+      <select v-model="filters.segment" :class="{on: filters.segment!=='all'}"><option value="all">Todos</option>
+        <option v-for="s in options.segments" :key="s" :value="s">{{ SEGMENT_LABEL[s]||cap(s) }}</option></select></div>
     <div><label>Canal</label>
-      <select v-model="filters.canal"><option value="all">Todos</option>
+      <select v-model="filters.canal" :class="{on: filters.canal!=='all'}"><option value="all">Todos</option>
         <option v-for="c in options.channels" :key="c" :value="c">{{ c }}</option></select></div>
     <div><label>Operador</label>
-      <select v-model="filters.op"><option value="all">Todos</option>
+      <select v-model="filters.op" :class="{on: filters.op!=='all'}"><option value="all">Todos</option>
         <option v-for="o in (options.operators||[]).filter(Boolean)" :key="o" :value="o">{{ (o||'').length>16?short(o):o }}</option></select></div>
     <div><label>Motivo</label>
-      <select v-model="filters.motivo"><option value="all">Todos</option>
+      <select v-model="filters.motivo" :class="{on: filters.motivo!=='all'}"><option value="all">Todos</option>
         <option v-for="m in (options.motivos||[])" :key="m" :value="m">{{ MOTIVO_LABEL[m]||m }}</option></select></div>
+    <div><label>Equipo</label>
+      <select v-model="filters.inactivos" :class="{on: filters.inactivos!=='ocultar'}"
+              title="Los operadores apagados están escondidos por default (baja lógica: no se borró nada). Acá se pueden traer de vuelta.">
+        <option value="ocultar">Solo activos</option>
+        <option value="incluir">Incluir apagados</option></select></div>
     <div><label>Orden</label>
-      <select v-model="filters.sort"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
+      <select v-model="filters.sort" :class="{on: filters.sort!=='new'}"><option value="new">Más recientes</option><option value="old">Más viejas</option><option value="worst">Peor calificadas</option><option value="best">Mejor calificadas</option></select></div>
     <div class="dr-group">
-      <div><label>Desde</label><input type="datetime-local" v-model="filters.from"></div>
-      <div><label>Hasta</label><input type="datetime-local" v-model="filters.to"></div></div>
+      <div><label>Desde</label><input type="datetime-local" v-model="filters.from" :class="{on: !!filters.from}"></div>
+      <div><label>Hasta</label><input type="datetime-local" v-model="filters.to" :class="{on: !!filters.to}"></div></div>
     <div class="search"><label>Buscar</label>
-      <input type="search" v-model="filters.search" placeholder="cliente u operador…" autocomplete="off"></div>
-    <button class="btn-reset" type="button" @click="resetFilters">Limpiar filtros</button>
+      <input type="search" v-model="filters.search" :class="{on: !!filters.search.trim()}" placeholder="cliente u operador…" autocomplete="off"></div>
+    <button class="btn-reset" type="button" :disabled="!isDirty" @click="resetFilters"
+            :title="isDirty ? 'Vuelve los 10 controles a su valor inicial' : 'No hay nada filtrado'">
+      Limpiar filtros<span v-if="activeChips.length" class="num"> · {{ activeChips.length }}</span></button>
+  </div>
+
+  <div class="active-filters">
+    <span class="af-lead">Filtros activos</span>
+    <!-- Sin filtros la cuenta NO está completa si hay operadores apagados: decirlo, en vez
+         de afirmar algo que la baja lógica desmiente. -->
+    <span v-if="!activeChips.length" class="af-none">{{ sinFiltrosNota }}</span>
+    <span class="af" v-for="c in activeChips" :key="c.key">
+      <span class="k">{{ c.label }}:</span><span class="v">{{ c.value }}</span>
+      <button type="button" :aria-label="'Quitar filtro '+c.label" :title="'Quitar '+c.label" @click="clearFilter(c.key)">✕</button>
+    </span>
   </div>
 
   <div v-if="loadError" class="charts-status error-state" role="alert" style="margin-bottom:12px">⚠ {{ loadError }} <button type="button" class="pgbtn" style="margin-left:8px" @click="refresh">Reintentar</button></div>
 
   <section class="kpis" :style="{'--kpi-cols': Math.max(1, Math.ceil(kpiTiles.length/2))}">
     <template v-if="loadingSummary">
-      <div class="tile" v-for="n in 5" :key="'sk'+n">
+      <!-- Tantos esqueletos como tiles reales: la grilla usa --kpi-cols = ceil(total/2),
+           así que con 5 fijos contra 8 tiles quedaba una fila de 4 + 1 huérfano. -->
+      <div class="tile" v-for="n in Math.max(4, kpiTiles.length)" :key="'sk'+n">
         <div class="skel" style="height:11px;width:55%"></div>
         <div class="skel" style="height:28px;width:45%;margin-top:12px"></div>
         <div class="skel" style="height:11px;width:70%;margin-top:10px"></div>
       </div>
     </template>
     <template v-else>
-      <div class="tile" v-for="t in kpiTiles" :key="t.k">
-        <div class="k">{{ t.k }}</div>
-        <div class="v" :class="{sm: t.sm}">{{ t.v }}<small v-if="t.u">{{ t.u }}</small></div>
+      <div class="tile" v-for="t in kpiTiles" :key="t.k"
+           :class="{tip: !!t.title}" :data-tip="t.title||null">
+        <div class="k">{{ t.k }}<span v-if="t.title" class="k-info" role="note" :aria-label="t.title">ⓘ</span></div>
+        <div class="v" :class="{sm: t.sm}">{{ fmtN(t.v) }}<small v-if="t.u">{{ t.u }}</small></div>
         <div class="foot">{{ t.foot }}</div>
       </div>
     </template>
@@ -307,9 +416,9 @@
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
         <div v-else>
           <div v-for="row in distRows" :key="row.label"
-               :class="['distrow', {active: filters.rating===row.label, dim: filters.rating!=='all' && filters.rating!==row.label, static: row.n===0}]"
+               :class="['distrow','tip', {active: filters.rating===row.label, dim: filters.rating!=='all' && filters.rating!==row.label, static: row.n===0}]"
                :role="row.n>0?'button':null" :tabindex="row.n>0?0:null" :aria-pressed="filters.rating===row.label"
-               :title="row.n+' sesiones evaluadas con '+row.label+' ('+row.stars+'★). La estrella la fija la rúbrica desde la etiqueta del LLM. Clic para filtrar.'"
+               :data-tip="row.n+' sesiones evaluadas con '+row.label+' ('+row.stars+'★). La estrella la fija la rúbrica desde la etiqueta del LLM. Clic para filtrar.'"
                @click="row.n>0 && toggleRating(row.label)" @keydown.enter.prevent="row.n>0 && toggleRating(row.label)" @keydown.space.prevent="row.n>0 && toggleRating(row.label)">
             <span class="lbl"><span class="swatch" :style="{background:row.color}"></span>{{ row.label }} <span style="color:var(--faint)">{{ row.stars }}★</span></span>
             <span class="barrow"><span class="fill" :style="{width:row.width+'%', background:row.color}"></span><span class="val num">{{ row.n }}</span></span>
@@ -320,8 +429,8 @@
         <h2>% depósito por canal <small>· el resultado de negocio, no la estrella · respeta filtros</small></h2>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 3" :key="n" :style="{width:(85-n*15)+'%'}"></div></div>
         <div v-else>
-          <div class="distrow static" v-for="r in depByChannel" :key="r.canal"
-               :title="r.dep+' de '+r.n+' sesiones de '+r.canal+' tuvieron depósito (comprobante+recarga, gate determinista) = '+r.pct+'%'">
+          <div class="distrow static tip" v-for="r in depByChannel" :key="r.canal"
+               :data-tip="r.dep+' de '+r.n+' sesiones de '+r.canal+' tuvieron depósito (comprobante+recarga, gate determinista) = '+r.pct+'%. No cuenta las sesiones de tamaño anómalo.'">
             <span class="lbl">{{ r.canal }} <span style="color:var(--faint)">{{ r.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:r.pct+'%', background:accentColor}"></span><span class="val num">{{ r.pct }}%</span></span>
           </div>
@@ -333,9 +442,9 @@
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(90-n*10)+'%'}"></div></div>
         <div v-else>
           <div v-for="m in motivoStats" :key="m.motivo"
-               :class="['distrow', {active: filters.motivo===m.motivo, dim: filters.motivo!=='all' && filters.motivo!==m.motivo, static: m.motivo==='sin_motivo'}]"
+               :class="['distrow','tip', {active: filters.motivo===m.motivo, dim: filters.motivo!=='all' && filters.motivo!==m.motivo, static: m.motivo==='sin_motivo'}]"
                :role="m.motivo!=='sin_motivo'?'button':null" :tabindex="m.motivo!=='sin_motivo'?0:null" :aria-pressed="filters.motivo===m.motivo"
-               :title="(m.avg!=null ? '★ promedio '+m.avg.toFixed(2)+' sobre '+m.evaluadas+' sesiones evaluadas de '+(MOTIVO_LABEL[m.motivo]||m.motivo)+'. Piso 3 = atendió el motivo (mínimo correcto); sube a 4-5 con acción extra + cortesía.' : 'sin sesiones evaluadas')+' Clic para filtrar.'"
+               :data-tip="(m.avg!=null ? '★ promedio '+m.avg.toFixed(2)+' sobre '+m.evaluadas+' sesiones evaluadas de '+(MOTIVO_LABEL[m.motivo]||m.motivo)+' (de '+m.n+' en total, el resto sin evaluar). Piso 3 = atendió el motivo; sube a 4-5 con acción extra + cortesía.' : 'sin sesiones evaluadas')+' Clic para filtrar.'"
                @click="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.enter.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.space.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)">
             <span class="lbl">{{ MOTIVO_LABEL[m.motivo]||m.motivo }} <span style="color:var(--faint)">{{ m.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:(m.avg?m.avg/5*100:0)+'%', background:m.avg?starColor(m.avg):'var(--faint)'}"></span><span class="val num">{{ m.avg!=null ? m.avg.toFixed(2)+'★' : '—' }}</span></span>
@@ -346,6 +455,12 @@
   </div>
 
   <div class="cols">
+    <!-- CUADRO DESACTIVADO (pedido del negocio): "Conversión por operador". Se deja el
+         markup entero para poder restituirlo sin reescribirlo. OJO al restituirlo: era el
+         ÚNICO acceso al drill-down de cohorte (openDrill -> /api/conversion/cohort), que
+         queda inalcanzable desde la UI mientras esté comentado. El fetch de
+         /api/conversion NO se tocó: los KPIs "Conversión" y "Re-engagement" y los dos
+         cuadros de conversión de abajo siguen usando esa misma respuesta.
     <div class="card">
     <h2>Conversión por operador <small>· jugador potencial → jugador · first-touch · grano jugador: respeta canal/segmento/operador/fecha, NO motivo/rating/estado</small></h2>
     <div v-if="loadingConversion" class="skel-bars"><div class="skel" style="height:12px;width:60%;margin-bottom:16px"></div><div class="skel" v-for="n in 5" :key="n" :style="{width:(92-n*9)+'%'}"></div></div>
@@ -362,6 +477,7 @@
       </div>
     </div>
     </div>
+    -->
     <div class="card ops-card">
       <h2>Operadores <small>· los más activos primero · respeta filtros</small></h2>
       <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
@@ -381,12 +497,10 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <div class="card" style="margin-bottom:16px">
-    <h2>★ por operador y motivo <small>· la vara justa: cada motivo con su propio piso · top 10 · respeta filtros</small></h2>
+    <div class="card ops-card">
+    <h2>★ por operador y motivo <small>· la vara justa: cada motivo con su propio piso · TODOS los operadores ({{ opsMotivo.operators.length }}) · respeta filtros</small></h2>
     <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 6" :key="n" style="height:22px"></div></div>
-    <div v-else-if="opsMotivo.operators.length" class="ops-scroll" style="max-height:none">
+    <div v-else-if="opsMotivo.operators.length" class="ops-body"><div class="ops-scroll">
       <table><thead><tr><th>Operador</th><th class="r" v-for="m in opsMotivo.motivos" :key="m">{{ MOTIVO_LABEL[m]||m }}</th></tr></thead>
         <tbody>
           <tr class="op" v-for="o in opsMotivo.operators" :key="o.name">
@@ -397,8 +511,9 @@
           </tr>
         </tbody>
       </table>
-    </div>
+    </div></div>
     <div v-else style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
+    </div>
   </div>
 
   <div class="charts-status" v-if="chartsStatus" :class="chartsStatus.kind+'-state'">
@@ -406,42 +521,56 @@
   </div>
   <div class="charts">
     <div class="card span-2"><h2>Nuevos jugadores vs % depósito <small>· por mes · jugadores · depósito = comprobante del cliente (recarga) · ventana fija, ignora filtros</small></h2>
-      <p style="font-size:12px;color:var(--muted);margin:-6px 0 12px">Barras = jugadores nuevos por mes · línea = % que depositó. Cuando el <b style="color:var(--ink)">volumen sube</b>, la <b style="color:var(--ink)">tasa de depósito suele bajar</b>.</p>
+      <p style="font-size:12px;color:var(--muted);margin:-6px 0 12px">Barras = jugadores nuevos por mes · <b style="color:var(--ink)">línea llena</b> = % de <b style="color:var(--ink)">esos mismos nuevos</b> que depositó (comparte población con las barras) · <b style="color:var(--ink)">línea punteada</b> = % de <b style="color:var(--ink)">todas</b> las conversaciones del segmento con comprobante — otro denominador, casi siempre más alto. Cuando el <b style="color:var(--ink)">volumen sube</b>, la <b style="color:var(--ink)">tasa de depósito suele bajar</b>.</p>
       <div style="position:relative;height:330px"><canvas ref="nvdCombo"></canvas></div>
     </div>
-    <div class="card"><h2>% depósito en WhatsApp por operador <small>· depósito = comprobante del cliente (recarga) · meses con &lt;8 conv. omitidos · top 7 + otros · ventana fija, ignora filtros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="depPctChart"></canvas></div></div>
-    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros · ventana fija, ignora filtros</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="loadChart"></canvas></div></div>
+    <div class="card"><h2>% depósito en WhatsApp por operador <small>· depósito = comprobante del cliente (recarga) · meses con &lt;8 conv. omitidos · top 7 + otros · ventana fija, ignora filtros salvo Equipo</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="depPctChart"></canvas></div></div>
+    <div class="card"><h2>Carga mensual por operador <small>· conversaciones de jugadores · ¿saturación? · top 7 + otros · ventana fija, ignora filtros salvo Equipo</small></h2><div class="chart-wrap" style="height:300px"><canvas ref="loadChart"></canvas></div></div>
     <div class="card span-2"><h2>Conversiones de jugadores nuevos por mes <small>· cohorte por mes de ingreso · barras = nº · línea = % · grano jugador, no filtra por motivo/rating/estado</small></h2>
       <div style="position:relative;height:300px"><canvas ref="convMonth"></canvas></div>
     </div>
-    <div class="card span-2"><h2>Conversión vs atención pasiva por operador <small>· por mes · top 8 · verde = conv% · rojo = pasiva% · grano jugador, no filtra por motivo/rating/estado</small></h2>
-      <div class="conv-legend"><span><i style="background:var(--r-excelente)"></i>% conversión</span><span><i class="dash"></i>% atención pasiva</span></div>
+    <div class="card span-2"><h2>Conversión vs atención pasiva por operador <small>· por mes · verde = conv% · rojo = pasiva% (sobre CLASIFICADAS, no sobre el total) · meses con &lt;5 jugadores omitidos · grano jugador, no filtra por motivo/rating/estado</small>
+        <button v-if="convPasvOps.length>OPS_CAP" class="card-toggle" type="button" @click="expand.convPasv=!expand.convPasv">
+          {{ expand.convPasv ? 'Ver top '+OPS_CAP : 'Ver los '+convPasvOps.length }}</button></h2>
+      <div class="conv-legend"><span><i style="background:var(--r-excelente)"></i>% conversión</span><span><i class="dash"></i>% atención pasiva</span>
+        <span class="shown-note">{{ convPasvShown.length }} de {{ convPasvOps.length }} operadores</span></div>
       <div class="conv-grid">
-        <div class="conv-mini" v-for="(op,i) in convPasvOps" :key="op.name">
-          <h4>{{ (op.name||'').length>18?short(op.name):(op.name||'') }}</h4>
-          <div style="position:relative;height:128px"><canvas :ref="el => { if(el) convPasvCanvases[i]=el }"></canvas></div>
+        <div class="conv-mini" v-for="op in convPasvShown" :key="op.name">
+          <h4>{{ (op.name||'').length>18?short(op.name):(op.name||'') }} <span class="vol num">{{ op.n }}</span></h4>
+          <div style="position:relative;height:128px"><canvas :ref="el => { if(el) convPasvCanvases[op.name]=el }"></canvas></div>
         </div>
         <div v-if="!convPasvOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Aún sin clasificación de pasividad (el pase LLM se está poniendo al día).</div>
       </div>
     </div>
-    <div class="card span-2"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · top 8 · meses con &lt;5 convs omitidos · respeta filtros</small></h2>
+    <div class="card span-2"><h2>Evolución de la calidad por operador <small>· ★ promedio por mes · solo evaluadas · meses con &lt;5 sesiones omitidos · respeta filtros</small>
+        <button v-if="qualOps.length>OPS_CAP" class="card-toggle" type="button" @click="expand.qual=!expand.qual">
+          {{ expand.qual ? 'Ver top '+OPS_CAP : 'Ver los '+qualOps.length }}</button></h2>
+      <div class="conv-legend"><span class="shown-note">{{ qualShown.length }} de {{ qualOps.length }} operadores · el número al lado del nombre es su volumen de sesiones</span></div>
       <div class="conv-grid">
-        <div class="conv-mini" v-for="(op,i) in qualOps" :key="op.name">
-          <h4>{{ (op.name||'').length>18?short(op.name):(op.name||'') }}</h4>
-          <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualCanvases[i]=el }"></canvas></div>
+        <div class="conv-mini" v-for="op in qualShown" :key="op.name">
+          <h4>{{ (op.name||'').length>18?short(op.name):(op.name||'') }} <span class="vol num">{{ op.n }}</span></h4>
+          <!-- Sin ningún mes que llegue al mínimo no hay nada que dibujar: se dice, en vez
+               de dejar un canvas en blanco que parece un bug. -->
+          <div v-if="hasPoints(op.data)" style="position:relative;height:128px"><canvas :ref="el => { if(el) qualCanvases[op.name]=el }"></canvas></div>
+          <div v-else class="no-points">sin ningún mes con ≥5 sesiones</div>
         </div>
         <div v-if="!qualOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin sesiones evaluadas en este filtro.</div>
       </div>
     </div>
-    <div class="card span-2"><h2>Evolución de la calidad por motivo <small>· ★ promedio por mes · una línea por operador + promedio · cada motivo con su piso · respeta filtros</small></h2>
+    <div class="card span-2"><h2>Evolución de la calidad por motivo <small>· ★ promedio por mes · una línea por operador + promedio · meses con &lt;3 (operador) / &lt;5 (promedio) omitidos · respeta filtros</small>
+        <button class="card-toggle" type="button" @click="expand.qualMotivo=!expand.qualMotivo">
+          {{ expand.qualMotivo ? 'Ver top '+OPS_CAP+' por motivo' : 'Ver todos los operadores' }}</button></h2>
       <div class="conv-legend" v-if="qualMotivoLegend.length" style="flex-wrap:wrap">
         <span v-for="op in qualMotivoLegend" :key="op.name"><i :style="{background:op.color}"></i>{{ (op.name||'').length>18?short(op.name):(op.name||'') }}</span>
         <span><i class="dash" style="background:var(--ink)"></i>Promedio del motivo</span>
       </div>
+      <!-- Acá TODOS los operadores comparten un mini por motivo (una línea cada uno), así
+           que al expandir se vuelve spaghetti. Se recorta siempre y se dice cuánto. -->
+      <div class="conv-legend"><span class="shown-note">{{ expand.qualMotivo ? 'todos los operadores por motivo — con muchas líneas el gráfico se vuelve ilegible; usá el filtro Operador para aislar a uno' : 'top '+OPS_CAP+' operadores por motivo (por volumen)' }}</span></div>
       <div class="conv-grid">
-        <div class="conv-mini" v-for="(m,i) in qualMotivoOps" :key="m.motivo">
-          <h4>{{ MOTIVO_LABEL[m.motivo]||m.motivo }}</h4>
-          <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualMotivoCanvases[i]=el }"></canvas></div>
+        <div class="conv-mini" v-for="m in qualMotivoShown" :key="m.motivo">
+          <h4>{{ MOTIVO_LABEL[m.motivo]||m.motivo }} <span class="vol num">{{ m.operators.length }}/{{ m.n_ops }}</span></h4>
+          <div style="position:relative;height:128px"><canvas :ref="el => { if(el) qualMotivoCanvases[m.motivo]=el }"></canvas></div>
         </div>
         <div v-if="!qualMotivoOps.length" style="color:var(--faint);padding:8px 2px;font-size:12.5px">Sin sesiones evaluadas en este filtro.</div>
       </div>
@@ -549,6 +678,65 @@
       </div>
     </div>
   </div>
+  <!-- Operadores: prender/apagar (baja lógica). Escribe con token en X-Admin-Token. -->
+  <div class="backdrop" :class="{show: ops.open}" @click.self="closeOps">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <div class="who">Operadores · {{ account }}
+          <small v-if="!ops.loading">· {{ opsActivos }} activos de {{ ops.rows.length }}</small></div>
+        <button class="x" type="button" aria-label="Cerrar" @click="closeOps">✕</button>
+      </div>
+      <div style="padding:16px 20px 6px">
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px">
+          Apagar un operador lo <b style="color:var(--ink)">esconde de los cuadros</b> sin borrar
+          nada: es una baja lógica y se revierte prendiéndolo de nuevo. Un operador nuevo aparece
+          <b style="color:var(--ink)">activo</b> por default.
+          <!-- TEMPORAL: quitar esta línea cuando el filtro esté aplicado en las queries. -->
+          <em>El filtro en los cuadros se conecta en el paso siguiente; acá ya se guarda la decisión.</em>
+        </p>
+        <div v-if="!ops.escritura" class="charts-status error-state" style="margin-bottom:12px">
+          ⚠ Solo lectura: falta configurar <code>DASHBOARD_ADMIN_TOKEN</code> en el entorno.
+          Generalo con <code>python scripts/gen_admin_token.py</code>.
+        </div>
+        <div v-else class="ops-auth">
+          <div style="flex:1;min-width:210px">
+            <label>Token de administración</label>
+            <input type="password" v-model="ops.token" placeholder="X-Admin-Token…" autocomplete="off">
+          </div>
+          <button class="btn-reset" type="button" @click="suggestOps"
+                  :title="'Pre-marca como activos a los que tienen ≥'+ops.umbral+' sesiones en '+ops.dias+' días. Reproduce la lista que dio el negocio.'">
+            Sugerir por actividad</button>
+          <button class="btn-reset" type="button" :disabled="ops.saving || !ops.token.trim()"
+                  @click="saveOps">{{ ops.saving ? 'Guardando…' : 'Guardar' }}</button>
+        </div>
+        <div v-if="ops.msg" class="charts-status" :class="ops.error?'error-state':'loading-state'"
+             style="margin:10px 0 0">{{ ops.msg }}</div>
+      </div>
+      <div style="padding:6px 20px 18px;overflow-y:auto;max-height:56vh">
+        <div v-if="ops.loading" class="loading">Cargando operadores…</div>
+        <table v-else class="ops-table">
+          <thead><tr>
+            <th>Activo</th><th>Operador</th>
+            <th class="r" title="Sesiones totales, todo el histórico">Sesiones</th>
+            <th class="r" :title="'Sesiones en los últimos '+ops.dias+' días'">Recientes</th>
+            <th class="r">Última</th>
+          </tr></thead>
+          <tbody>
+            <tr class="op" v-for="o in ops.rows" :key="o.operador" :class="{'op-off': !o.activo}">
+              <td><input type="checkbox" v-model="o.activo" :disabled="!ops.escritura"
+                         :aria-label="'Activar '+o.operador"></td>
+              <td style="font-weight:600">{{ o.operador }}</td>
+              <td class="r num">{{ fmtN(o.sesiones) }}</td>
+              <td class="r num" :style="{color: o.recientes>=ops.umbral ? 'var(--r-buena)' : 'var(--faint)'}">
+                {{ fmtN(o.recientes) }}</td>
+              <td class="r num" style="color:var(--faint)">{{ o.ultima_actividad || '—' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div class="backdrop" :class="{show: drill.open}" @click.self="closeDrill">
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head"><div class="who">Cohorte · {{ drill.op }} <small>· jugadores nuevos · abrí uno para ver qué pasó</small></div><button class="x" type="button" aria-label="Cerrar" @click="closeDrill">✕</button></div>
@@ -580,6 +768,11 @@ const cvar = n => getComputedStyle(document.documentElement).getPropertyValue(n)
 const short = id => id ? String(id).slice(0,8) : "—";
 const fmtDate = s => { if(!s) return "—"; const d=new Date(s); return d.toLocaleDateString("es-AR",{day:"2-digit",month:"short"})+" "+d.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"}); };
 const secs = v => v==null? "—" : v<60? Math.round(v)+"s" : v<3600? Math.round(v/60)+"m" : (v/3600).toFixed(1)+"h";
+// Miles con separador: "111174" es ilegible de un vistazo en un KPI; "111.174" no.
+// useGrouping forzado: el locale `es` NO agrupa 4 dígitos por defecto (8560 -> "8560"), y
+// mezclado con uno de 6 en la misma línea ("102.614 evaluadas · 8560 sin evaluar") se lee
+// como un error de formato. Acá pesa más la consistencia visual que la tipografía estricta.
+const fmtN = v => typeof v === "number" ? v.toLocaleString("es", {useGrouping: true}) : v;
 const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
 const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
@@ -589,6 +782,10 @@ const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
 const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", sin_motivo:"Sin motivo" };
+// El SEGMENTO dice QUIÉN está del otro lado del chat, no quién atiende. "Agente" es el
+// cliente vendedor/afiliador (cola "Agente 👨👩"), no nuestro personal: quien atiende es
+// siempre el OPERADOR. Se etiqueta explícito para que la palabra no se lea al revés.
+const SEGMENT_LABEL = { jugador:"Jugador", agente:"Agente", marketing:"Marketing", interno:"Interno · staff", descartar:"Descartar (prueba)", otro:"Otro" };
 const RATINGS = {
   excelente:{s:5,c:"--r-excelente"}, buena:{s:4,c:"--r-buena"}, aceptable:{s:3,c:"--r-aceptable"},
   deficiente:{s:2,c:"--r-deficiente"}, mala:{s:1,c:"--r-mala"},
@@ -596,6 +793,33 @@ const RATINGS = {
 };
 const ORDER = ["excelente","buena","aceptable","deficiente","mala"];
 const PAGE_SIZE = 12;
+// FUENTE ÚNICA del estado inicial de los filtros. La usan el reactive(), "Limpiar filtros"
+// y el cambio de cuenta. Antes cada uno repetía el objeto a mano y `motivo` se había
+// quedado afuera de DOS de los tres -> el botón no limpiaba Motivo y cambiar de cuenta se
+// lo arrastraba. Un filtro nuevo se agrega ACÁ y queda cableado en los tres lugares.
+const FILTER_DEFAULTS = { estado:"all", segment:"all", canal:"all", op:"all", motivo:"all",
+                          sort:"new", from:"", to:"", search:"", rating:"all",
+                          // Baja lógica de operadores: por default los apagados no se ven.
+                          // "incluir" los trae de vuelta — nunca se borró nada.
+                          inactivos:"ocultar" };
+const cap = s => s ? s[0].toUpperCase()+s.slice(1) : s;
+const ESTADO_LABEL = { evaluated:"Evaluadas", skipped:"Sin evaluar" };
+// Cómo se rotula cada filtro en los chips de "Filtros activos". `sort` NO está a
+// propósito: es ORDEN, no filtro — no cambia la población, solo cómo se lista — así que
+// no debe contar como filtro activo. `rating` SÍ está y es el que más importa: se activa
+// clickeando la Distribución y no tiene control propio en la barra.
+const FILTER_META = {
+  estado:  { label:"Estado",       show:v => ESTADO_LABEL[v] || v },
+  segment: { label:"Segmento",     show:v => SEGMENT_LABEL[v] || cap(v) },
+  canal:   { label:"Canal",        show:v => v },
+  op:      { label:"Operador",     show:v => v },
+  motivo:  { label:"Motivo",       show:v => MOTIVO_LABEL[v] || v },
+  rating:  { label:"Calificación", show:v => v + (RATINGS[v] ? " " + RATINGS[v].s + "★" : "") },
+  from:    { label:"Desde",        show:v => fmtDate(v) },
+  to:      { label:"Hasta",        show:v => fmtDate(v) },
+  search:  { label:"Buscar",       show:v => '"' + String(v).trim() + '"' },
+  inactivos: { label:"Equipo",     show:() => "incluyendo operadores apagados" },
+};
 const ratingColor = l => RATINGS[l] ? cvar(RATINGS[l].c) : cvar("--faint");
 const starColor = a => { const l=a>=4.5?"excelente":a>=3.5?"buena":a>=2.5?"aceptable":a>=1.5?"deficiente":"mala"; return cvar(RATINGS[l].c); };
 
@@ -614,7 +838,7 @@ createApp({
   setup() {
     const accounts = ref([]);
     const account = ref(null);
-    const filters = reactive({ estado:"all", segment:"all", canal:"all", op:"all", motivo:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
+    const filters = reactive({ ...FILTER_DEFAULTS });
     const options = reactive({ segments:[], channels:[], operators:[] });
     const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]}, quality_motivo:{months:[],motivos:[]} });
     const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0,total_returned:0,ret_pct:0}, by_month:{months:[],potential:[],converted:[],pct:[],returned:[],ret_pct:[]}, evolution:{months:[],operators:[]} });
@@ -628,9 +852,18 @@ createApp({
     const seqs = { summary:0, tickets:0, conversion:0 };
     const openKeys = reactive(new Set());
     const updating = ref(false);
+    // Cuántos mini-gráficos se muestran cuando la tarjeta está PLEGADA.
+    const OPS_CAP = 8;
+    const expand = reactive({ qual:true, convPasv:true, qualMotivo:false });
     let loadedCount = 0;
     const modal = reactive({ open:false, loading:false, detail:null, title:"" });
     const drill = reactive({ open:false, op:"", loading:false, rows:[] });
+    // Modal de operadores. El token se guarda en localStorage: es un secreto compartido que
+    // el humano tipea una vez, no una sesión con login. NUNCA viaja en la página servida —
+    // si estuviera embebido, cualquiera que abre el dashboard se lo lleva.
+    const OPS_TOKEN_KEY = "dash_admin_token";
+    const ops = reactive({ open:false, loading:false, saving:false, rows:[], umbral:100,
+                           dias:30, escritura:false, token:"", msg:"", error:false });
 
     // refs de canvas para Chart.js
     const nvdCombo = ref(null), depPctChart = ref(null), loadChart = ref(null), convMonth = ref(null);
@@ -648,6 +881,7 @@ createApp({
       if (filters.canal!=="all") p.set("canal", filters.canal);
       if (filters.op!=="all") p.set("op", filters.op);
       if (filters.motivo!=="all") p.set("motivo", filters.motivo);
+      if (filters.inactivos!=="ocultar") p.set("inactivos", filters.inactivos);
       if (filters.rating!=="all") p.set("rating", filters.rating);
       if (filters.from) p.set("from", filters.from);
       if (filters.to) p.set("to", filters.to);
@@ -697,13 +931,17 @@ createApp({
       catch(e) {}
     }
     async function loadCharts() {
-      const acc = account.value, c = chartsCache[acc];
+      // La caché se keyea por cuenta Y por `inactivos`: /api/charts ignora todos los
+      // filtros MENOS ese, así que sin incluirlo en la clave, cambiar Equipo servía datos
+      // viejos con los operadores apagados todavía dibujados.
+      const acc = account.value, key = acc + "|" + filters.inactivos, c = chartsCache[key];
       if (c && (Date.now()-c.ts < CHARTS_TTL)) { charts.value = c.data; chartsStatus.value=null; await nextTick(); renderCharts(); return; }
-      if (chartsInFlight === acc) return;
-      chartsInFlight = acc; chartsStatus.value = {kind:"loading", msg:"Cargando cuadros…"};
+      if (chartsInFlight === key) return;
+      chartsInFlight = key; chartsStatus.value = {kind:"loading", msg:"Cargando cuadros…"};
       try {
-        const d = await fetchJSON("/api/charts?account=" + encodeURIComponent(acc));
-        chartsCache[acc] = { data:d, ts:Date.now() };
+        const d = await fetchJSON("/api/charts?account=" + encodeURIComponent(acc)
+                                  + (filters.inactivos!=="ocultar" ? "&inactivos=" + filters.inactivos : ""));
+        chartsCache[key] = { data:d, ts:Date.now() };
         if (acc === account.value) { charts.value = d; chartsStatus.value=null; await nextTick(); renderCharts(); }
       } catch(e) { if (acc === account.value) chartsStatus.value = {kind:"error", msg:"No se pudieron cargar los cuadros. Probá con Actualizar."}; }
       finally { chartsInFlight = null; }
@@ -713,21 +951,39 @@ createApp({
     const debouncedFilter = debounce(() => { tickets.page = 1; fetchSummary(); fetchTickets(); fetchConversion(); }, 300);
     async function switchAccount(acc) {
       account.value = acc;
-      Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" });
+      Object.assign(filters, FILTER_DEFAULTS);
       tickets.page = 1; openKeys.clear();
       // limpia los refs de canvas de la cuenta anterior (si tenía más operadores/motivos,
       // quedaban canvases detached en los dicts reactivos -> se re-setean al re-renderizar).
       [qualCanvases, qualMotivoCanvases, convPasvCanvases].forEach(d => Object.keys(d).forEach(k => delete d[k]));
       const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0;
-      charts.value = chartsCache[acc]?.data || null;
+      // después del reset de filtros, inactivos vuelve a "ocultar" -> esa es la clave
+      charts.value = chartsCache[acc + "|" + filters.inactivos]?.data || null;
       await Promise.all([fetchOptions(), fetchSummary(), fetchTickets(), fetchConversion()]);
       loadCharts();
     }
+    // Un filtro está ACTIVO si su valor difiere de SU default en FILTER_DEFAULTS. Antes se
+    // usaba la heurística `!== "all" && !== ""`, que se rompió al agregar `inactivos`
+    // (default "ocultar"): el chip aparecía siempre, contradiciendo al select. Comparar
+    // contra el default real funciona para cualquier filtro que se agregue después.
+    const activeChips = computed(() => Object.keys(FILTER_META)
+      .filter(k => String(filters[k] ?? "").trim() !== String(FILTER_DEFAULTS[k] ?? ""))
+      .map(k => ({ key: k, label: FILTER_META[k].label, value: FILTER_META[k].show(filters[k]) })));
+    // El botón "Limpiar" también resetea el ORDEN, que no genera chip -> se habilita
+    // igual si lo único cambiado es el orden.
+    const isDirty = computed(() => activeChips.value.length > 0 || filters.sort !== FILTER_DEFAULTS.sort);
+    const sinFiltrosNota = computed(() => {
+      const off = (summary.kpis && summary.kpis.operadores_ocultos) || 0;
+      return off
+        ? `ninguno · se ven solo los operadores activos (${fmtN(off)} apagados, escondidos por baja lógica)`
+        : "ninguno — se está viendo la cuenta completa";
+    });
+    function clearFilter(k) { filters[k] = FILTER_DEFAULTS[k]; }
     function toggleRating(l) { filters.rating = filters.rating===l ? "all" : l; }
     function toggleMotivo(m) { filters.motivo = filters.motivo===m ? "all" : m; }
     function toggleCard(k) { openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k); }
     function setPage(p) { tickets.page = Math.min(Math.max(1,p), tickets.pages); fetchTickets(); }
-    function resetFilters() { Object.assign(filters, { estado:"all", segment:"all", canal:"all", op:"all", sort:"new", from:"", to:"", search:"", rating:"all" }); }
+    function resetFilters() { Object.assign(filters, FILTER_DEFAULTS); }
     // Actualiza en vivo (re-consulta + re-pinta reactivo, NO recarga la página).
     // Preserva filtros, orden, página y tarjetas abiertas.
     async function refresh() {
@@ -738,7 +994,10 @@ createApp({
         accounts.value = accts || accounts.value;
         const a = (accounts.value || []).find(x => x.account === account.value);
         if (a) loadedCount = a.count;
-        delete chartsCache[account.value];
+        // se invalidan TODAS las variantes de la cuenta (una por valor de `inactivos`)
+        Object.keys(chartsCache)
+          .filter(k => k.startsWith(account.value + "|"))
+          .forEach(k => delete chartsCache[k]);
         await Promise.all([fetchSummary(), fetchTickets(), fetchConversion()]);
         await loadCharts();
       } finally { updating.value = false; }
@@ -780,6 +1039,52 @@ createApp({
       finally { drill.loading = false; }
     }
     function closeDrill() { drill.open = false; }
+
+    // ---- operadores: prender/apagar ----
+    async function openOps() {
+      if (!account.value) return;
+      ops.open = true; ops.loading = true; ops.rows = []; ops.msg = ""; ops.error = false;
+      try { ops.token = localStorage.getItem(OPS_TOKEN_KEY) || ""; } catch(e) {}
+      try {
+        const d = await fetchJSON("/api/operators?account=" + encodeURIComponent(account.value));
+        ops.rows = d.operadores || [];
+        ops.umbral = d.umbral_sugerido; ops.dias = d.dias_sugeridos;
+        ops.escritura = !!d.escritura_habilitada;
+      } catch(e) { ops.msg = "No se pudo cargar la lista de operadores."; ops.error = true; }
+      finally { ops.loading = false; }
+    }
+    function closeOps() { ops.open = false; }
+    function suggestOps() {
+      // Marca por ACTIVIDAD RECIENTE, nunca por volumen histórico: ese volumen es
+      // justamente lo que ensucia los cuadros.
+      ops.rows.forEach(o => { o.activo = o.recientes >= ops.umbral; });
+      ops.msg = `Pre-marcados por actividad (≥${ops.umbral} en ${ops.dias} días). Revisá y guardá.`;
+      ops.error = false;
+    }
+    async function saveOps() {
+      const token = ops.token.trim();
+      if (!token) return;
+      ops.saving = true; ops.msg = ""; ops.error = false;
+      try {
+        const r = await fetch("/api/operators", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "X-Admin-Token": token },
+          body: JSON.stringify({ account: account.value,
+            operadores: ops.rows.map(o => ({ operador: o.operador, activo: !!o.activo })) }),
+        });
+        if (r.status === 401) { ops.msg = "Token inválido. Revisá DASHBOARD_ADMIN_TOKEN."; ops.error = true; return; }
+        if (r.status === 503) { ops.msg = "El servidor no tiene DASHBOARD_ADMIN_TOKEN configurado."; ops.error = true; return; }
+        if (!r.ok) { ops.msg = "No se pudo guardar (HTTP " + r.status + ")."; ops.error = true; return; }
+        const d = await r.json();
+        // Solo se persiste el token si el server lo ACEPTÓ: guardar uno inválido haría que
+        // el próximo intento falle en silencio con un secreto viejo.
+        try { localStorage.setItem(OPS_TOKEN_KEY, token); } catch(e) {}
+        ops.msg = `Guardado: ${d.actualizados} operadores · ${opsActivos.value} activos.`;
+        await Promise.all([fetchSummary(), fetchTickets(), fetchConversion()]);
+      } catch(e) { ops.msg = "Error de red al guardar."; ops.error = true; }
+      finally { ops.saving = false; }
+    }
+    const opsActivos = computed(() => ops.rows.filter(o => o.activo).length);
     function openFromDrill(cid) { if(!cid) return; drill.open = false; openModal(cid); }
     function drillCol(p) { return p.deposited ? cvar("--r-excelente") : cvar("--faint"); }
     // Cierre rápido CONCERNING: duró <10min Y no resolvió (★<=2 o sin rating). Un
@@ -796,30 +1101,74 @@ createApp({
       const hasConv = !!c.total_potential;
       // Canal top (mejor % depósito) y tendencia de conversión (mes actual vs anterior).
       const topCh = (summary.deposit_by_channel||[]).filter(x=>x.n>0).slice().sort((a,b)=>b.pct-a.pct)[0];
-      const mp = (conversion.by_month && conversion.by_month.pct) || [];
-      const hasTrend = mp.length >= 2;
-      const trend = hasTrend ? Math.round((mp[mp.length-1]-mp[mp.length-2])*10)/10 : 0;
+      // TENDENCIA: se comparan los dos últimos meses CERRADOS. El mes en curso está
+      // incompleto por definición y compararlo daba una caída de humo: con agosto a 1.124
+      // conversaciones contra julio a 9.668, el tile marcaba ▼ -19,4pp sin que hubiera
+      // pasado nada. Además el pie dice QUÉ dos meses se comparan, en vez de "vs mes
+      // anterior", que no deja verificar nada.
+      const cmb = conversion.by_month || {};
+      const cmMonths = cmb.months || [], mp = cmb.pct || [];
+      const now = new Date();
+      const mesEnCurso = now.getFullYear() + "-" + String(now.getMonth()+1).padStart(2,"0");
+      let iLast = cmMonths.length - 1;
+      const seExcluyoParcial = iLast >= 0 && cmMonths[iLast] === mesEnCurso;
+      if (seExcluyoParcial) iLast--;
+      const hasTrend = iLast >= 1 && mp[iLast] != null && mp[iLast-1] != null;
+      const trend = hasTrend ? Math.round((mp[iLast]-mp[iLast-1])*10)/10 : 0;
+      const trendFoot = hasTrend ? `${cmMonths[iLast-1]} → ${cmMonths[iLast]}`
+                                 : (seExcluyoParcial ? "falta un 2º mes cerrado" : "falta un 2º mes");
+      const trendTitle = "Compara los dos últimos meses CERRADOS del % de conversión."
+        + (seExcluyoParcial ? ` ${mesEnCurso} está en curso y queda afuera: un mes a medias `
+                              + "produce una caída que no existe." : "");
       // SET FIJO: los mismos tiles en TODA cuenta. Cuando un dato no aplica (p.ej. una
       // cuenta sin conversiones), se muestra "—" en vez de ocultar el tile, así las dos
       // cuentas se ven consistentes (no cambia la cantidad ni el orden de KPIs).
+      // El descarte de sesiones anómalas se DECLARA en el tile, no se esconde: eran el
+      // 44,7% de los comprobantes de sistemas viniendo del 0,89% de las sesiones.
+      const excl = k.depositos_excluidos || 0;
+      const depFoot = `en ${fmtN(k.dep_conv||0)} sesiones`
+        + (excl ? ` · ${fmtN(excl)} excluidos` : "");
+      const depTitle = "Comprobantes de recarga del cliente (gate determinista, no la ★)."
+        + (excl ? ` Se excluyen ${fmtN(excl)} comprobantes de ${fmtN(k.sesiones_excluidas||0)} `
+                  + "sesiones de tamaño anómalo (>250 mensajes): el modelo nunca las evaluó y "
+                  + "distorsionaban el total." : "");
       const tiles = [
-        { k:"Sesiones", v:(k.total||0), foot:`${k.evaluadas||0} evaluadas` },
-        hasConv ? { k:"Conversión", v:(c.pct||0), u:"%", foot:`${c.total_converted||0} de ${c.total_potential} nuevos depositaron` }
+        { k:"Sesiones", v:(k.total||0),
+          foot:`${fmtN(k.evaluadas||0)} evaluadas · ${fmtN(k.no_evaluadas||0)} sin evaluar`,
+          title:"Sesiones del filtro actual. Las 'sin evaluar' quedan registradas para explicar "
+                + "la cobertura y NO entran en la ★ promedio ni en la distribución." },
+        hasConv ? { k:"Conversión", v:(c.pct||0), u:"%", foot:`${fmtN(c.total_converted||0)} de ${fmtN(c.total_potential)} nuevos depositaron` }
                 : { k:"Conversión", v:"—", foot:"sin conversiones en esta cuenta" },
-        hasConv ? { k:"Re-engagement", v:(c.ret_pct||0), u:"%", foot:`${c.total_returned||0} volvieron a interactuar` }
+        hasConv ? { k:"Re-engagement", v:(c.ret_pct||0), u:"%", foot:`${fmtN(c.total_returned||0)} volvieron a interactuar` }
                 : { k:"Re-engagement", v:"—", foot:"sin conversiones en esta cuenta" },
-        { k:"Depósitos", v:(k.depositos||0), foot:`${k.dep_conv||0} sesiones` },
-        { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★", foot:"solo evaluadas" },
-        topCh ? { k:"Canal top", v:topCh.canal, sm:true, foot:`${topCh.pct}% depósito · ${topCh.n} sesiones` }
+        { k:"Depósitos", v:(k.depositos||0), foot:depFoot, title:depTitle },
+        { k:"Estrella promedio", v:(k.avg_stars!=null?Number(k.avg_stars).toFixed(2):"0.00"), u:"★",
+          foot:`solo las ${fmtN(k.evaluadas||0)} evaluadas`,
+          title:"Promedio sobre las sesiones EVALUADAS. Las sin evaluar no tienen estrella, "
+                + "así que no la suben ni la bajan." },
+        topCh ? { k:"Canal top", v:topCh.canal, sm:true, foot:`${topCh.pct}% depósito · ${fmtN(topCh.n)} sesiones` }
               : { k:"Canal top", v:"—", sm:true, foot:"sin datos de canal" },
-        hasTrend ? { k:"Tendencia conversión", v:`${trend>0?'▲ +':trend<0?'▼ ':'→ '}${trend}pp`, sm:true, foot:"vs mes anterior" }
-                 : { k:"Tendencia conversión", v:"—", sm:true, foot:"falta un 2º mes" },
-        { k:"Operadores", v:(k.operadores||0), foot:"con atención evaluada" },
+        hasTrend ? { k:"Tendencia conversión", v:`${trend>0?'▲ +':trend<0?'▼ ':'→ '}${trend}pp`, sm:true,
+                     foot:trendFoot, title:trendTitle }
+                 : { k:"Tendencia conversión", v:"—", sm:true, foot:trendFoot, title:trendTitle },
+        // Lo que se esconde se declara, igual que las sesiones sin evaluar y las anómalas.
+        { k:"Operadores", v:(k.operadores||0),
+          foot:"con atención evaluada" + (k.operadores_ocultos ? ` · ${fmtN(k.operadores_ocultos)} apagados` : ""),
+          title:"Operadores con al menos una sesión evaluada en este filtro."
+                + (k.operadores_ocultos
+                   ? ` Hay ${fmtN(k.operadores_ocultos)} apagados que NO se cuentan acá ni en ningún otro número: `
+                     + "es una baja lógica, no se borró nada. Para verlos, poné Equipo = Incluir apagados."
+                   : "") },
+        // Cobertura pasa a ser FIJA: el % evaluado condiciona la lectura de TODOS los
+        // demás números, así que no puede aparecer solo cuando hay backfill en curso.
+        { k:"Cobertura", v:cov, u:"%", foot:`${fmtN(k.no_evaluadas||0)} sin evaluar de ${fmtN(k.total||0)}`,
+          title:"Qué porcentaje del filtro llegó a evaluarse. Es el techo de confianza de "
+                + "la ★ promedio, la distribución y la tabla de operadores." },
       ];
-      // Cobertura + Pendientes: transitorios del backfill (no son del set estable).
+      // Pendientes: transitorio del backfill, solo si hay algo pendiente.
       if (k.pendientes > 0) {
-        tiles.push({ k:"Cobertura", v:cov, u:"%", foot:`${(k.total||0)-(k.evaluadas||0)} sin evaluar` });
-        tiles.push({ k:"Pendientes de evaluar", v:k.pendientes, foot:"sesiones cerradas · backfill en curso" });
+        tiles.push({ k:"Pendientes de evaluar", v:k.pendientes, foot:"sesiones cerradas · backfill en curso",
+                     title:"Sesiones ya cerradas (>6h) que el worker todavía no scoreó." });
       }
       return tiles;
     });
@@ -833,11 +1182,26 @@ createApp({
     const opsMotivo = computed(() => { const o = summary.ops_motivo||{}; return { motivos:o.motivos||[], operators:o.operators||[] }; });
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
+    // El backend ya NO recorta: manda los operadores que haya (50 en sistemas), ordenados
+    // por volumen. El recorte es del front, porque es el que sabe cuánto espacio hay.
+    // - qual / convPasv: UN mini por operador -> arrancan EXPANDIDOS (verlos todos no
+    //   estorba, solo agrega tarjetitas) y se pueden plegar a OPS_CAP.
+    // - qualMotivo: todos los operadores comparten un mini por motivo (una LÍNEA cada
+    //   uno) -> arranca plegado; expandirlo es legítimo pero se vuelve spaghetti.
+    const qualShown = computed(() => expand.qual ? qualOps.value : qualOps.value.slice(0, OPS_CAP));
+    const convPasvShown = computed(() => expand.convPasv ? convPasvOps.value : convPasvOps.value.slice(0, OPS_CAP));
+    const qualMotivoShown = computed(() => qualMotivoOps.value.map(m => ({
+      ...m, operators: expand.qualMotivo ? m.operators : (m.operators||[]).slice(0, OPS_CAP),
+    })));
+    const hasPoints = d => (d||[]).some(v => v != null);
     // Leyenda a nivel tarjeta: unión de operadores que aparecen en los motivos, con su
     // color fijo. Una sola leyenda para los 7 mini-gráficos (los colores son consistentes).
+    // Sobre la lista MOSTRADA, no sobre la completa: el backend ya no recorta, así que con
+    // qualMotivoOps la leyenda pasaba a ~44 nombres cuando en cada mini se dibujan 8.
+    // Una leyenda tiene que nombrar lo que está dibujado, ni más ni menos.
     const qualMotivoLegend = computed(() => {
       const names = new Set();
-      (qualMotivoOps.value||[]).forEach(m => (m.operators||[]).forEach(o => { if(o && o.name) names.add(o.name); }));
+      (qualMotivoShown.value||[]).forEach(m => (m.operators||[]).forEach(o => { if(o && o.name) names.add(o.name); }));
       return [...names].map(n => ({ name:n, color:operatorColor(n) }));
     });
     const convPasvOps = computed(() => (conversion.evolution&&conversion.evolution.operators)||[]);
@@ -858,12 +1222,11 @@ createApp({
       return ORDER.map(l => ({ w: 100*(o.dist[ORDER.indexOf(l)]||0)/total, c: cvar(RATINGS[l].c) })).filter(s=>s.w>0);
     }
     function chipStyle(r) { const c = ratingColor(r.rating_label); return { background:`color-mix(in srgb, ${c} 15%, transparent)`, color:c }; }
-    const cap = s => s ? s[0].toUpperCase()+s.slice(1) : s;
 
     // modal helpers
     function bubClass(role) { return role==="CLIENTE"?"cli":role==="BOT"?"bot":"age"; }
     function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
-    function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Agente")); }
+    function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Operador")); }
     // Claves del jsonb que NO son notas de dimensión (se muestran aparte): errores,
     // aciertos, recomendación y los ejes del modulador (claridad/reinsistió).
     const _NON_DIM = new Set(["errores","aciertos","claridad","cliente_reinsistio","recomendacion"]);
@@ -874,7 +1237,7 @@ createApp({
     function dimClaridad(dims) { return (dims&&dims.claridad)||""; }
     function dimReinsistio(dims) { return !!(dims&&dims.cliente_reinsistio); }
     function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
-      return m("operador",esc(opName(r)))+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} agente${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
+      return m("operador",esc(opName(r)))+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} operador${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
     }
 
     // ---- Chart.js (imperativo, sobre los refs) ----
@@ -893,7 +1256,12 @@ createApp({
     function renderNewVsDep() {
       const el = nvdCombo.value; if(!el||!window.Chart) return;
       const d=(charts.value&&charts.value.new_vs_deposit_by_month)||{months:[],nuevos:[],pct:[]};
-      const months=d.months||[], nuevos=d.nuevos||[], pct=d.pct||[];
+      const months=d.months||[], nuevos=d.nuevos||[];
+      // DOS denominadores. La línea PRINCIPAL es la que comparte población con las barras
+      // (% de los nuevos del mes que depositó); la global queda punteada y secundaria.
+      // Antes solo estaba la global y se leía como si fuera la de los nuevos: en julio de
+      // sistemas, 60,4% contra 33,8%.
+      const pct=d.pct_nuevos||[], pctAll=d.pct||[];
       const pal=seriesColors(), grid=cvar("--border"), muted=cvar("--muted"), faint=cvar("--faint"), ink=cvar("--ink");
       if(chartInsts.nvd) chartInsts.nvd.destroy();
       const valid=pct.map((v,i)=>v==null?-1:i).filter(i=>i>=0);
@@ -909,14 +1277,25 @@ createApp({
         const bm=chart.getDatasetMeta(0); ctx.font="600 10px system-ui"; ctx.textAlign="center"; ctx.fillStyle=ink;
         bm.data.forEach((bar,i)=>{ if(nuevos[i]==null) return; ctx.fillText(Number(nuevos[i]).toLocaleString("es"),bar.x,bar.y-5); });
         const lm=chart.getDatasetMeta(1); ctx.font="700 10.5px system-ui"; ctx.fillStyle=pal[1];
-        lm.data.forEach((pt,i)=>{ if(!lineLabels.has(i)||pct[i]==null) return; ctx.fillText(pct[i]+"%",pt.x,pt.y+(i===iMin?15:-9)); });
+        // La etiqueta va ARRIBA del punto salvo que el punto esté pegado al techo del área
+        // (ahí no entra y se dibuja abajo). Antes el mínimo iba SIEMPRE abajo y con valores
+        // chicos (5,6%) caía encima del eje X.
+        lm.data.forEach((pt,i)=>{ if(!lineLabels.has(i)||pct[i]==null) return;
+          const pegadoAlTecho = (pt.y - area.top) < (area.bottom - area.top) * 0.12;
+          const y = pt.y + (pegadoAlTecho ? 15 : -9);
+          // Si caería encima de la etiqueta de volumen de esa misma barra, se OMITE: una
+          // etiqueta ilegible (dos números pisados) es peor que una etiqueta de menos.
+          const bar = bm.data[i];
+          if (bar && Math.abs(y - (bar.y - 5)) < 11) return;
+          ctx.fillText(pct[i]+"%", pt.x, y); });
         ctx.restore(); } };
       chartInsts.nvd=new Chart(el,{ data:{ labels:months, datasets:[
-          { type:"bar", label:"Nuevos jugadores", data:nuevos, yAxisID:"y", backgroundColor:pal[0], borderRadius:4, maxBarThickness:54, order:2 },
-          { type:"line", label:"% depósito", data:pct, yAxisID:"y1", borderColor:pal[1], backgroundColor:pal[1], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 } ]},
+          { type:"bar", label:"Nuevos jugadores", data:nuevos, yAxisID:"y", backgroundColor:pal[0], borderRadius:4, maxBarThickness:54, order:3 },
+          { type:"line", label:"% de esos nuevos que depositó", data:pct, yAxisID:"y1", borderColor:pal[1], backgroundColor:pal[1], borderWidth:2.5, tension:.35, pointRadius:3, pointHoverRadius:6, spanGaps:false, order:1 },
+          { type:"line", label:"% de todas las conversaciones con comprobante", data:pctAll, yAxisID:"y1", borderColor:faint, backgroundColor:faint, borderWidth:1.5, borderDash:[5,3], tension:.35, pointRadius:0, pointHoverRadius:5, spanGaps:false, order:2 } ]},
         options:{ responsive:true, maintainAspectRatio:false, animation:false, layout:{padding:{top:22}}, interaction:{mode:"index",intersect:false},
           plugins:{ legend:{position:"bottom",labels:{color:muted,boxWidth:10,boxHeight:10,usePointStyle:true,font:{size:11}}},
-            tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` % depósito: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} nuevos` } } },
+            tooltip:{ callbacks:{ label:c=> c.dataset.yAxisID==="y1"? ` ${c.dataset.label}: ${c.parsed.y==null?"—":c.parsed.y+"%"}` : ` ${Number(c.parsed.y).toLocaleString("es")} nuevos` } } },
           scales:{ x:{grid:{display:false},ticks:{color:muted,font:{size:11}}},
             y:{position:"left",beginAtZero:true,suggestedMax:maxN*1.2||10,title:{display:true,text:"Nuevos jugadores",color:faint,font:{size:10}},grid:{color:grid},ticks:{color:muted,precision:0}},
             y1:{position:"right",beginAtZero:true,max:100,title:{display:true,text:"% depósito",color:pal[1],font:{size:10}},grid:{display:false},ticks:{color:pal[1],callback:v=>v+"%"}} } },
@@ -931,9 +1310,12 @@ createApp({
     // small-multiples de calidad: data desde summary.quality_evolution (server, filtro-aware)
     function renderQuality() {
       chartInsts.qual.forEach(c=>c.destroy()); chartInsts.qual = [];
-      const qe = summary.quality_evolution||{months:[],operators:[]}; const months = qe.months||[];
+      const months = (summary.quality_evolution&&summary.quality_evolution.months)||[];
       const muted=cvar("--muted"), gridc=cvar("--border");
-      (qe.operators||[]).forEach((op,i)=>{ const el = qualCanvases[i]; if(!el||!window.Chart) return;
+      // Se recorre la lista MOSTRADA y el canvas se busca por NOMBRE (no por índice): al
+      // plegar/expandir la lista cambia de largo y las claves por índice quedaban apuntando
+      // a canvases viejos ya desmontados.
+      qualShown.value.forEach(op=>{ const el = qualCanvases[op.name]; if(!el||!window.Chart) return;
         const valid = op.data.filter(v=>v!=null);
         const avg = valid.length ? valid.reduce((a,v)=>a+v,0)/valid.length : 3;
         const col = starColor(avg);
@@ -948,9 +1330,9 @@ createApp({
     // Evolución de la ★ por MOTIVO (espeja renderQuality pero cada mini es un motivo).
     function renderQualityMotivo() {
       chartInsts.qualMotivo.forEach(c=>c.destroy()); chartInsts.qualMotivo = [];
-      const qe = summary.quality_motivo||{months:[],motivos:[]}; const months = qe.months||[];
+      const months = (summary.quality_motivo&&summary.quality_motivo.months)||[];
       const muted=cvar("--muted"), gridc=cvar("--border"), ink=cvar("--ink");
-      (qe.motivos||[]).forEach((mo,i)=>{ const el = qualMotivoCanvases[i]; if(!el||!window.Chart) return;
+      qualMotivoShown.value.forEach(mo=>{ const el = qualMotivoCanvases[mo.motivo]; if(!el||!window.Chart) return;
         // una línea (fina) por operador, color FIJO por usuario + promedio del motivo (grueso, punteado)
         const ds = (mo.operators||[]).map(op=>{ const c=operatorColor(op.name); return {
             label:op.name, data:op.data, borderColor:c, backgroundColor:c,
@@ -987,9 +1369,9 @@ createApp({
     // Small-multiples conv% (verde) vs pasiva% (rojo punteado) por operador/mes.
     function renderConversionPassivity() {
       chartInsts.convpasv.forEach(c=>c.destroy()); chartInsts.convpasv = [];
-      const ev = conversion.evolution||{months:[],operators:[]}; const months = ev.months||[];
+      const months = (conversion.evolution&&conversion.evolution.months)||[];
       const muted=cvar("--muted"), gridc=cvar("--border"), green=cvar("--r-excelente"), red=cvar("--r-mala");
-      (ev.operators||[]).forEach((op,i)=>{ const el = convPasvCanvases[i]; if(!el||!window.Chart) return;
+      convPasvShown.value.forEach(op=>{ const el = convPasvCanvases[op.name]; if(!el||!window.Chart) return;
         chartInsts.convpasv.push(new Chart(el,{ type:"line", data:{ labels:months, datasets:[
             { label:"conv%", data:op.conv, borderColor:green, backgroundColor:green, borderWidth:2, tension:.3, pointRadius:2, pointHoverRadius:5, spanGaps:false },
             { label:"pasiva%", data:op.pasiva, borderColor:red, backgroundColor:red, borderWidth:2, borderDash:[5,3], tension:.3, pointRadius:2, pointHoverRadius:5, spanGaps:false } ]},
@@ -1002,9 +1384,17 @@ createApp({
     // ---- watchers ----
     watch(() => [filters.estado, filters.segment, filters.canal, filters.op, filters.motivo, filters.rating, filters.from, filters.to, filters.search], debouncedFilter);
     watch(() => filters.sort, () => { tickets.page = 1; fetchTickets(); });
+    // `inactivos` es el ÚNICO filtro que también mueve /api/charts (los otros los ignora),
+    // así que hay que recargarlos aparte del debounce general.
+    watch(() => filters.inactivos, () => { loadCharts(); });
+    // Plegar/expandir monta o desmonta canvases -> hay que re-dibujar DESPUÉS del re-render
+    // (nextTick), si no las tarjetas nuevas quedan en blanco.
+    watch(() => [expand.qual, expand.convPasv, expand.qualMotivo], async () => {
+      await nextTick(); renderQuality(); renderQualityMotivo(); renderConversionPassivity();
+    });
 
     onMounted(async () => {
-      document.addEventListener("keydown", e => { if(e.key==="Escape") { closeModal(); closeDrill(); } });
+      document.addEventListener("keydown", e => { if(e.key==="Escape") { closeModal(); closeDrill(); closeOps(); } });
       setInterval(checkNew, 60000);
       let accts = [];
       try { accts = await fetchJSON("/api/accounts"); } catch(e) {}
@@ -1017,11 +1407,14 @@ createApp({
       loadingSummary, loadingTickets, loadingConversion, loadError, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, qualMotivoCanvases, convMonth, convPasvCanvases,
       kpiTiles, distRows, depByChannel, operators, motivoStats, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
+      OPS_CAP, expand, qualShown, convPasvShown, qualMotivoShown, hasPoints,
       convOps, convMaxPct, convByOp, convGlobal,
-      SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL,
+      SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL,
+      activeChips, isDirty, clearFilter, sinFiltrosNota,
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
-      miniSegs, chipStyle, cap, short, initials, phone, fmtDate, opName, starColor,
+      ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
+      miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
       dimClaridad, dimReinsistio, metaGrid };
   }
