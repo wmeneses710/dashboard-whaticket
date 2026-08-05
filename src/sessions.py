@@ -5,9 +5,10 @@ docs/diseno-evaluacion-unificada.md). Recorriendo los episodios de un ticket por
 created_at se CORTA (nueva sesion) cuando el episodio PREVIO CERRO (su ultimo
 mensaje del operador matchea una senal de cierre: confirmacion de carga / despedida
 / diferido, regex CLOSING), o CAMBIO el operador humano (operadores dominantes no nulos
-y distintos), o el gap entre consecutivos supera GAP, o el span de la sesion
+y distintos), o el SILENCIO entre consecutivos (ultimo mensaje del previo, con techo en
+su resolved_at -> primer mensaje del siguiente) supera GAP, o el span de la sesion
 superaria SPAN_CAP. Se MERGEA solo cuando el previo NO cerro, mismo (o sin) operador,
-gap <= GAP y dentro del span. Un episodio solo-cliente (sin operador, sin cierre)
+silencio <= GAP y dentro del span. Un episodio solo-cliente (sin operador, sin cierre)
 mergea con el siguiente -> mata el skip fabricado.
 
 La regla vive entera en la funcion PURA assign_sessions (unit-testeable sin BD).
@@ -49,21 +50,79 @@ CLOSING = re.compile(
 )
 
 
+def _actividad(ep: dict, clave: str):
+    """first_at/last_at del episodio; si no vienen, created_at.
+
+    Un episodio sin mensajes reales (solo notas, o vacio) no tiene ventana de actividad:
+    ahi created_at es lo unico que hay. Mismo fallback que usa el materializado de
+    start_at/end_at, asi el gap y la ventana nunca discrepan sobre el mismo episodio.
+    """
+    return ep.get(clave) or ep["created_at"]
+
+
+def _fin_de_actividad(ep: dict):
+    """last_at con TECHO en resolved_at. SOLO para el gap, NO para el end_at materializado.
+
+    POR QUE EL TECHO. El ETL archiva mensajes en episodios ya cerrados: el mensaje que
+    deberia ABRIR el episodio siguiente queda pegado al previo. Entonces last_at del previo
+    se va al futuro, queda ~igual al first_at del siguiente, el silencio sale ~0 y se
+    mergean dos interacciones genuinamente separadas. Medido en whaticket_copia: 15 casos
+    en `datos` (32% de sus flips) y 33 fronteras sucias en total. Un episodio no puede
+    tener actividad despues de haberse cerrado, asi que el techo lo elimina por
+    construccion en vez de estadisticamente.
+
+    POR QUE SOLO EN EL GAP. last_at hace DOS trabajos que no necesitan el mismo valor:
+      1. el GAP -> pregunta "termino la interaccion?"  -> ACA SI va el techo
+      2. el end_at materializado -> pregunta "ya puedo evaluar esto?" -> ACA NO
+    El end_at tiene que seguir avanzando con el ultimo mensaje real: de eso depende que la
+    sesion se re-abra y se re-scoree cuando el operador contesta tarde (si no, queda un
+    falso 'no_agent_reply' permanente). Ver _LAST_MSG_SQL.
+
+    Sin resolved_at (episodio abierto) no hay techo. No se pone piso en created_at porque
+    no hace falta: verificado en whaticket_copia, 0 de 152.894 conversaciones resueltas
+    tienen resolved_at anterior a su created_at.
+    """
+    fin = _actividad(ep, "last_at")
+    resuelto = ep.get("resolved_at")
+    return resuelto if resuelto is not None and fin > resuelto else fin
+
+
 def assign_sessions(episodes: list[dict]) -> list[dict]:
     """Asigna cada episodio de UN ticket a su sesion (regla D1). PURA, sin BD.
 
     episodes: lista de dicts {conversation_id, created_at, last_operator_body, operator_id}
-    de un mismo ticket. last_operator_body = ultimo mensaje del operador de ese episodio
-    (o None si no hubo); operator_id = operador humano DOMINANTE de ese episodio (o None).
+    de un mismo ticket, opcionalmente con {first_at, last_at} = ventana de actividad
+    (primer y ultimo mensaje real del episodio). last_operator_body = ultimo mensaje del
+    operador de ese episodio (o None si no hubo); operator_id = operador humano DOMINANTE
+    de ese episodio (o None).
 
     Devuelve lista de dicts {conversation_id, sess_no, session_id}. sess_no arranca en
     0 por ticket; session_id = conversation_id del PRIMER episodio de esa (ticket,
     sess_no).
 
     Corta (nueva sesion) cuando el episodio PREVIO cerro (CLOSING), o cambio el operador
-    humano dominante (ambos no nulos y distintos), o el gap con el previo supera GAP,
+    humano dominante (ambos no nulos y distintos), o el SILENCIO con el previo supera GAP,
     o el span desde el inicio de la sesion actual superaria SPAN_CAP. Merge en caso
     contrario. Un episodio solo-cliente (sin operador, sin cierre) mergea con el siguiente.
+
+    EL GAP SE MIDE POR INACTIVIDAD, no entre created_at. El gap pregunta "termino la
+    interaccion?" y eso lo contesta el silencio real: ultimo mensaje del previo -> primer
+    mensaje del siguiente. created_at es cuando NACIO el episodio y no se mueve cuando
+    llegan mensajes, asi que medir nacimiento contra nacimiento cortaba y mergeaba en los
+    momentos equivocados (dos episodios nacidos cerca con actividad separada por dias, y
+    al reves). Si el previo sigue activo cuando el siguiente arranca, el silencio es
+    negativo: nunca supera GAP -> mergea, que es lo correcto.
+
+    EL last_at DEL PREVIO LLEVA TECHO EN SU resolved_at (ver _fin_de_actividad): sin el,
+    un mensaje archivado en un episodio ya cerrado cierra el silencio artificialmente y
+    mergea dos interacciones separadas. El techo aplica SOLO al gap; el end_at
+    materializado sigue usando el ultimo mensaje real.
+
+    El SPAN sigue sobre created_at a proposito: es un techo de seguridad para que una
+    cadena de merges no crezca sin limite, no una medicion de actividad. Pasarlo a
+    actividad esta pendiente de que el ETL arregle la atribucion de messages.conversation_id
+    (hoy la primera conversacion de cada ticket absorbe mensajes de años antes, asi que un
+    span por actividad cortaria por datos mal atribuidos, no por la interaccion real).
 
     Ordena internamente por (created_at, conversation_id): no depende de que el caller
     la pase ordenada y desempata determinísticamente los created_at iguales (mismo
@@ -81,7 +140,7 @@ def assign_sessions(episodes: list[dict]) -> list[dict]:
             session_id = ep["conversation_id"]
             session_start = ep["created_at"]
         else:
-            gap = ep["created_at"] - prev["created_at"]
+            gap = _actividad(ep, "first_at") - _fin_de_actividad(prev)
             prev_closed = bool(CLOSING.search(prev.get("last_operator_body") or ""))
             a_prev, a_cur = prev.get("operator_id"), ep.get("operator_id")
             operator_changed = a_prev is not None and a_cur is not None and a_prev != a_cur
@@ -189,7 +248,7 @@ SELECT conversation_id, user_id
 # garantiza orden estable entre corridas cuando dos conversaciones del mismo ticket
 # comparten created_at (si no, el session_id/sess_no podria variar entre refreshes).
 _CONVERSATIONS_SQL = """
-SELECT ticket_id, id, created_at
+SELECT ticket_id, id, created_at, resolved_at
   FROM conversations
  WHERE account = %(account)s AND ticket_id IS NOT NULL
  ORDER BY ticket_id, created_at ASC, id ASC
@@ -272,10 +331,18 @@ def refresh_account_sessions(cur, account: str) -> int:
 
     # Agrupar episodios por ticket (rows ya vienen ordenados por ticket_id, created_at).
     by_ticket: dict = defaultdict(list)
-    for ticket_id, conv_id, created_at in rows:
+    for ticket_id, conv_id, created_at, resolved_at in rows:
+        # first_at/last_at = ventana de actividad del episodio. Van al episodio (no solo
+        # al agregado) porque assign_sessions las necesita para medir el silencio real
+        # entre episodios; None si la conversacion no tiene mensajes reales.
+        first_at, last_at = msg_times.get(conv_id, (None, None))
         by_ticket[ticket_id].append({
             "conversation_id": conv_id,
             "created_at": created_at,
+            # Techo del gap (ver _fin_de_actividad). NO afecta el end_at materializado.
+            "resolved_at": resolved_at,
+            "first_at": first_at,
+            "last_at": last_at,
             "last_operator_body": last_agent.get(conv_id),
             "operator_id": primary_agent.get(conv_id),
         })
@@ -292,9 +359,8 @@ def refresh_account_sessions(cur, account: str) -> int:
             # created_at de la conversacion). Fallback al created_at si la conversacion
             # no tiene mensajes reales. min(start)/max(end) sobre los episodios, sin
             # depender del orden (el ultimo episodio no siempre trae el ultimo mensaje).
-            first_at, last_at = msg_times.get(
-                ep["conversation_id"], (ep["created_at"], ep["created_at"])
-            )
+            first_at = _actividad(ep, "first_at")
+            last_at = _actividad(ep, "last_at")
             g = agg.get(sid)
             if g is None:
                 agg[sid] = {"sess_no": a["sess_no"], "start_at": first_at,

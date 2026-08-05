@@ -13,10 +13,22 @@ from src.sessions import assign_sessions
 BASE = datetime(2026, 1, 1, 8, 0, 0)
 
 
-def _ep(conv, hours, body=None, agent=None):
-    """Episodio: conversation_id, created_at = BASE + hours, last_operator_body, operator_id."""
-    return {"conversation_id": conv, "created_at": BASE + timedelta(hours=hours),
-            "last_operator_body": body, "operator_id": agent}
+def _ep(conv, hours, body=None, agent=None, first=None, last=None, resolved=None):
+    """Episodio: conversation_id, created_at = BASE + hours, last_operator_body, operator_id.
+
+    first/last (horas desde BASE, opcionales) = ventana de ACTIVIDAD del episodio
+    (primer y ultimo mensaje real). Si no se pasan, el episodio no las trae y el gap
+    cae a created_at, como antes.
+    """
+    ep = {"conversation_id": conv, "created_at": BASE + timedelta(hours=hours),
+          "last_operator_body": body, "operator_id": agent}
+    if resolved is not None:
+        ep["resolved_at"] = BASE + timedelta(hours=resolved)
+    if first is not None:
+        ep["first_at"] = BASE + timedelta(hours=first)
+    if last is not None:
+        ep["last_at"] = BASE + timedelta(hours=last)
+    return ep
 
 
 # --- funcion PURA assign_sessions ---------------------------------------------
@@ -51,6 +63,65 @@ def test_gap_exacto_5h_no_corta():
     out = assign_sessions([_ep("a", 0), _ep("b", 5)])
     assert [o["sess_no"] for o in out] == [0, 0]
     assert [o["session_id"] for o in out] == ["a", "a"]
+
+
+# --- gap por INACTIVIDAD real (no nacimiento contra nacimiento) ---------------
+# El gap pregunta "se corto la interaccion?", y eso se responde con ACTIVIDAD: cuanto
+# tiempo paso entre el ULTIMO mensaje del episodio previo y el PRIMERO del siguiente.
+# Medirlo entre created_at de las conversaciones no responde esa pregunta: created_at es
+# cuando NACIO el episodio y no se mueve cuando llegan mensajes, asi que dos episodios
+# nacidos cerca pueden tener actividad separada por dias (y al reves).
+
+def test_gap_se_mide_por_inactividad_no_por_nacimiento():
+    # Nacimientos a 3h (el viejo criterio MERGEA), pero el ultimo mensaje de 'a' fue en
+    # +1h y el primero de 'b' en +7h -> 6h de silencio real > 5h -> CORTA.
+    eps = [_ep("a", 0, agent="op1", first=0, last=1),
+           _ep("b", 3, agent="op1", first=7, last=8)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 1]
+    assert [o["session_id"] for o in out] == ["a", "b"]
+
+
+def test_gap_por_inactividad_mergea_aunque_los_nacimientos_esten_lejos():
+    # Caso inverso: nacimientos a 6h (el viejo criterio CORTABA), pero 'a' seguia activo
+    # hasta +5h30 y 'b' arranca en +6h -> 30 min de silencio -> es la MISMA interaccion.
+    eps = [_ep("a", 0, agent="op1", first=0, last=5.5),
+           _ep("b", 6, agent="op1", first=6, last=7)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+    assert [o["session_id"] for o in out] == ["a", "a"]
+
+
+def test_gap_por_inactividad_exacto_5h_no_corta():
+    # Borde: silencio == GAP (5h) con `>` estricto -> no corta (mismo criterio de antes).
+    eps = [_ep("a", 0, agent="op1", first=0, last=1),
+           _ep("b", 2, agent="op1", first=6, last=7)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+
+
+def test_episodios_solapados_no_cortan():
+    # Si el previo sigue activo cuando el siguiente arranca, el silencio es NEGATIVO:
+    # jamas supera GAP -> mergea. No revienta ni corta por un solape.
+    eps = [_ep("a", 0, agent="op1", first=0, last=4),
+           _ep("b", 1, agent="op1", first=2, last=5)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+
+
+def test_sin_tiempos_de_mensaje_el_gap_cae_a_created_at():
+    # Compatibilidad: un episodio sin mensajes reales no trae first_at/last_at y el gap
+    # vuelve a medirse sobre created_at (6h > 5h -> corta), como antes del cambio.
+    out = assign_sessions([_ep("a", 0), _ep("b", 6)])
+    assert [o["sess_no"] for o in out] == [0, 1]
+
+
+def test_gap_mixto_un_lado_con_actividad_y_el_otro_sin():
+    # 'a' tiene actividad hasta +1h; 'b' no tiene mensajes -> cae a su created_at (+7h).
+    # Silencio 6h > 5h -> corta. Ningun lado obliga al otro a tener la ventana.
+    eps = [_ep("a", 0, agent="op1", first=0, last=1), _ep("b", 7, agent="op1")]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 1]
 
 
 def test_corte_si_previo_cierra_confirmacion_aunque_gap_menor():
@@ -210,7 +281,7 @@ def test_refresh_barre_huerfanas():
     cur = _FakeCursor(
         msg_rows=[("c1", "listo gracias")],
         primary_rows=[("c1", "op1")],
-        conv_rows=[("t1", "c1", BASE)],
+        conv_rows=[("t1", "c1", BASE, None)],
     )
     sess.refresh_account_sessions(cur, "datos")
     deletes = [(q, p) for q, p in cur.executed
@@ -249,7 +320,7 @@ def test_refresh_materializa_una_sesion_sin_cierre_mismo_agente():
     cur = _FakeCursor(
         msg_rows=[("c1", "hola, en qué te ayudo")],
         primary_rows=[("c1", "op1"), ("c2", "op1")],
-        conv_rows=[("t1", "c1", BASE), ("t1", "c2", BASE + timedelta(hours=3))],
+        conv_rows=[("t1", "c1", BASE, None), ("t1", "c2", BASE + timedelta(hours=3), None)],
     )
     n = sess.refresh_account_sessions(cur, "sistemas")
     assert n == 1  # una sesion materializada
@@ -279,7 +350,7 @@ def test_refresh_corta_en_dos_sesiones_por_cierre_previo():
     cur = _FakeCursor(
         msg_rows=[("c1", "listo, ya te lo dejé cargado")],
         primary_rows=[("c1", "op1"), ("c2", "op1")],
-        conv_rows=[("t1", "c1", BASE), ("t1", "c2", BASE + timedelta(hours=2))],
+        conv_rows=[("t1", "c1", BASE, None), ("t1", "c2", BASE + timedelta(hours=2), None)],
     )
     n = sess.refresh_account_sessions(cur, "datos")
     assert n == 2
@@ -293,7 +364,7 @@ def test_refresh_corta_por_cambio_de_agente():
     cur = _FakeCursor(
         msg_rows=[("c1", "hola")],
         primary_rows=[("c1", "op1"), ("c2", "op2")],
-        conv_rows=[("t1", "c1", BASE), ("t1", "c2", BASE + timedelta(hours=2))],
+        conv_rows=[("t1", "c1", BASE, None), ("t1", "c2", BASE + timedelta(hours=2), None)],
     )
     n = sess.refresh_account_sessions(cur, "datos")
     assert n == 2
@@ -310,7 +381,7 @@ def test_refresh_end_at_es_ultimo_mensaje_no_created_at():
     cur = _FakeCursor(
         msg_rows=[("c1", "listo")],
         primary_rows=[("c1", "op1")],
-        conv_rows=[("t1", "c1", BASE)],
+        conv_rows=[("t1", "c1", BASE, None)],
         msg_time_rows=[("c1", BASE, BASE + timedelta(hours=5))],
     )
     sess.refresh_account_sessions(cur, "sistemas")
@@ -327,7 +398,7 @@ def test_refresh_end_at_fallback_a_created_at_sin_mensajes():
     cur = _FakeCursor(
         msg_rows=[("c1", "hola")],
         primary_rows=[("c1", "op1")],
-        conv_rows=[("t1", "c1", BASE)],
+        conv_rows=[("t1", "c1", BASE, None)],
         msg_time_rows=[],  # sin tiempos de mensaje
     )
     sess.refresh_account_sessions(cur, "datos")
@@ -337,7 +408,118 @@ def test_refresh_end_at_fallback_a_created_at_sin_mensajes():
     assert start_at == BASE and end_at == BASE
 
 
+def test_refresh_corta_por_inactividad_real_no_por_created_at():
+    # El refresh tiene que PASARLE la ventana de actividad a assign_sessions, no solo
+    # usarla para start_at/end_at. c1 y c2 nacen a 3h (el viejo criterio mergeaba), pero
+    # c1 murio en +1h y c2 arranca en +7h -> 6h de silencio -> DOS sesiones.
+    cur = _FakeCursor(
+        msg_rows=[("c1", "hola")],
+        primary_rows=[("c1", "op1"), ("c2", "op1")],
+        conv_rows=[("t1", "c1", BASE, None), ("t1", "c2", BASE + timedelta(hours=3), None)],
+        msg_time_rows=[("c1", BASE, BASE + timedelta(hours=1)),
+                       ("c2", BASE + timedelta(hours=7), BASE + timedelta(hours=8))],
+    )
+    n = sess.refresh_account_sessions(cur, "sistemas")
+    assert n == 2
+    _, map_rows = [(q, seq) for q, seq in cur.executed_many
+                   if "INSERT INTO conversation_session_map" in q][0]
+    assert set(map_rows) == {("c1", "sistemas", "c1"), ("c2", "sistemas", "c2")}
+
+
+def test_refresh_mergea_si_la_actividad_es_continua():
+    # Inverso: nacimientos a 6h (el viejo criterio CORTABA) pero c1 seguia activo hasta
+    # +5h30 y c2 arranca en +6h -> 30 min de silencio -> UNA sola sesion.
+    cur = _FakeCursor(
+        msg_rows=[("c1", "hola")],
+        primary_rows=[("c1", "op1"), ("c2", "op1")],
+        conv_rows=[("t1", "c1", BASE, None), ("t1", "c2", BASE + timedelta(hours=6), None)],
+        msg_time_rows=[("c1", BASE, BASE + timedelta(hours=5, minutes=30)),
+                       ("c2", BASE + timedelta(hours=6), BASE + timedelta(hours=7))],
+    )
+    n = sess.refresh_account_sessions(cur, "sistemas")
+    assert n == 1
+    _, sess_rows = [(q, seq) for q, seq in cur.executed_many
+                    if "INSERT INTO conversation_sessions" in q][0]
+    _, _, _, _, start_at, end_at, episode_count = sess_rows[0]
+    assert start_at == BASE and end_at == BASE + timedelta(hours=7)
+    assert episode_count == 2
+
+
 def test_refresh_sin_conversaciones_devuelve_cero():
     cur = _FakeCursor(msg_rows=[], primary_rows=[], conv_rows=[])
     assert sess.refresh_account_sessions(cur, "datos") == 0
     assert cur.executed_many == []
+
+
+# --- techo de resolved_at sobre el last_at, SOLO en el gap -------------------------
+# El ETL archiva mensajes en episodios ya cerrados: el mensaje que deberia ABRIR el
+# episodio siguiente queda pegado al previo, su last_at se va al futuro y el silencio
+# sale ~0 -> mergea dos interacciones separadas. Medido en whaticket_copia: 15 casos en
+# `datos`, 33 fronteras sucias en total. El techo lo elimina por construccion.
+
+def test_gap_usa_resolved_at_como_techo_del_last_at():
+    # Caso real de `datos`: A cierra a la 1h, el cliente vuelve 7h despues y ese mensaje
+    # queda archivado en A (su last_at se va a 8h). Sin techo el silencio es 0 -> mergea
+    # (mal). Con techo, el silencio son las 7h reales -> corta.
+    #
+    # El span se mantiene DEBAJO de SPAN_CAP (8h < 12h) a proposito: si no, el corte lo
+    # daria el span y el test pasaria sin ejercitar el techo.
+    eps = [_ep("a", 0, agent="op1", first=0, last=8, resolved=1),
+           _ep("b", 8, agent="op1", first=8, last=9)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 1], "con techo el silencio real corta"
+
+
+def test_sin_techo_ese_mismo_caso_mergearia():
+    # Contraprueba del test anterior: el MISMO episodio sin resolved_at mergea, porque el
+    # last_at archivado de mas cierra el silencio. Aisla que el corte lo produce el techo
+    # y no el span ni el gap.
+    eps = [_ep("a", 0, agent="op1", first=0, last=8),
+           _ep("b", 8, agent="op1", first=8, last=9)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+
+
+def test_techo_no_aplica_si_el_last_at_esta_dentro_de_la_vida_del_episodio():
+    # last_at (3h) anterior a resolved_at (4h): el techo no toca nada, mergea igual.
+    eps = [_ep("a", 0, agent="op1", first=0, last=3, resolved=4),
+           _ep("b", 5, agent="op1", first=5, last=6)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+
+
+def test_techo_no_aplica_si_el_episodio_sigue_abierto():
+    # Sin resolved_at no hay techo: la actividad manda y el silencio de 1h mergea.
+    eps = [_ep("a", 0, agent="op1", first=0, last=14),
+           _ep("b", 10, agent="op1", first=15, last=16)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+
+
+def test_techo_no_altera_el_caso_limpio_que_el_fix_vino_a_arreglar():
+    # Operador que contesto tarde DENTRO de la vida del episodio: sigue mergeando.
+    eps = [_ep("a", 0, agent="op1", first=0, last=7, resolved=7),
+           _ep("b", 8, agent="op1", first=8, last=10)]
+    out = assign_sessions(eps)
+    assert [o["sess_no"] for o in out] == [0, 0]
+
+
+def test_end_at_materializado_usa_el_last_at_CRUDO_no_el_del_techo():
+    # ESTE TEST PROTEGE EL MECANISMO AUTO-SANANTE. El techo es solo para el gap: el
+    # end_at tiene que seguir avanzando con el ultimo mensaje real, porque de eso
+    # depende que la sesion se re-abra y se re-scoree (si no, queda un falso
+    # 'no_agent_reply' permanente). Ver _LAST_MSG_SQL en src/sessions.py.
+    cur = _FakeCursor(
+        msg_rows=[("c1", "hola")],
+        primary_rows=[("c1", "op1")],
+        # resolved_at a 2h, pero hay un mensaje real a 14h.
+        conv_rows=[("t1", "c1", BASE, BASE + timedelta(hours=2))],
+        msg_time_rows=[("c1", BASE, BASE + timedelta(hours=14))],
+    )
+    sess.refresh_account_sessions(cur, "datos")
+    filas = [f for q, seq in cur.executed_many
+             if "conversation_sessions" in q for f in seq]
+    assert len(filas) == 1
+    end_at = filas[0][5]
+    assert end_at == BASE + timedelta(hours=14), \
+        "el end_at NO debe clampearse: rompe el re-open auto-sanante"
