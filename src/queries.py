@@ -833,7 +833,11 @@ conv_op AS (
 ),
 conv_dep AS MATERIALIZED (
   SELECT conversation_id,
-         bool_or((body ~* %(re)s) AND NOT is_note) AS has_ctx,
+         -- from_me = false: el contexto de recarga lo pone el CLIENTE. La
+         -- plantilla de venta del operador lo menciona en casi toda
+         -- prospeccion e inflaba el gate 41,4% (medido el 2026-08-06).
+         -- Mismo criterio que src.deposits.has_recharge_context.
+         bool_or((body ~* %(re)s) AND NOT is_note AND from_me = false) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note
                           AND lower(coalesce(media_type, '')) LIKE '%%image%%') AS img
     FROM messages WHERE account = %(account)s GROUP BY conversation_id
@@ -903,7 +907,11 @@ def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8
 _NEW_VS_DEP_SQL = """
 WITH per_conv AS MATERIALIZED (
   SELECT conversation_id,
-         bool_or((body ~* %(re)s) AND NOT is_note) AS has_ctx,
+         -- from_me = false: el contexto de recarga lo pone el CLIENTE. La
+         -- plantilla de venta del operador lo menciona en casi toda
+         -- prospeccion e inflaba el gate 41,4% (medido el 2026-08-06).
+         -- Mismo criterio que src.deposits.has_recharge_context.
+         bool_or((body ~* %(re)s) AND NOT is_note AND from_me = false) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note
                           AND lower(coalesce(media_type, '')) LIKE '%%image%%') AS img
     FROM messages WHERE account = %(account)s GROUP BY conversation_id

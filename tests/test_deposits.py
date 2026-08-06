@@ -78,6 +78,27 @@ def test_media_type_no_imagen_no_cuenta():
     assert receipt_image_count(msgs) == 0
 
 
+def test_el_contexto_de_recarga_lo_pone_el_CLIENTE_no_el_operador():
+    # Plantillas REALES de venta del operador. Mencionan la recarga pero el cliente
+    # nunca dijo que iba a recargar: no son contexto de recarga, son pitch.
+    # Medido el 2026-08-06: leyendo tambien al operador, el gate pasaba de 519 a 885
+    # sesiones (41,4% inflado), y las sesiones asi eran `promo`/`registro`
+    # ("¿Como reclamo mis 10 giros?"), no depositos.
+    for pitch in ("Registrate, verifica tu cuenta y con tu primera carga comienza a "
+                  "disfrutar de todos los beneficios",
+                  "Hola, depositas 5 amiga y recibes 5 mas",
+                  "Le comento que las cargas y los retiros se pueden realizar por "
+                  "medio de transferencias bancarias"):
+        assert has_recharge_context([_age_txt(pitch)]) is False, pitch
+
+
+def test_una_imagen_del_cliente_con_pitch_del_operador_NO_es_deposito():
+    # El caso exacto que inflaba el gate: el operador habla de recargar y el cliente
+    # manda cualquier imagen. Sin que el CLIENTE mencione la recarga, no hay deposito.
+    msgs = [_age_txt("con tu primera carga activas la promo"), _cli_img()]
+    assert deposit_candidate_count(msgs) == 0
+
+
 def test_has_recharge_context_detecta_variantes():
     for kw in ["recarga", "una RECARGA", "comprobante adjunto", "el deposito", "depósito", "transferencia"]:
         assert has_recharge_context([_cli_txt(kw)]) is True

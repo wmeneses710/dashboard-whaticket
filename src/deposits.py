@@ -36,11 +36,21 @@ def _is_image(m: dict) -> bool:
 
 
 def has_recharge_context(messages: list[dict]) -> bool:
-    """True si algun mensaje (no nota) menciona una razon de recarga."""
+    """True si el CLIENTE menciona una razon de recarga.
+
+    Solo el cliente: la plantilla de venta del operador habla de recargar en casi
+    toda conversacion de prospeccion ("con tu primera carga comienza a disfrutar",
+    "depositas 5 amiga y recibes 5 mas", "las cargas y los retiros se hacen por
+    transferencia"). Leyendo tambien al operador, el gate pasaba de 519 a 885
+    sesiones sobre la misma muestra (41,4% inflado, medido el 2026-08-06) y metia
+    como "deposito" conversaciones de `promo` y `registro` donde el cliente solo
+    habia mandado una imagen cualquiera. El contexto lo tiene que poner quien viene
+    a recargar, no quien se lo ofrece.
+    """
     return any(
         _RECHARGE_RE.search(m.get("body") or "")
         for m in messages
-        if not m.get("is_note")
+        if not m.get("is_note") and not m.get("from_me")
     )
 
 
