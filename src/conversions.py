@@ -89,7 +89,7 @@ conv_dep AS (
   SELECT conversation_id,
          -- from_me = false a proposito: el contexto de recarga lo pone el CLIENTE.
          -- La plantilla de venta del operador menciona la recarga en casi toda
-         -- prospeccion, y sin este filtro inflaba el gate un 41,4% (medido el
+         -- prospeccion, y sin este filtro inflaba el gate un 41,4 por ciento (medido el
          -- 2026-08-06). Mismo criterio que src.deposits.has_recharge_context.
          bool_or((body ~* %(re)s) AND NOT is_note AND from_me = false) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note

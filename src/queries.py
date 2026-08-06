@@ -48,7 +48,26 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.atencion, cs.deposit_observed, cs.deposit_mismatch, cs.motivo,
        ct.name AS customer_name, ct.number AS customer_number, t.channel,
        pc.returned AS conversion_returned,
-       EXTRACT(EPOCH FROM (ses.end_at - ses.start_at)) AS session_seconds
+       EXTRACT(EPOCH FROM (ses.end_at - ses.start_at)) AS session_seconds,
+       -- LA PUERTA: cuanto espero el operador entre su ultima accion y el cierre del
+       -- ticket. Medido el 2026-08-06: mediana 0,0 min y 4 de cada 5 sesiones cierran
+       -- en menos de un minuto, o sea que casi nadie deja margen para una segunda duda.
+       -- (Sin el signo de porcentaje en los comentarios: psycopg parsea el SQL
+       -- entero buscando placeholders y uno suelto revienta en runtime.)
+       EXTRACT(EPOCH FROM (cs.resolved_at - (
+           SELECT max(m.created_at) FROM messages m
+            WHERE m.conversation_id = cs.conversation_id
+              AND m.from_me AND NOT m.is_note
+       ))) AS cierre_seconds,
+       -- Y cuanto espero DESPUES de chequear si al cliente le faltaba algo. El patron
+       -- se pasa como parametro desde src.signals: fuente unica con la senal que usan
+       -- las rubricas, para que no se desincronicen.
+       EXTRACT(EPOCH FROM (cs.resolved_at - (
+           SELECT max(m.created_at) FROM messages m
+            WHERE m.conversation_id = cs.conversation_id
+              AND m.from_me AND NOT m.is_note
+              AND m.body ~* %(algo_mas_re)s
+       ))) AS algo_mas_cierre_seconds
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
@@ -627,6 +646,10 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        cs.skip_reason, cs.rating_label, cs.stars,
        left(cs.rating_rationale, 160) AS rating_rationale,
        cs.atencion, cs.motivo,
+       -- El reloj de la primera respuesta viaja en la LISTA (no solo en el detalle):
+       -- es el eje de seis de las siete rubricas, y sin el hay que abrir sesion por
+       -- sesion para encontrar las lentas. Es un numero, pesa nada.
+       cs.first_response_seconds,
        COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
@@ -835,7 +858,7 @@ conv_dep AS MATERIALIZED (
   SELECT conversation_id,
          -- from_me = false: el contexto de recarga lo pone el CLIENTE. La
          -- plantilla de venta del operador lo menciona en casi toda
-         -- prospeccion e inflaba el gate 41,4% (medido el 2026-08-06).
+         -- prospeccion e inflaba el gate un 41,4 por ciento (medido el 2026-08-06).
          -- Mismo criterio que src.deposits.has_recharge_context.
          bool_or((body ~* %(re)s) AND NOT is_note AND from_me = false) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note
@@ -909,7 +932,7 @@ WITH per_conv AS MATERIALIZED (
   SELECT conversation_id,
          -- from_me = false: el contexto de recarga lo pone el CLIENTE. La
          -- plantilla de venta del operador lo menciona en casi toda
-         -- prospeccion e inflaba el gate 41,4% (medido el 2026-08-06).
+         -- prospeccion e inflaba el gate un 41,4 por ciento (medido el 2026-08-06).
          -- Mismo criterio que src.deposits.has_recharge_context.
          bool_or((body ~* %(re)s) AND NOT is_note AND from_me = false) AS has_ctx,
          count(*) FILTER (WHERE from_me = false AND NOT is_note
@@ -1179,7 +1202,10 @@ def conversation_detail(cur, conversation_id: str) -> dict | None:
     CHAT desde los mensajes con `pending=True`, para que el drill de cohorte (u otro)
     pueda ABRIR la conversacion aunque el worker todavia no la haya evaluado. Devuelve
     None solo si tampoco hay mensajes (no hay nada que mostrar)."""
-    cur.execute(_DETAIL_SQL, {"cid": conversation_id})
+    from src.signals import ANYTHING_ELSE_PATTERN
+
+    cur.execute(_DETAIL_SQL, {"cid": conversation_id,
+                              "algo_mas_re": ANYTHING_ELSE_PATTERN})
     row = cur.fetchone()
     if row:
         cols = [d.name for d in cur.description]

@@ -729,3 +729,62 @@ def test_conversation_detail_sin_score_ni_mensajes_es_none(monkeypatch):
     import src.queries as q
     monkeypatch.setattr(q, "fetch_messages", lambda cur, cid: [])
     assert q.conversation_detail(_DetailCur(None), "conv-x") is None
+
+
+# --- tiempos de CIERRE en el detalle (2026-08-06) ----------------------------
+# El negocio pidio ver "cuanto demoro en cerrar luego de eso": el hueco entre la
+# ultima accion del operador y el cierre del ticket, y el hueco entre que chequeo si
+# faltaba algo y el cierre. Medido: la mediana de la puerta es 0,0 min y el 81,8%
+# cierra en menos de un minuto, asi que es informacion que hoy no se ve en ningun lado.
+
+def test_detail_sql_trae_los_tiempos_de_cierre():
+    from src.queries import _DETAIL_SQL
+    assert "cierre_seconds" in _DETAIL_SQL
+    assert "algo_mas_cierre_seconds" in _DETAIL_SQL
+
+
+def test_detail_sql_reusa_el_patron_de_algo_mas_de_signals():
+    # Fuente unica: si el patron cambia en signals, el SQL lo sigue solo.
+    from src.queries import _DETAIL_SQL
+    assert "%(algo_mas_re)s" in _DETAIL_SQL
+
+
+def test_conversation_detail_pasa_el_patron_como_parametro():
+    from src.signals import ANYTHING_ELSE_PATTERN
+    from src.queries import conversation_detail
+    cur = _FakeCursor([], description=[])
+    conversation_detail(cur, "conv-1")
+    _, params = cur.executed[0]
+    assert params["algo_mas_re"] == ANYTHING_ELSE_PATTERN
+
+
+def test_ningun_sql_tiene_un_porcentaje_suelto():
+    """psycopg parsea el SQL COMPLETO buscando placeholders, comentarios incluidos.
+
+    Un '%' que no sea parte de %(nombre)s ni de un '%%' escapado revienta en runtime
+    con "incomplete placeholder", y el cursor falso de estos tests NO lo detecta porque
+    no parsea nada. Paso de verdad: un comentario que decia "el 81,8% cierra en menos de
+    un minuto" tiro abajo el detalle del chat contra la BD real.
+    """
+    import re
+    import src.queries as q
+
+    sospechosos = []
+    for nombre in dir(q):
+        if not nombre.endswith("_SQL"):
+            continue
+        sql = getattr(q, nombre)
+        if not isinstance(sql, str):
+            continue
+        # Se sacan los placeholders validos y los '%%' escapados; lo que quede no va.
+        limpio = re.sub(r"%\([a-zA-Z_]+\)s", "", sql).replace("%%", "")
+        if "%" in limpio:
+            sospechosos.append(nombre)
+    assert not sospechosos, f"'%' suelto en: {sospechosos}"
+
+
+def test_la_lista_de_interacciones_trae_el_reloj():
+    # Es el eje de seis de las siete rubricas: sin el hay que abrir sesion por sesion
+    # para encontrar las lentas.
+    from src.queries import _TICKETS_CONVS_SQL
+    assert "cs.first_response_seconds" in _TICKETS_CONVS_SQL
