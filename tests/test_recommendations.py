@@ -6,7 +6,6 @@ anteponen consejos accionables que el LLM casi nunca produce por si solo.
 from src.recommendations import (
     _FRAG_APP,
     _FRAG_PASSWORD,
-    _FRAG_REGISTER_LINK,
     refine_recomendacion,
 )
 
@@ -37,32 +36,25 @@ def test_app_mencionada_incluye_fragmento():
     assert out.endswith("consejo del LLM")
 
 
-# --- enlace de registro ------------------------------------------------------
+# --- enlace de registro: FRAGMENTO RETIRADO ----------------------------------
+# El negocio lo marco como falso el 2026-08-06: "no existe ni codigo de afiliado y
+# por gusto mandar el link de sorti si ellos hacen el registro". Afirmaba DOS cosas
+# falsas — que hay un codigo de afiliado y que el cliente se registra solo — y era el
+# texto mas repetido de todo el coaching: **151 de 624 recomendaciones (24,2%)**, todas
+# en `registro`. No lo escribia el modelo: lo anteponia este modulo, asi que ningun
+# cambio de prompt lo sacaba.
 
-def test_registro_sin_link_ni_credenciales_pide_enviar_link():
+def test_ya_no_existe_el_fragmento_del_enlace_de_registro():
+    import src.recommendations as rec
+    assert not hasattr(rec, "_FRAG_REGISTER_LINK")
+
+
+def test_registro_sin_link_ya_no_inventa_un_codigo_de_afiliado():
     msgs = [_client("quiero registrarme"), _agent("dale, te explico como hacerlo")]
     out = refine_recomendacion("consejo del LLM", motivo="registro", target_messages=msgs)
-    assert _FRAG_REGISTER_LINK in out
-
-
-def test_registro_con_link_no_pide_enviarlo():
-    msgs = [_client("quiero registrarme"),
-            _agent("Regístrate acá https://www.sorti.ec/register?code=1")]
-    out = refine_recomendacion("consejo del LLM", motivo="registro", target_messages=msgs)
-    assert _FRAG_REGISTER_LINK not in out
-
-
-def test_registro_con_credenciales_no_pide_enviar_link():
-    # si ya se dieron credenciales (alta manual), no tiene sentido pedir el link de registro
-    msgs = [_agent("tu usuario es juan123 tu contraseña es abc456")]
-    out = refine_recomendacion("consejo del LLM", motivo="registro", target_messages=msgs)
-    assert _FRAG_REGISTER_LINK not in out
-
-
-def test_motivo_distinto_de_registro_no_dispara_fragmento_de_link():
-    msgs = [_client("quiero depositar"), _agent("dale, decime cuanto")]
-    out = refine_recomendacion("consejo del LLM", motivo="deposito", target_messages=msgs)
-    assert _FRAG_REGISTER_LINK not in out
+    assert "afiliado" not in out.lower()
+    assert "enlace de registro" not in out.lower()
+    assert out == "consejo del LLM"
 
 
 # --- sin señales -------------------------------------------------------------

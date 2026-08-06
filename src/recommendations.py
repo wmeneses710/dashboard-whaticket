@@ -12,7 +12,7 @@ ningun otro campo del ScoreResult. Solo cambia el texto de `recomendacion`.
 """
 from __future__ import annotations
 
-from src.signals import operator_sent_credentials, operator_sent_register_link, app_mentioned
+from src.signals import operator_sent_credentials, app_mentioned
 
 _FRAG_PASSWORD = (
     "Como la cuenta se creó desde el operador, indícale al cliente que cambie "
@@ -22,10 +22,12 @@ _FRAG_APP = (
     "No hay app disponible por ahora; guía al cliente a usar la web (la app "
     "estará disponible próximamente)."
 )
-_FRAG_REGISTER_LINK = (
-    "Envía tu enlace de registro de Sorti con tu código de afiliado; explicar "
-    "cómo entrar sin el enlace deja el alta a medias."
-)
+# RETIRADO el 2026-08-06: habia un _FRAG_REGISTER_LINK que decia "Envia tu enlace de
+# registro de Sorti con tu codigo de afiliado". El negocio lo marco como FALSO en las
+# dos puntas: no existe codigo de afiliado, y el registro lo hace el OPERADOR, asi que
+# mandar el link no viene al caso. Era el texto mas repetido de todo el coaching —
+# **151 de 624 recomendaciones (24,2%)**, todas en `registro`— y no lo escribia el
+# modelo: lo anteponia este modulo, por eso ningun ajuste de prompt lo sacaba.
 
 
 def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: list[dict]) -> str:
@@ -42,7 +44,6 @@ def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: li
     hecho del scoring.
     """
     cred = operator_sent_credentials(target_messages)
-    reg_link = operator_sent_register_link(target_messages)
     app = app_mentioned(target_messages)
 
     fragmentos: list[str] = []
@@ -50,8 +51,6 @@ def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: li
         fragmentos.append(_FRAG_PASSWORD)
     if app:
         fragmentos.append(_FRAG_APP)
-    if motivo == "registro" and not reg_link and not cred:
-        fragmentos.append(_FRAG_REGISTER_LINK)
 
     if not fragmentos:
         return recomendacion
