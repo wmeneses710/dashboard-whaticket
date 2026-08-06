@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from statistics import median
 
+from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -78,15 +79,15 @@ class Soporte:
 
 
 _COACHING = {
-    2: "La atencion fue lenta o no llego a ninguna accion concreta. Aunque el "
-       "desbloqueo dependa de otra area, el cliente tiene que salir con un paso a "
-       "seguir o con la certeza de que su caso se escalo.",
-    3: "Las respuestas tardaron mas de 2 minutos. En soporte el cliente ya viene "
+    2: "La atención fue lenta o no llegó a nada concreto. Aunque el desbloqueo dependa "
+       "de otra área, el cliente tiene que salir con un paso a seguir o con la certeza "
+       "de que su caso se escaló.",
+    3: "Las respuestas tardaron más de 2 minutos. En soporte el cliente ya viene "
        "trabado: cada espera pesa doble.",
-    4: "Antes de cerrar, asegurate de que el cliente no necesite algo mas — es el "
-       "motivo donde mas se nota, porque muchas veces el problema vuelve.",
+    4: "Antes de cerrar, preguntale si necesita algo más. Es el motivo donde más se "
+       "nota, porque muchas veces el problema vuelve.",
 }
-_COACHING_1 = "El cliente reporto un problema de cuenta y nadie le respondio."
+_COACHING_1 = "El cliente reportó un problema con su cuenta y nadie le respondió."
 
 
 def esperas_por_turno(messages: list[dict]) -> list[timedelta]:
@@ -134,35 +135,36 @@ def calificar_soporte(messages: list[dict]) -> Soporte | None:
 
     if not esperas:
         return Soporte(1, "mala",
-                       "El cliente reporto un problema de cuenta y nadie le respondio.",
+                       "El cliente reportó un problema con su cuenta y nadie le respondió.",
                        None, intento, algo_mas)
     med = median(esperas)
-    mins = f"{med.total_seconds() / 60:.1f} min"
+    mins = formato_espera(med.total_seconds())
 
     if not intento:
         return Soporte(
             2, "deficiente",
-            f"Respondio (mediana {mins}) pero no llego a ninguna accion concreta: "
-            "ni un paso a seguir ni un escalamiento.",
+            f"Contestó — habitualmente en {mins} —, pero el cliente no se llevó nada "
+            "concreto: ni un paso a seguir ni la certeza de que su caso se escaló.",
             med, False, algo_mas)
     if med > TOLERABLE:
         return Soporte(2, "deficiente",
-                       f"Hizo algo por el caso, pero la mediana de espera fue {mins}.",
+                       f"Hizo algo por el caso, pero el cliente esperó {mins} en cada "
+                       "ida y vuelta.",
                        med, True, algo_mas)
     if med > AGIL:
         return Soporte(3, "aceptable",
-                       f"Atendio el caso con una mediana de {mins} "
-                       "(el objetivo son 2 min).",
+                       f"Atendió el caso, aunque el cliente esperó {mins} en cada ida "
+                       "y vuelta. El objetivo son 2 minutos.",
                        med, True, algo_mas)
     if algo_mas:
         return Soporte(
             5, "excelente",
-            f"Atendio agil (mediana {mins}), dio una salida concreta y se aseguro de "
-            "que el cliente no necesitara nada mas.",
+            f"Atendió rápido — {mins} de espera habitual —, le dio una salida concreta "
+            "y antes de cerrar se aseguró de que no le faltara nada.",
             med, True, True)
     return Soporte(4, "buena",
-                   f"Atendio agil (mediana {mins}) y dio una salida concreta; cerro "
-                   "sin chequear si faltaba algo.",
+                   f"Atendió rápido — {mins} de espera habitual — y le dio una salida "
+                   "concreta. Cerró sin preguntar si necesitaba algo más.",
                    med, True, False)
 
 

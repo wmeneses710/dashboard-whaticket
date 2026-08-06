@@ -219,6 +219,44 @@ def derive_aciertos(
     return out
 
 
+# =============================================================================
+# Formato de los textos que LEE UNA PERSONA.
+#
+# El `rating_rationale` de las rubricas deterministas se muestra tal cual en el chat
+# y como snippet en la lista de interacciones. Decia cosas como "167s (2.8 min)": el
+# mismo dato dos veces, con punto decimal (que en español se lee mal) y con la unidad
+# pegada al numero. Y "5 pedido(s)", que es notacion de programador.
+# =============================================================================
+
+def formato_espera(segundos: float | None) -> str:
+    """Una espera, escrita como la escribiria una persona."""
+    if segundos is None:
+        return "nunca"
+    if segundos < 60:
+        n = round(segundos)
+        return f"{n} segundo" if n == 1 else f"{n} segundos"
+    # El plural se decide sobre el numero QUE SE MUESTRA, no sobre los segundos
+    # crudos: 89 s se redondea a "1,5" y eso es plural, aunque 89 < 90.
+    if segundos < 3600:
+        return _con_unidad(segundos / 60, "minuto", "minutos")
+    return _con_unidad(segundos / 3600, "hora", "horas")
+
+
+def _con_unidad(v: float, singular: str, plural_: str) -> str:
+    texto = _num(v)
+    return f"{texto} {singular if texto == '1' else plural_}"
+
+
+def _num(v: float) -> str:
+    """Un decimal, con coma, y sin el `,0` cuando es redondo."""
+    return f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def plural(n: int, singular: str, plural_: str | None = None) -> str:
+    """`5 pedidos` / `1 pedido`. Nada de `pedido(s)`."""
+    return f"{n} {singular if n == 1 else (plural_ or singular + 's')}"
+
+
 def label_to_stars(rubric: Rubric, label: str) -> int:
     """Traduce una etiqueta cualitativa a su estrella (1..5), de forma determinista.
 

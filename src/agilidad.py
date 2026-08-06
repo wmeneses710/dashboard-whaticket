@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from src.rubrics import formato_espera, plural
 from src.scorer import ScoreResult
 from src.signals import (
     es_cortesia,
@@ -199,8 +200,8 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
     if not pedidos:
         return Agilidad(stars=None, label=None, turnos_pedido=0, peor_espera=None,
                         sin_respuesta=0,
-                        rationale="Sin pedidos del agente en horario de operacion: "
-                                  "no hay agilidad que medir.")
+                        rationale="El agente no pidió nada dentro del horario de "
+                                  "atención, así que no hay tiempo de respuesta que medir.")
 
     # El operador cumple de DOS formas y las dos valen: diciendolo ("acreditado") o
     # mandando el COMPROBANTE. El chequeo era solo de texto, asi que un retiro resuelto
@@ -216,23 +217,25 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
         return Agilidad(
             stars=1, label="mala", turnos_pedido=len(pedidos), peor_espera=peor,
             sin_respuesta=len(abandonados),
-            rationale=f"{len(abandonados)} pedido(s) del agente quedaron sin respuesta y "
-                      "el operador no confirmo la operacion en ninguna parte de la sesion.",
+            rationale=f"{plural(len(abandonados), 'pedido')} del agente "
+                      f"{'quedó' if len(abandonados) == 1 else 'quedaron'} sin respuesta, "
+                      "y en toda la conversación el operador tampoco confirmó la operación "
+                      "ni envió el comprobante.",
         )
     if peor is None:
         # Todos los pedidos quedaron sin respuesta PERO el operador ya habia confirmado:
         # la operacion estaba cerrada, no hay espera que medir ni falla que imputar.
         return Agilidad(stars=None, label=None, turnos_pedido=len(pedidos),
                         peor_espera=None, sin_respuesta=0,
-                        rationale="El operador ya habia confirmado la operacion; los "
-                                  "mensajes posteriores no exigian respuesta.")
+                        rationale="El operador ya había confirmado la operación, así que "
+                                  "los mensajes que vinieron después no esperaban respuesta.")
 
     stars, label = _label_de(peor)
     return Agilidad(
         stars=stars, label=label, turnos_pedido=len(pedidos), peor_espera=peor,
         sin_respuesta=0,
-        rationale=f"Peor espera del operador ante un pedido: {_seg(peor)}s "
-                  f"({_seg(peor) / 60:.1f} min) sobre {len(pedidos)} pedido(s) en horario.",
+        rationale=f"La espera más larga del agente fue de {formato_espera(_seg(peor))}, "
+                  f"sobre {plural(len(pedidos), 'pedido')} dentro del horario de atención.",
     )
 
 
@@ -241,13 +244,13 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
 # mejorar nada). Es fijo a proposito: la accion correctiva de una operacion de rutina no
 # depende del caso, depende del reloj.
 _COACHING = {
-    "mala": "Un pedido del agente quedo sin responder. En operaciones de caja hay que "
-            "confirmar SIEMPRE, aunque sea con un acuse breve mientras se procesa.",
-    "deficiente": "La respuesta tardo mas de 15 minutos. Son operaciones de rutina que no "
-                  "requieren verificacion: avisar de inmediato y confirmar al acreditar.",
-    "aceptable": "La respuesta tardo mas de 5 minutos. Si no se puede procesar en el "
-                 "momento, mandar un acuse corto para que el agente no quede esperando.",
-    "buena": "Falto poco para el objetivo: responder el pedido dentro de los 2 minutos.",
+    "mala": "Quedó un pedido sin responder. En operaciones de caja conviene contestar "
+            "siempre, aunque sea con una línea avisando que ya se está procesando.",
+    "deficiente": "La respuesta tardó más de 15 minutos. Son operaciones de rutina que no "
+                  "necesitan verificación: se puede avisar enseguida y confirmar al acreditar.",
+    "aceptable": "La respuesta tardó más de 5 minutos. Si no se puede procesar en el momento, "
+                 "un mensaje corto alcanza para que el agente no quede esperando sin saber.",
+    "buena": "Muy cerca del objetivo, que es responder dentro de los 2 minutos.",
 }
 
 

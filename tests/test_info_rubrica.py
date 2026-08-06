@@ -124,4 +124,4 @@ def test_score_info_devuelve_un_ScoreResult_usable():
 
 def test_la_recomendacion_del_4_pide_chequear_el_cierre():
     r = score_info([_cli(0), _op(1)])
-    assert r.stars == 4 and "algo mas" in r.recomendacion.lower()
+    assert r.stars == 4 and "algo más" in r.recomendacion.lower()

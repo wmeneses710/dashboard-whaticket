@@ -242,3 +242,49 @@ def test_aciertos_usa_la_nota_del_llm_como_evidencia():
     got = _aciertos(atendio=True, claridad="claro", dimensions=dims)
     res = next(a for a in got if a["clave"] == "resolucion")
     assert res["detalle"] == "Confirmó la recarga con 'ing' tras el comprobante"
+
+
+# --- formato de esperas para texto que LEE UNA PERSONA -----------------------
+# Los rationale de las rubricas se muestran tal cual en el chat y como snippet en la
+# lista. Decian cosas como "167s (2.8 min)" — el mismo dato dos veces y con punto
+# decimal, que en español se lee mal.
+
+def test_formato_espera_usa_segundos_cuando_es_corto():
+    from src.rubrics import formato_espera
+    assert formato_espera(42) == "42 segundos"
+    assert formato_espera(1) == "1 segundo"
+
+
+def test_formato_espera_usa_minutos_con_coma_decimal():
+    from src.rubrics import formato_espera
+    assert formato_espera(167) == "2,8 minutos"
+    assert formato_espera(120) == "2 minutos"
+    assert formato_espera(60) == "1 minuto"
+
+
+def test_formato_espera_usa_horas_cuando_es_largo():
+    from src.rubrics import formato_espera
+    assert formato_espera(7200) == "2 horas"
+    assert formato_espera(5400) == "1,5 horas"
+
+
+def test_formato_espera_sin_dato():
+    from src.rubrics import formato_espera
+    assert formato_espera(None) == "nunca"
+
+
+def test_plural_no_escribe_parentesis_ese():
+    # "5 pedido(s)" es de programador, no de idioma.
+    from src.rubrics import plural
+    assert plural(1, "pedido") == "1 pedido"
+    assert plural(5, "pedido") == "5 pedidos"
+
+
+def test_el_plural_mira_el_numero_QUE_SE_MUESTRA():
+    # 89s se muestra como "1,5" y eso es plural, aunque 89 < 90. El bug decia
+    # "1,5 minuto" porque pluralizaba sobre los segundos crudos.
+    from src.rubrics import formato_espera
+    assert formato_espera(89) == "1,5 minutos"
+    assert formato_espera(62) == "1 minuto"
+    assert formato_espera(3700) == "1 hora"
+    assert formato_espera(4000) == "1,1 horas"

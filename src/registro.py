@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from src.deposits import deposit_candidate_count
+from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import _is_operator, operator_sent_credentials, tiene_reloj
 
@@ -60,15 +61,16 @@ class Registro:
 
 
 _COACHING = {
-    2: "El cliente entrego sus datos y nunca recibio las credenciales: el alta quedo "
-       "a medias. Si no podes crearla en el momento, decile cuando la va a tener.",
-    3: "Las credenciales tardaron mas de 5 minutos desde que el cliente paso sus "
-       "datos. Es el momento de mayor riesgo de que se caiga: crear la cuenta rapido.",
-    4: "La cuenta quedo creada. El paso que falta es acompañarlo hasta la primera "
-       "recarga, que es donde el registro se convierte en jugador.",
+    2: "El cliente entregó sus datos y nunca recibió su usuario y clave: el alta "
+       "quedó a medias. Si no podés crearla en el momento, decile cuándo la va a tener.",
+    3: "El usuario y la clave tardaron más de 5 minutos desde que el cliente pasó sus "
+       "datos. Es el momento de mayor riesgo de que se caiga: conviene crear la cuenta "
+       "cuanto antes.",
+    4: "La cuenta quedó creada. Lo que falta es acompañarlo hasta la primera recarga, "
+       "que es donde el registro se convierte en jugador.",
 }
-_COACHING_1 = ("El cliente entrego sus datos y nadie le respondio. Es el peor momento "
-               "para dejarlo colgado: ya habia decidido registrarse.")
+_COACHING_1 = ("El cliente entregó sus datos y nadie le respondió. Es el peor momento "
+               "para dejarlo esperando: ya había decidido registrarse.")
 
 
 def _datos_del_cliente(messages: list[dict]):
@@ -119,7 +121,7 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
               if cred and datos and cred["created_at"] > datos["created_at"] else None)
 
     def _mins(td: timedelta | None) -> str:
-        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+        return formato_espera(None if td is None else td.total_seconds())
 
     if cred is None:
         # El alta arranco y no llego. Distinguimos "nadie contesto" de "contesto y no
@@ -129,29 +131,29 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
             if datos is not None and m["created_at"] > datos["created_at"])
         if not hubo_respuesta:
             return Registro(1, "mala",
-                            "El cliente entrego sus datos y nadie le respondio.",
+                            "El cliente entregó sus datos y nadie le respondió.",
                             None, False, convirtio)
         return Registro(
             2, "deficiente",
-            "El cliente entrego sus datos pero nunca recibio las credenciales: "
-            "el alta quedo a medias.",
+            "El cliente entregó sus datos pero nunca recibió su usuario y clave: "
+            "el alta quedó a medias.",
             None, False, convirtio)
     if convirtio:
         return Registro(
             5, "excelente",
-            f"Creo la cuenta ({_mins(espera)} desde el traspaso de datos) y ademas "
-            "logro que el cliente depositara en la misma sesion.",
+            f"Creó la cuenta {_mins(espera)} después de recibir los datos y además "
+            "logró que el cliente recargara en la misma conversación.",
             espera, True, True)
     if espera is None or espera > ENTREGA_AGIL:
         return Registro(
             3, "aceptable",
-            f"Entrego las credenciales pero tardo {_mins(espera)} desde que el "
-            "cliente paso sus datos (el objetivo son 5 min).",
+            f"Entregó el usuario y la clave, pero tardó {_mins(espera)} desde que el "
+            "cliente pasó sus datos. El objetivo son 5 minutos.",
             espera, True, False)
     return Registro(
         4, "buena",
-        f"Creo la cuenta en {_mins(espera)} desde el traspaso de datos; no llego "
-        "a la primera recarga.",
+        f"Creó la cuenta {_mins(espera)} después de recibir los datos. No llegó a "
+        "acompañarlo hasta la primera recarga.",
         espera, True, False)
 
 

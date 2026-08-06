@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -68,14 +69,14 @@ class Retiro:
 
 
 _COACHING = {
-    2: "El retiro quedo sin comprobante. Mandalo SIEMPRE: es el respaldo de que la "
-       "plata salio y lo que sostiene la confianza del agente.",
-    3: "Faltó velocidad. El objetivo es responder el pedido dentro de los 2 minutos y "
+    2: "El retiro quedó sin comprobante. Enviarlo siempre: es el respaldo de que la "
+       "plata salió, y es lo que sostiene la confianza del agente.",
+    3: "Faltó velocidad. Se apunta a responder el pedido dentro de los 2 minutos y a "
        "tener el comprobante arriba en 15.",
-    4: "Antes de cerrar, asegurate de que el cliente no necesite algo mas.",
+    4: "Antes de cerrar, preguntale si necesita algo más.",
 }
-_COACHING_1 = ("El pedido de retiro quedo sin ninguna respuesta. Aunque no puedas "
-               "procesarlo en el momento, avisa que lo recibiste.")
+_COACHING_1 = ("El pedido de retiro quedó sin respuesta. Aunque no puedas procesarlo "
+               "en el momento, avisale al agente que lo recibiste.")
 
 
 def _pedido_del_cliente(messages: list[dict]):
@@ -115,39 +116,41 @@ def calificar_retiro(messages: list[dict]) -> Retiro | None:
     algo_mas = operator_asked_anything_else(reales)
 
     def _mins(td: timedelta | None) -> str:
-        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+        return formato_espera(None if td is None else td.total_seconds())
 
     if respuesta is None and comprobante is None:
-        return Retiro(1, "mala", "El pedido de retiro quedo sin ninguna respuesta.",
+        return Retiro(1, "mala", "El agente pidió el retiro y nadie le respondió.",
                       None, None, algo_mas)
     if entrega is None:
         return Retiro(
             2, "deficiente",
-            f"El operador respondio en {_mins(espera)} pero nunca mando el "
-            "comprobante del retiro.",
+            f"Respondió en {_mins(espera)}, pero nunca envió el comprobante del "
+            "retiro: el agente no tiene con qué respaldar que la plata salió.",
             espera, None, algo_mas)
     if entrega > ENTREGA_TOPE or (espera is not None and espera > RESPUESTA_TOPE):
         return Retiro(
             2, "deficiente",
-            f"Mando el comprobante, pero tarde: respondio en {_mins(espera)} y "
-            f"entrego en {_mins(entrega)}.",
+            f"Envió el comprobante, pero tarde: respondió en {_mins(espera)} y lo "
+            f"entregó {_mins(entrega)} después del pedido.",
             espera, entrega, algo_mas)
     if (espera is not None and espera > AGIL) or entrega > ENTREGA_AGIL:
         return Retiro(
             3, "aceptable",
-            f"Entrego el comprobante, pero fuera del objetivo: respuesta "
-            f"{_mins(espera)} y entrega {_mins(entrega)} (objetivo 2 y 15 min).",
+            f"Entregó el comprobante, pero fuera del objetivo: respondió en "
+            f"{_mins(espera)} y entregó {_mins(entrega)} después del pedido. Se apunta "
+            "a responder en 2 minutos y entregar dentro de los 15.",
             espera, entrega, algo_mas)
     if algo_mas:
         return Retiro(
             5, "excelente",
-            f"Respondio el pedido en {_mins(espera)}, entrego el comprobante en "
-            f"{_mins(entrega)} y se aseguro de que no faltara nada.",
+            f"Respondió el pedido en {_mins(espera)}, entregó el comprobante "
+            f"{_mins(entrega)} después y antes de cerrar se aseguró de que no faltara "
+            "nada.",
             espera, entrega, True)
     return Retiro(
         4, "buena",
-        f"Respondio en {_mins(espera)} y entrego el comprobante en {_mins(entrega)}; "
-        "cerro sin chequear si faltaba algo.",
+        f"Respondió en {_mins(espera)} y entregó el comprobante {_mins(entrega)} "
+        "después del pedido. Cerró sin preguntar si faltaba algo.",
         espera, entrega, False)
 
 

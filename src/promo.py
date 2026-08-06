@@ -34,6 +34,7 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -63,14 +64,14 @@ class Promo:
 
 
 _COACHING = {
-    2: "El cliente pregunto por la promo y la respuesta tardo mas de 15 minutos. "
-       "Una consulta de promo se enfria rapido.",
+    2: "El cliente preguntó por la promo y la respuesta tardó más de 15 minutos. Una "
+       "consulta así se enfría rápido.",
     3: "Respondiste, pero fuera de los 2 minutos. En promo la ventana es corta.",
-    4: "Falta el MATERIAL. Explicar la promo de palabra convierte MENOS que no decir "
-       "nada (19,1% contra 24,9%); con el flyer o el enlace sube a 34,1%. Mandalo "
-       "junto con la invitacion.",
+    4: "Falta el material. Explicar la promo solo de palabra convierte menos que no "
+       "decir nada; con el flyer o el enlace a la vista, bastante más. Mandalo junto "
+       "con la invitación.",
 }
-_COACHING_1 = "La consulta por la promo quedo sin respuesta."
+_COACHING_1 = "El cliente preguntó por la promo y nadie le respondió."
 
 
 def _material_del_operador(messages: list[dict]) -> bool:
@@ -103,14 +104,15 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     empuje = operator_pushed(reales)
 
     def _mins(td: timedelta | None) -> str:
-        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+        return formato_espera(None if td is None else td.total_seconds())
 
     if respuesta is None:
-        return Promo(1, "mala", "La consulta por la promo quedo sin respuesta.",
+        return Promo(1, "mala", "El cliente preguntó por la promo y nadie le respondió.",
                      None, material, empuje)
     if espera > TOLERABLE:
         return Promo(2, "deficiente",
-                     f"Respondio la consulta de promo recien a los {_mins(espera)}.",
+                     f"Respondió recién {_mins(espera)} después. Una consulta por una "
+                     "promo se enfría rápido.",
                      espera, material, empuje)
     # EL MATERIAL manda, y vale mas que un par de minutos: es lo unico que la prueba
     # de negocio mostro que mueve la conversion. `operator_pushed` NO entra en la
@@ -119,17 +121,17 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     # verbal solo no distingue nada (68,2% lo hace) y el material si (11,8%).
     if material and espera <= RAZONABLE:
         return Promo(5, "excelente",
-                     f"Respondio en {_mins(espera)} y mando material concreto "
-                     "(flyer o enlace), que es lo que hace que la promo convierta.",
+                     f"Respondió en {_mins(espera)} y mandó material concreto — el "
+                     "flyer o el enlace —, que es lo que hace que la promo convierta.",
                      espera, True, empuje)
     if espera > AGIL:
         return Promo(3, "aceptable",
-                     f"Respondio en {_mins(espera)} y sin material "
-                     "(el objetivo son 2 min, o material a mano).",
+                     f"Respondió en {_mins(espera)} y solo de palabra. Se apunta a "
+                     "contestar en 2 minutos, o a mandar el material.",
                      espera, material, empuje)
     return Promo(4, "buena",
-                 f"Respondio en {_mins(espera)}, pero explico la promo solo de "
-                 "palabra: falto el material.",
+                 f"Respondió en {_mins(espera)}, pero explicó la promo solo de "
+                 "palabra: faltó mandar el flyer o el enlace.",
                  espera, material, empuje)
 
 

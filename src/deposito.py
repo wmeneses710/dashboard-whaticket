@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from src.deposits import has_recharge_context
+from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -65,14 +66,14 @@ class Deposito:
 
 
 _COACHING = {
-    2: "Confirma SIEMPRE la acreditacion: un 'en breve' sin cierre deja al cliente "
-       "sin saber si su plata entro.",
-    3: "El acuse tardo mas de 2 minutos. Aunque no puedas acreditar en el momento, "
-       "avisa de inmediato que recibiste el comprobante.",
-    4: "Antes de cerrar, asegurate de que el cliente no necesite algo mas.",
+    2: "Confirmale siempre al cliente que la plata entró. Un \"en breve\" sin cierre lo "
+       "deja sin saber si su recarga se acreditó.",
+    3: "Tardaste más de 2 minutos en avisar. Aunque no puedas acreditar en el momento, "
+       "decile enseguida que ya recibiste el comprobante.",
+    4: "Antes de cerrar, preguntale si necesita algo más.",
 }
-_COACHING_1 = ("El comprobante quedo sin respuesta. En operaciones de caja hay que "
-               "acusar SIEMPRE, aunque sea con una linea mientras se procesa.")
+_COACHING_1 = ("El comprobante quedó sin respuesta. En operaciones de caja conviene "
+               "contestar siempre, aunque sea con una línea mientras se procesa.")
 
 
 def _comprobante_del_cliente(messages: list[dict]):
@@ -115,37 +116,40 @@ def calificar_deposito(messages: list[dict]) -> Deposito | None:
     algo_mas = operator_asked_anything_else(reales)
 
     def _mins(td: timedelta | None) -> str:
-        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+        return formato_espera(None if td is None else td.total_seconds())
 
     if respuesta is None and not acredito:
-        return Deposito(1, "mala", "El comprobante del cliente quedo sin respuesta.",
+        return Deposito(1, "mala", "El cliente mandó el comprobante y nadie le respondió.",
                         None, False, algo_mas)
     if not acredito:
         return Deposito(
             2, "deficiente",
-            f"El operador respondio en {_mins(espera)} pero nunca confirmo la "
-            "acreditacion: el cliente quedo sin saber si su recarga entro.",
+            f"Respondió en {_mins(espera)}, pero nunca le confirmó al cliente que la "
+            "plata había entrado: se quedó sin saber si su recarga se acreditó.",
             espera, False, algo_mas)
     if espera is None or espera > ACEPTABLE:
         return Deposito(
             2, "deficiente",
-            f"Acredito, pero el acuse del comprobante tardo {_mins(espera)}.",
+            f"Confirmó la acreditación, pero tardó {_mins(espera)} en avisarle al "
+            "cliente que había recibido el comprobante.",
             espera, True, algo_mas)
     if espera > AGIL:
         return Deposito(
             3, "aceptable",
-            f"Acredito, pero el acuse tardo {_mins(espera)} (el objetivo son 2 min).",
+            f"Confirmó la acreditación, pero tardó {_mins(espera)} en el primer aviso. "
+            "El objetivo son 2 minutos.",
             espera, True, algo_mas)
     if algo_mas:
         return Deposito(
             5, "excelente",
-            f"Acuso el comprobante en {_mins(espera)}, confirmo la acreditacion y "
-            "se aseguro de que el cliente no necesitara nada mas.",
+            f"Avisó en {_mins(espera)} que había recibido el comprobante, le confirmó "
+            "al cliente que la plata entró y antes de cerrar se aseguró de que no le "
+            "faltara nada.",
             espera, True, True)
     return Deposito(
         4, "buena",
-        f"Acuso el comprobante en {_mins(espera)} y confirmo la acreditacion; "
-        "cerro sin chequear si faltaba algo.",
+        f"Avisó en {_mins(espera)} que había recibido el comprobante y le confirmó al "
+        "cliente que la plata entró. Cerró sin preguntarle si necesitaba algo más.",
         espera, True, False)
 
 

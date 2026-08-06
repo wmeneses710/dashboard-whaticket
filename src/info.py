@@ -33,6 +33,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import timedelta
 
+from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import _is_operator, operator_asked_anything_else, tiene_reloj
 
@@ -53,13 +54,13 @@ class Info:
 
 
 _COACHING = {
-    2: "La consulta tardo mas de 5 minutos en ser respondida. En `info` el cliente "
-       "todavia esta decidiendo si se queda: cada minuto cuenta.",
+    2: "La consulta tardó más de 5 minutos en ser respondida. Quien pregunta todavía "
+       "está decidiendo si se queda: cada minuto cuenta.",
     3: "Respondiste, pero fuera de los 2 minutos.",
-    4: "Antes de cerrar, asegurate de que el cliente no necesite algo mas: en una "
-       "consulta suele quedar una segunda duda sin plantear.",
+    4: "Antes de cerrar, preguntale si necesita algo más: en una consulta suele quedar "
+       "una segunda duda sin plantear.",
 }
-_COACHING_1 = "La consulta del cliente quedo sin respuesta."
+_COACHING_1 = "El cliente preguntó y nadie le respondió."
 
 
 def calificar_info(messages: list[dict]) -> Info | None:
@@ -81,26 +82,27 @@ def calificar_info(messages: list[dict]) -> Info | None:
     algo_mas = operator_asked_anything_else(reales)
 
     def _mins(td: timedelta | None) -> str:
-        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+        return formato_espera(None if td is None else td.total_seconds())
 
     if respuesta is None:
-        return Info(1, "mala", "La consulta del cliente quedo sin respuesta.",
+        return Info(1, "mala", "El cliente preguntó y nadie le respondió.",
                     None, algo_mas)
     if espera > TOLERABLE:
         return Info(2, "deficiente",
-                    f"Respondio la consulta recien a los {_mins(espera)}.",
+                    f"Respondió recién {_mins(espera)} después de la consulta.",
                     espera, algo_mas)
     if espera > AGIL:
         return Info(3, "aceptable",
-                    f"Respondio en {_mins(espera)} (el objetivo son 2 min).",
+                    f"Respondió en {_mins(espera)}. El objetivo son 2 minutos.",
                     espera, algo_mas)
     if algo_mas:
         return Info(5, "excelente",
-                    f"Respondio en {_mins(espera)} y se aseguro de que el cliente no "
-                    "necesitara nada mas.",
+                    f"Respondió en {_mins(espera)} y antes de cerrar se aseguró de que "
+                    "el cliente no necesitara nada más.",
                     espera, True)
     return Info(4, "buena",
-                f"Respondio en {_mins(espera)}; cerro sin chequear si faltaba algo.",
+                f"Respondió en {_mins(espera)}. Cerró sin preguntar si necesitaba "
+                "algo más.",
                 espera, False)
 
 
