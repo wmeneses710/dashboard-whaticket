@@ -655,9 +655,11 @@
           <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail))"
                style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
             <span class="chip" v-if="modal.detail.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
-            <span class="chip deposit" v-if="modal.detail.deposit_count>0">Recargado</span>
-            <span class="chip player" v-if="modal.detail.conversion_returned">Convirtió a jugador</span>
-            <span class="chip fast" v-if="fastClose(modal.detail)" title="Cerró en menos de 10 min sin resolver (★≤2) — puede ser cierre prematuro">⏱ Cerró en {{ Math.round(modal.detail.session_seconds/60) }} min</span>
+            <span class="chip deposit" v-if="modal.detail.deposit_count>0"
+                  :title="'El cliente mandó '+modal.detail.deposit_count+' comprobante(s) de recarga en esta conversación. Se detecta por la imagen del cliente más el contexto de recarga, sin intervención del modelo.'">El cliente recargó<span v-if="modal.detail.deposit_count>1"> ×{{ modal.detail.deposit_count }}</span></span>
+            <span class="chip player" v-if="modal.detail.conversion_returned"
+                  title="Era la primera vez que esta persona escribía, y volvió a hacerlo en otra ocasión. Es la señal de que el contacto no se perdió.">Volvió después de este chat</span>
+            <span class="chip fast" v-if="fastClose(modal.detail)" title="Duró menos de 10 minutos y quedó con nota baja. No es una falta en sí: es un caso para mirar, porque puede haberse cerrado antes de resolver.">⏱ Chat corto: {{ Math.round(modal.detail.session_seconds/60) }} min</span>
           </div>
           <div v-if="modal.detail && modal.detail.pending">
             <div class="why" style="border-color:var(--faint)">⏳ <b>Pendiente de evaluar</b> — el worker todavía no scoreó esta sesión (backfill en curso). El chat se muestra igual; el análisis aparece cuando termine de procesarla.</div>
@@ -670,7 +672,8 @@
             <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
               <span class="chip" :style="chipStyle(modal.detail)"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span>
               <span class="chip at" :class="'at-'+modal.detail.atencion" v-if="modal.detail.atencion">{{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion }}</span>
-              <span class="chip" v-if="modal.detail.deposit_observed!==null" style="background:color-mix(in srgb, var(--faint) 15%, transparent)">depósito observado: {{ modal.detail.deposit_observed ? 'sí' : 'no' }}</span>
+              <span class="chip" v-if="modal.detail.deposit_mismatch" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
+                    title="El comprobante está en el chat pero el modelo no lo vio (o al revés). Sirve para auditar al modelo; la nota se calcula con el dato duro, no con su observación.">revisar: el modelo y el comprobante no coinciden</span>
               <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='claro'" style="background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)">claro</span>
               <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='confuso'" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">poco claro</span>
               <span class="chip" v-if="dimReinsistio(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">el cliente reinsistió</span>
@@ -681,26 +684,26 @@
                  se veia en ninguna parte del tablero. -->
             <div class="tiempos">
               <div class="dh" style="margin-bottom:6px">Tiempos</div>
-              <div class="trow"><span>primera respuesta</span>
+              <div class="trow"><span title="Cuánto esperó el cliente desde que escribió hasta que alguien le contestó.">el cliente esperó su primera respuesta</span>
                 <b>{{ fmtDur(modal.detail.first_response_seconds) }}</b></div>
               <div class="trow" v-for="t in dimTiempos(modal.detail.dimensions)" :key="t.lbl">
-                <span>{{ t.lbl }}</span><b>{{ fmtDur(t.v) }}</b></div>
+                <span :title="t.tip">{{ t.lbl }}</span><b>{{ fmtDur(t.v) }}</b></div>
               <div class="trow" v-for="c in dimConteos(modal.detail.dimensions)" :key="c.lbl">
-                <span>{{ c.lbl }}</span><b>{{ c.v }}</b></div>
-              <div class="trow"><span>duró la conversación</span>
+                <span :title="c.tip">{{ c.lbl }}</span><b>{{ c.v }}</b></div>
+              <div class="trow"><span title="De punta a punta, desde el primer mensaje hasta que se cerró el ticket.">duró la conversación</span>
                 <b>{{ fmtDur(modal.detail.resolution_seconds) }}</b></div>
               <div class="trow" v-if="modal.detail.cierre_seconds!=null">
-                <span title="Entre la última acción del operador y el cierre del ticket">
-                  esperó antes de cerrar</span>
+                <span title="Cuánto dejó abierto el chat después de su última acción, por si al cliente le quedaba otra duda. Hoy 4 de cada 5 conversaciones se cierran en menos de un minuto.">
+                  dejó el chat abierto antes de cerrar</span>
                 <b>{{ fmtDur(modal.detail.cierre_seconds) }}</b></div>
               <div class="trow" v-if="modal.detail.algo_mas_cierre_seconds!=null">
-                <span>cerró tras preguntar si faltaba algo</span>
+                <span title="Cuánto esperó después de preguntarle al cliente si necesitaba algo más.">esperó después de preguntar si faltaba algo</span>
                 <b>{{ fmtDur(modal.detail.algo_mas_cierre_seconds) }}</b></div>
             </div>
 
             <div class="hechos" v-if="dimHechos(modal.detail.dimensions,true).length || dimHechos(modal.detail.dimensions,false).length">
-              <span class="chip ok-chip" v-for="h in dimHechos(modal.detail.dimensions,true)" :key="'si'+h">✓ {{ h }}</span>
-              <span class="chip falta-chip" v-for="h in dimHechos(modal.detail.dimensions,false)" :key="'no'+h">✗ {{ h }}</span>
+              <span class="chip ok-chip" v-for="h in dimHechos(modal.detail.dimensions,true)" :key="'si'+h.lbl" :title="h.tip">✓ {{ h.lbl }}</span>
+              <span class="chip falta-chip" v-for="h in dimHechos(modal.detail.dimensions,false)" :key="'no'+h.lbl" :title="h.tip">✗ {{ h.lbl }}</span>
             </div>
 
             <div class="dims">
@@ -825,28 +828,63 @@ const fmtDur = v => {
 };
 // Metricas que dejan las rubricas deterministas en `dimensions`. Son numeros y
 // booleanos, asi que `dimsOnly` (que filtra por string) no las mostraba nunca.
+// Cada etiqueta dice QUE se midio, en palabras de alguien que no escribio el codigo,
+// y el `tip` explica por que importa. Nada de nombres tecnicos: "peor espera" se lee
+// como un reproche cuando en realidad es solo el nombre del reloj que define la nota.
 const METRICA_LABEL = {
-  espera_acuse_seg:        "acuse del comprobante",
-  espera_respuesta_seg:    "respuesta al pedido",
-  espera_credenciales_seg: "entrega de credenciales",
-  entrega_comprobante_seg: "envío del comprobante",
-  mediana_espera_seg:      "espera mediana por turno",
-  peor_espera_seg:         "peor espera",
+  espera_acuse_seg: {
+    lbl: "tardó en avisar que recibió el comprobante",
+    tip: "Desde que el cliente mandó el comprobante hasta la primera respuesta. El objetivo son 2 minutos." },
+  espera_respuesta_seg: {
+    lbl: "tardó en responder el pedido",
+    tip: "Desde que el cliente pidió hasta que el operador contestó. El objetivo son 2 minutos." },
+  espera_credenciales_seg: {
+    lbl: "tardó en entregar las credenciales",
+    tip: "Desde que el cliente pasó sus datos hasta que recibió usuario y clave. El objetivo son 5 minutos: crear una cuenta lleva más que acusar un comprobante." },
+  entrega_comprobante_seg: {
+    lbl: "tardó en enviar el comprobante",
+    tip: "Desde que el cliente pidió el retiro hasta que recibió el comprobante. El objetivo son 15 minutos." },
+  mediana_espera_seg: {
+    lbl: "espera habitual del cliente",
+    tip: "La mediana de lo que esperó el cliente en cada ida y vuelta. Se usa la mediana y no la espera más larga porque una conversación con muchos turnos no es una conversación lenta." },
+  peor_espera_seg: {
+    lbl: "la espera más larga",
+    tip: "El turno en que el agente más esperó. En este segmento es el que define la nota: el negocio pidió que la atención sea rápida SIEMPRE, no en promedio." },
 };
 // Conteos. Van aparte de METRICA_LABEL porque NO son segundos: pasarlos por fmtDur
 // mostraria "2 pedidos" como "2s".
 const CONTEO_LABEL = {
-  turnos_pedido:  "pedidos del agente",
-  sin_respuesta:  "pedidos sin responder",
+  turnos_pedido: {
+    lbl: "cosas que pidió el agente",
+    tip: "Cuántas veces el agente pidió algo que exigía respuesta. Los saludos y agradecimientos no cuentan." },
+  sin_respuesta: {
+    lbl: "quedaron sin respuesta",
+    tip: "Pedidos que nadie contestó y que el operador tampoco resolvió de otra forma." },
 };
+// En positivo lo que se hizo, en negativo lo que falto. El `tip` aclara que se
+// considera cumplido, para que nadie tenga que adivinar por que le falta un tilde.
 const HECHO_LABEL = {
-  acredito:             "confirmó la acreditación",
-  entrego_credenciales: "entregó credenciales",
-  convirtio_a_deposito: "logró el depósito",
-  mando_material:       "mandó material",
-  empujo:               "invitó a convertir",
-  hubo_intento:         "dio una salida concreta",
-  pregunto_algo_mas:    "chequeó si faltaba algo",
+  acredito: {
+    lbl: "le confirmó al cliente que la plata entró",
+    tip: 'Un "en breve" no alcanza: tiene que decir que el saldo ya está disponible.' },
+  entrego_credenciales: {
+    lbl: "le entregó usuario y clave",
+    tip: "El operador creó la cuenta y le pasó los datos de acceso al cliente." },
+  convirtio_a_deposito: {
+    lbl: "el cliente recargó en la misma conversación",
+    tip: "Es el mejor final posible de un registro: la persona pasó de interesada a jugadora sin irse del chat." },
+  mando_material: {
+    lbl: "mandó el flyer o el enlace",
+    tip: "Explicar la promo solo de palabra convierte menos que no decir nada; con material a la vista, mucho más." },
+  empujo: {
+    lbl: "lo invitó a dar el paso",
+    tip: "Una invitación concreta a registrarse o recargar, no solo mencionar que existe una promo." },
+  hubo_intento: {
+    lbl: "le dio una salida concreta",
+    tip: "Un paso a seguir o el caso escalado al área. El desbloqueo suele resolverse fuera del chat, así que lo que se mira es el intento." },
+  pregunto_algo_mas: {
+    lbl: "se aseguró de que no le faltara nada",
+    tip: "Preguntar si necesita algo más antes de cerrar. No es lo mismo que despedirse con la plantilla." },
 };
 const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
@@ -1310,22 +1348,22 @@ createApp({
     // Tiempos que dejo la rubrica determinista del motivo, ya con etiqueta legible.
     function dimTiempos(dims) {
       const out = [];
-      for (const [k, lbl] of Object.entries(METRICA_LABEL))
-        if (dims && typeof dims[k] === "number") out.push({ lbl, v: dims[k] });
+      for (const [k, m] of Object.entries(METRICA_LABEL))
+        if (dims && typeof dims[k] === "number") out.push({ ...m, v: dims[k] });
       return out;
     }
     // Hechos si/no de la rubrica. Se muestran los CUMPLIDOS y, aparte, lo que falto:
     // el hueco es justamente la recomendacion.
     function dimConteos(dims) {
       const out = [];
-      for (const [k, lbl] of Object.entries(CONTEO_LABEL))
-        if (dims && typeof dims[k] === "number") out.push({ lbl, v: dims[k] });
+      for (const [k, m] of Object.entries(CONTEO_LABEL))
+        if (dims && typeof dims[k] === "number") out.push({ ...m, v: dims[k] });
       return out;
     }
     function dimHechos(dims, cumplidos) {
       const out = [];
-      for (const [k, lbl] of Object.entries(HECHO_LABEL))
-        if (dims && typeof dims[k] === "boolean" && dims[k] === cumplidos) out.push(lbl);
+      for (const [k, m] of Object.entries(HECHO_LABEL))
+        if (dims && typeof dims[k] === "boolean" && dims[k] === cumplidos) out.push(m);
       return out;
     }
     function dimAciertos(dims) { return (dims&&dims.aciertos)||[]; }
