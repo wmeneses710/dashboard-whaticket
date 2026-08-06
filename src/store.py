@@ -22,7 +22,12 @@ from src.metrics import (
 from src.scorer import ScoreResult
 from src.segments import segment_for_queue
 
-SCORING_VERSION = "2026.07-motivo-v2"
+# 2026.08-rubricas-v4: la escala v4 (hacer bien el trabajo YA vale 4; el cap de uplift
+# sobrevive solo en `promo`) + SIETE rubricas deterministas por motivo — agilidad
+# (agente), deposito, retiro, registro, promo, soporte_cuenta, info — mas el skip
+# `sin_motivo`. Cambia la nota del 63,2% de las sesiones de jugador, asi que las filas
+# viejas no son comparables: el bump es obligatorio.
+SCORING_VERSION = "2026.08-rubricas-v4"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

@@ -328,8 +328,11 @@ def test_migracion_idempotente_segunda_corrida_no_renombra():
     assert not _has(cur2, "RENAME TO")
 
 
-def test_scoring_version_bumped_a_motivo_v2():
-    assert SCORING_VERSION == "2026.07-motivo-v2"
+def test_scoring_version_bumped_a_rubricas_v4():
+    # Pineado A PROPOSITO: cambiar la rubrica sin bumpear la version deja las filas
+    # nuevas indistinguibles de la linea base congelada. Este test rompe para
+    # obligar a la decision consciente.
+    assert SCORING_VERSION == "2026.08-rubricas-v4"
 
 
 # --- rating_applicable: LEGACY de Opción B (retirada en v2). Toda fila scoreada la
