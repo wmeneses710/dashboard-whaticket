@@ -111,7 +111,7 @@ def test_fetch_pending_sessions_devuelve_dicts_con_session_id():
 def _evaluated_session_messages():
     """Transcript minimo que decide_eligibility marca como 'evaluated'."""
     return [
-        {"from_me": False, "is_note": False, "body": "hola", "sent_from": None,
+        {"from_me": False, "is_note": False, "body": "me ayudas con una recarga?", "sent_from": None,
          "user_id": None, "media_type": None},
         {"from_me": True, "is_note": False, "body": "buenas, te ayudo", "sent_from": "OP",
          "user_id": "op1", "media_type": None},
@@ -184,7 +184,7 @@ def test_score_session_and_store_evaluated_corre_el_llm_por_sesion(monkeypatch):
 def test_score_session_and_store_skipped_no_scorea(monkeypatch):
     # Solo un mensaje del cliente -> no_agent_reply -> skipped, sin LLM ni stars.
     monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: [
-        {"from_me": False, "is_note": False, "body": "hola", "sent_from": None,
+        {"from_me": False, "is_note": False, "body": "me ayudas con una recarga?", "sent_from": None,
          "user_id": None, "media_type": None},
     ])
 
@@ -262,3 +262,99 @@ def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
 
     assert called["batch"] == 0        # no scoreó: se retiró por el lock
     assert len(connects) == 1          # solo la conexión del lock, no llegó a migración/refresh
+
+
+# --- segmento AGENTE: rating DETERMINISTA, sin LLM --------------------------------
+# La agilidad se calcula con timestamps (src/agilidad.py). El pase con LLM NO debe
+# correr para agente: la vara comercial del jugador no aplica a un revendedor.
+
+def _agente_session_row():
+    row = _session_row("sessA")
+    row["queue_name"] = "Agente 👨👩"   # segment_for_queue -> "agente"
+    return row
+
+
+def _mensajes_de_agente(minutos_respuesta):
+    """Agente pide una recarga a las 15:00 Ecuador y el operador responde N minutos despues."""
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 3, 10, 20, 0, 0, tzinfo=timezone.utc)  # 15:00 Ecuador
+    return [
+        {"created_at": t0, "from_me": False, "is_note": False,
+         "body": "Me ayuda con una recarga a mi agencia", "sent_from": None,
+         "user_id": None, "media_type": None},
+        {"created_at": t0 + timedelta(minutes=minutos_respuesta), "from_me": True,
+         "is_note": False, "body": "Tu saldo ya esta disponible", "sent_from": "OP",
+         "user_id": "op1", "media_type": None},
+    ]
+
+
+def test_sesion_de_agente_NO_llama_al_llm(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _mensajes_de_agente(1))
+
+    def boom(**kw):
+        raise AssertionError("el LLM no debe correr en el segmento agente")
+
+    monkeypatch.setattr(worker, "score_by_motivo", boom)
+    conn = _CtxConn()
+    status, _, score = score_session_and_store(conn, _agente_session_row(),
+                                               llm=None, op_map={})
+    assert status == "evaluated"
+    assert score is not None and score.stars == 5
+    params = _params_of_upsert(conn)
+    assert params["stars"] == 5
+    assert params["llm_model"] == "determinista/agilidad-v1"
+
+
+def test_sesion_de_agente_lenta_baja_la_nota(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _mensajes_de_agente(40))
+    monkeypatch.setattr(worker, "score_by_motivo",
+                        lambda **kw: (_ for _ in ()).throw(AssertionError("sin LLM")))
+    _, _, score = score_session_and_store(_CtxConn(), _agente_session_row(),
+                                          llm=None, op_map={})
+    assert score.stars == 2
+
+
+def test_sesion_de_JUGADOR_sigue_usando_el_llm(monkeypatch):
+    # Contraprueba: el path determinista es SOLO para agente.
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _evaluated_session_messages())
+    llamo = {"si": False}
+
+    def spy(**kw):
+        llamo["si"] = True
+        return _fake_score()
+
+    monkeypatch.setattr(worker, "score_by_motivo", spy)
+    row = _session_row("sessJ")
+    row["queue_name"] = "Jugadores"
+    score_session_and_store(_CtxConn(), row, llm=None, op_map={})
+    assert llamo["si"] is True
+
+
+def test_sesion_de_agente_sin_pedidos_medibles_queda_sin_nota(monkeypatch):
+    # Solo cortesias: no hay agilidad que medir. NO se inventa una nota media, y
+    # tampoco se cae al LLM (seguiria aplicando la vara del jugador).
+    #
+    # OJO: el agente tiene que PEDIR algo para llegar hasta aca. Si su unico mensaje
+    # fuera "Gracias", el skip `sin_motivo` gana antes (y esta bien: nadie planteo
+    # nada). Lo que este test fija es el caso distinto — hubo un pedido de verdad,
+    # pero cae FUERA del horario de operacion, asi que no hay agilidad medible.
+    from datetime import datetime, timezone
+    t0 = datetime(2026, 3, 10, 7, 0, 0, tzinfo=timezone.utc)   # 02:00 Ecuador
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: [
+        {"created_at": t0, "from_me": False, "is_note": False,
+         "body": "me cargas 30 a la agencia?", "sent_from": None, "user_id": None,
+         "media_type": "chat"},
+        {"created_at": t0, "from_me": True, "is_note": False, "body": "a la orden",
+         "sent_from": "OP", "user_id": "op1", "media_type": "chat"},
+    ])
+    monkeypatch.setattr(worker, "score_by_motivo",
+                        lambda **kw: (_ for _ in ()).throw(AssertionError("sin LLM")))
+    conn = _CtxConn()
+    status, _, score = score_session_and_store(conn, _agente_session_row(),
+                                               llm=None, op_map={})
+    assert status == "evaluated"       # la sesion es evaluable; solo no tiene nota
+    assert score is None
+    assert _params_of_upsert(conn)["stars"] is None

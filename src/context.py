@@ -41,16 +41,22 @@ def fetch_session_messages(cur, session_id) -> list[dict]:
     el tiebreaker dos mensajes con el mismo created_at (comun en cargas por lote)
     ordenan no-determinista y el merge cronologico global se vuelve inestable.
     """
+    # `created_at` viaja en el dict, no solo en el ORDER BY: la rubrica de agilidad
+    # (src/agilidad.py, segmento agente) mide el silencio entre pedido y respuesta y lo
+    # necesita en CADA mensaje. Sin el reventaba con KeyError recien contra la BD — 46 de
+    # 60 sesiones de agente en la primera tanda. El contrato lo fija
+    # tests/test_context.py::test_la_forma_real_alcanza_para_la_rubrica_de_agilidad.
     cur.execute(
-        "SELECT m.from_me, m.is_note, m.body, m.sent_from, m.user_id, m.media_type "
+        "SELECT m.created_at, m.from_me, m.is_note, m.body, m.sent_from, m.user_id, "
+        "m.media_type "
         "FROM messages m "
         "JOIN conversation_session_map map ON map.conversation_id = m.conversation_id "
         "WHERE map.session_id=%s ORDER BY m.created_at, m.id",
         (session_id,),
     )
     return [
-        {"from_me": r[0], "is_note": r[1], "body": r[2], "sent_from": r[3],
-         "user_id": r[4], "media_type": r[5]}
+        {"created_at": r[0], "from_me": r[1], "is_note": r[2], "body": r[3],
+         "sent_from": r[4], "user_id": r[5], "media_type": r[6]}
         for r in cur.fetchall()
     ]
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 import traceback
 
+from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
 from src.deposits import deposit_candidate_count
 from src.llm import OllamaClient
@@ -17,6 +18,7 @@ from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
+from src.segments import segment_for_queue
 from src.sessions import evaluate_session
 from src.store import (
     build_score_record,
@@ -161,13 +163,23 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None, 
     op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
     score = None
     if eval_status == "evaluated":
-        # Pase v2: el LLM clasifica el MOTIVO y califica en 2 capas. thread_context
-        # vacio: la sesion YA mergea todos los episodios del ticket. deposit_hint pasa
-        # la senal determinista de comprobante para anclar el motivo 'deposito'.
-        score = score_by_motivo(
-            target_messages=msgs, thread_context="", llm=llm,
-            deposit_hint=deposit_count > 0, verifier=verifier, recommender=recommender,
-        )
+        if segment_for_queue(sess.get("queue_name")) == "agente":
+            # AGENTE: rating DETERMINISTA de agilidad, SIN LLM (ver src/agilidad.py). Es
+            # un revendedor que opera una caja: la calidad es cuanto tardo el operador en
+            # cumplir el pedido, y eso se mide con timestamps. Correr el pase con LLM
+            # aca aplicaria la vara COMERCIAL del jugador (uplift, empujo/pasivo), que
+            # topaba el 94% de las sesiones de agente en 3 estrellas por diseño.
+            # score None = la sesion no tiene pedidos medibles en horario; se persiste
+            # igual, sin nota, en vez de inventar una.
+            score = score_agilidad(msgs)
+        else:
+            # Pase v2: el LLM clasifica el MOTIVO y califica en 2 capas. thread_context
+            # vacio: la sesion YA mergea todos los episodios del ticket. deposit_hint pasa
+            # la senal determinista de comprobante para anclar el motivo 'deposito'.
+            score = score_by_motivo(
+                target_messages=msgs, thread_context="", llm=llm,
+                deposit_hint=deposit_count > 0, verifier=verifier, recommender=recommender,
+            )
     # rubric queda como el legacy human/bot (satisface chk_rubric); el motivo del LLM
     # se persiste en su propia columna dentro de build_score_record (desde el score).
     record = build_score_record(
