@@ -34,17 +34,42 @@ def test_label_from_facts_no_atendio_es_deficiente():
     assert _facts(atendio=False) == "deficiente"
 
 
-def test_label_from_facts_solo_piso_es_aceptable():
-    assert _facts(atendio=True) == "aceptable"
+# ESCALA v4 (definida por el negocio el 2026-08-06):
+#   5  se logro el MEJOR ESCENARIO del motivo
+#   4  se hizo bien
+#   3  falto algo leve
+#   2  faltaron varias cosas
+#   1  se demoro mucho Y contesto mal, o no contesto
+#
+# El cambio de fondo respecto de v3: HACER BIEN EL TRABAJO YA VALE 4. Antes el piso
+# limpio topaba en 'aceptable' (3) y para pasar de ahi hacia falta el uplift
+# COMERCIAL. Medido sobre la tanda del 2026-08-06: en `deposito`, 149 de 213
+# sesiones respondieron en <=2 min Y confirmaron la acreditacion, o sea que hicieron
+# el trabajo completo, y 135 de esas quedaron en 3. Hacerlo perfecto valia +0,13
+# estrellas contra no hacerlo. La escala no medía el comportamiento que decía medir.
+
+def test_hacer_el_trabajo_limpio_YA_ES_buena():
+    # El piso limpio es "se hizo bien" = 4. Este es el fin del cap de uplift.
+    assert _facts(atendio=True) == "buena"
 
 
-def test_label_from_facts_una_capa_extra_es_buena():
-    assert _facts(atendio=True, extra=True) == "buena"
-    assert _facts(atendio=True, cortesia=True) == "buena"
-
-
-def test_label_from_facts_extra_y_cortesia_es_excelente():
+def test_el_mejor_escenario_es_excelente():
+    # Una sola capa por encima del trabajo limpio alcanza para el 5: el uplift dejo
+    # de ser un peaje y paso a ser la marca del mejor escenario.
+    assert _facts(atendio=True, extra=True) == "excelente"
+    assert _facts(atendio=True, cortesia=True) == "excelente"
     assert _facts(atendio=True, extra=True, cortesia=True) == "excelente"
+
+
+def test_algo_leve_faltando_es_aceptable():
+    # El 3 deja de ser el default y pasa a significar lo que dice la escala: se
+    # atendio pero quedo algo flojo (confuso sin corroborar).
+    assert _facts(atendio=True, claridad="confuso") == "aceptable"
+
+
+def test_el_empuje_comercial_ya_no_es_peaje_para_pasar_de_3():
+    # Sin extra y sin cortesia, atender bien no puede quedar topado en 3.
+    assert _facts(atendio=True, extra=False, cortesia=False) != "aceptable"
 
 
 # --- Modulador v3: claridad + fricción (bajan/limitan la nota desde el piso) -----
@@ -81,9 +106,9 @@ def test_confuso_sin_corroborar_bloquea_uplift_pero_no_hunde():
 
 
 def test_dudoso_es_neutral_no_demota_ni_bloquea_uplift():
-    # borderline = no-op: no baja el piso...
-    assert _facts(atendio=True, claridad="dudoso") == "aceptable"
-    # ...ni impide subir con uplift real (beneficio de la duda en el eje ambiguo)
+    # borderline = no-op: no baja el piso (que en v4 es 'buena')...
+    assert _facts(atendio=True, claridad="dudoso") == "buena"
+    # ...ni impide subir (beneficio de la duda en el eje ambiguo)
     assert _facts(atendio=True, extra=True, cortesia=True, claridad="dudoso") == "excelente"
 
 

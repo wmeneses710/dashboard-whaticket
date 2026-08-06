@@ -261,9 +261,24 @@ def label_from_facts(
     - atendio + claridad 'confuso'           -> 'deficiente' SOLO si esta
       CORROBORADO (`confuso_corroborado`); sin corroboracion, un 'confuso' del LLM
       topa en 'aceptable' (piso cumplido, sin uplift) en vez de hundir la nota.
-    - atendio limpio + extra Y cortesia destacada -> 'excelente'
-    - atendio limpio + (extra O cortesia destacada) -> 'buena'
-    - atendio limpio (piso)                  -> 'aceptable'
+    - atendio limpio + (extra O cortesia destacada) -> 'excelente' (mejor escenario)
+    - atendio limpio (piso)                  -> 'buena'       (se hizo bien)
+
+    ESCALA v4 (definida por el negocio el 2026-08-06), igual para TODOS los motivos:
+        5  se logro el MEJOR ESCENARIO del motivo
+        4  se hizo bien
+        3  falto algo leve
+        2  faltaron varias cosas
+        1  se demoro mucho Y contesto mal, o no contesto
+
+    QUE CAMBIO Y POR QUE. Hasta v3 el piso limpio topaba en 'aceptable' (3) y para
+    pasar de ahi hacia falta el UPLIFT COMERCIAL. Eso convertia al 3 en el default y
+    al empuje de venta en un peaje. Medido sobre la tanda del 2026-08-06 (motivo
+    `deposito`, 213 sesiones): 149 respondieron en <=2 min Y confirmaron la
+    acreditacion — el trabajo completo — y 135 de esas quedaron en 3. Hacerlo
+    perfecto valia +0,13 estrellas contra no hacerlo, y solo 5 de 149 llegaban a 5.
+    La escala no medía el comportamiento que decía medir. Ahora hacer bien el
+    trabajo YA vale 4, y el 3 significa lo que dice la escala: falto algo leve.
 
     `claridad`: 'claro' | 'confuso' | 'dudoso'. Solo 'confuso' actua (demota si
     esta corroborado, y siempre bloquea el uplift); 'dudoso' es NEUTRAL (borderline
@@ -285,9 +300,7 @@ def label_from_facts(
         # sin corroboracion, el confuso del LLM topa en el piso (sin uplift) en vez
         # de hundir la nota: no hay evidencia determinista de que hizo falta aclarar.
         return "deficiente" if confuso_corroborado else "aceptable"
-    # UPLIFT (piso limpio; 'dudoso' no bloquea, solo 'confuso' -ya descartado- lo haria).
-    if hizo_accion_extra and cortesia_destacada:
-        return "excelente"
+    # MEJOR ESCENARIO (piso limpio; 'dudoso' no bloquea, solo 'confuso' -ya descartado-).
     if hizo_accion_extra or cortesia_destacada:
-        return "buena"
-    return "aceptable"
+        return "excelente"
+    return "buena"
