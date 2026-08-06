@@ -319,6 +319,16 @@
   .skel-bars .skel { height:16px; margin:11px 0; }
   .skel-rows .skel { height:64px; margin-bottom:11px; border-radius:var(--radius); }
 </style>
+<style>
+.tiempos{margin:10px 0;padding:9px 11px;border:1px solid var(--line);border-radius:8px}
+.tiempos .trow{display:flex;justify-content:space-between;gap:12px;font-size:12.5px;padding:2px 0}
+.tiempos .trow span{color:var(--faint)}
+.tiempos .trow b{font-variant-numeric:tabular-nums}
+.hechos{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}
+.hechos .ok-chip{background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)}
+.hechos .falta-chip{background:color-mix(in srgb, var(--r-deficiente) 12%, transparent);color:var(--r-deficiente)}
+.conv .t-chip{background:color-mix(in srgb, var(--faint) 14%, transparent);color:var(--faint);font-variant-numeric:tabular-nums}
+</style>
 </head>
 <body>
 <div id="app" class="wrap" v-cloak>
@@ -444,7 +454,7 @@
           <div v-for="m in motivoStats" :key="m.motivo"
                :class="['distrow','tip', {active: filters.motivo===m.motivo, dim: filters.motivo!=='all' && filters.motivo!==m.motivo, static: m.motivo==='sin_motivo'}]"
                :role="m.motivo!=='sin_motivo'?'button':null" :tabindex="m.motivo!=='sin_motivo'?0:null" :aria-pressed="filters.motivo===m.motivo"
-               :data-tip="(m.avg!=null ? '★ promedio '+m.avg.toFixed(2)+' sobre '+m.evaluadas+' sesiones evaluadas de '+(MOTIVO_LABEL[m.motivo]||m.motivo)+' (de '+m.n+' en total, el resto sin evaluar). Piso 3 = atendió el motivo; sube a 4-5 con acción extra + cortesía.' : 'sin sesiones evaluadas')+' Clic para filtrar.'"
+               :data-tip="(m.avg!=null ? '★ promedio '+m.avg.toFixed(2)+' sobre '+m.evaluadas+' sesiones evaluadas de '+(MOTIVO_LABEL[m.motivo]||m.motivo)+' (de '+m.n+' en total, el resto sin evaluar). 4 = se hizo bien; 5 = se logró el mejor escenario del motivo; 3 o menos = faltó algo.' : 'sin sesiones evaluadas')+' Clic para filtrar.'"
                @click="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.enter.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)" @keydown.space.prevent="m.motivo!=='sin_motivo' && toggleMotivo(m.motivo)">
             <span class="lbl">{{ MOTIVO_LABEL[m.motivo]||m.motivo }} <span style="color:var(--faint)">{{ m.n }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:(m.avg?m.avg/5*100:0)+'%', background:m.avg?starColor(m.avg):'var(--faint)'}"></span><span class="val num">{{ m.avg!=null ? m.avg.toFixed(2)+'★' : '—' }}</span></span>
@@ -606,6 +616,10 @@
             <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
             <span class="op">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
             <span class="chips">
+              <!-- El reloj es el eje de casi todas las rubricas: va en la lista para
+                   poder barrer las lentas sin abrir una por una. -->
+              <span class="chip t-chip" v-if="cv.first_response_seconds!=null"
+                    :title="'Tardó '+fmtDur(cv.first_response_seconds)+' en la primera respuesta'">⏱ {{ fmtDur(cv.first_response_seconds) }}</span>
               <span class="chip" v-if="cv.eval_status==='evaluated' && cv.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[cv.motivo]||cv.motivo }}</span>
               <span class="chip at" :class="'at-'+cv.atencion" v-if="cv.eval_status==='evaluated' && cv.atencion">{{ ATENCION_LABEL[cv.atencion]||cv.atencion }}</span>
               <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
@@ -662,6 +676,33 @@
               <span class="chip" v-if="dimReinsistio(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">el cliente reinsistió</span>
             </div>
             <div class="why">{{ modal.detail.rating_rationale }}</div>
+
+            <!-- LOS RELOJES. Es el eje de seis de las siete rubricas y hasta ahora no
+                 se veia en ninguna parte del tablero. -->
+            <div class="tiempos">
+              <div class="dh" style="margin-bottom:6px">Tiempos</div>
+              <div class="trow"><span>primera respuesta</span>
+                <b>{{ fmtDur(modal.detail.first_response_seconds) }}</b></div>
+              <div class="trow" v-for="t in dimTiempos(modal.detail.dimensions)" :key="t.lbl">
+                <span>{{ t.lbl }}</span><b>{{ fmtDur(t.v) }}</b></div>
+              <div class="trow" v-for="c in dimConteos(modal.detail.dimensions)" :key="c.lbl">
+                <span>{{ c.lbl }}</span><b>{{ c.v }}</b></div>
+              <div class="trow"><span>duró la conversación</span>
+                <b>{{ fmtDur(modal.detail.resolution_seconds) }}</b></div>
+              <div class="trow" v-if="modal.detail.cierre_seconds!=null">
+                <span title="Entre la última acción del operador y el cierre del ticket">
+                  esperó antes de cerrar</span>
+                <b>{{ fmtDur(modal.detail.cierre_seconds) }}</b></div>
+              <div class="trow" v-if="modal.detail.algo_mas_cierre_seconds!=null">
+                <span>cerró tras preguntar si faltaba algo</span>
+                <b>{{ fmtDur(modal.detail.algo_mas_cierre_seconds) }}</b></div>
+            </div>
+
+            <div class="hechos" v-if="dimHechos(modal.detail.dimensions,true).length || dimHechos(modal.detail.dimensions,false).length">
+              <span class="chip ok-chip" v-for="h in dimHechos(modal.detail.dimensions,true)" :key="'si'+h">✓ {{ h }}</span>
+              <span class="chip falta-chip" v-for="h in dimHechos(modal.detail.dimensions,false)" :key="'no'+h">✗ {{ h }}</span>
+            </div>
+
             <div class="dims">
               <div class="dim" v-for="(v,k) in dimsOnly(modal.detail.dimensions)" :key="k"><div class="dh">{{ k }}</div><p>{{ v }}</p></div>
             </div>
@@ -773,13 +814,47 @@ const secs = v => v==null? "—" : v<60? Math.round(v)+"s" : v<3600? Math.round(
 // mezclado con uno de 6 en la misma línea ("102.614 evaluadas · 8560 sin evaluar") se lee
 // como un error de formato. Acá pesa más la consistencia visual que la tipografía estricta.
 const fmtN = v => typeof v === "number" ? v.toLocaleString("es", {useGrouping: true}) : v;
+// Duracion legible. Los negativos existen y NO son un bug de formato: resolved_at es
+// de la conversacion de ENTRADA, y una sesion puede tener mensajes posteriores en un
+// episodio hermano. Se muestran como "—" en vez de inventar un numero.
+const fmtDur = v => {
+  if (v == null || v < 0) return "—";
+  if (v < 60) return Math.round(v) + "s";
+  if (v < 3600) return (v/60).toFixed(1).replace(/\.0$/,"") + " min";
+  return (v/3600).toFixed(1).replace(/\.0$/,"") + " h";
+};
+// Metricas que dejan las rubricas deterministas en `dimensions`. Son numeros y
+// booleanos, asi que `dimsOnly` (que filtra por string) no las mostraba nunca.
+const METRICA_LABEL = {
+  espera_acuse_seg:        "acuse del comprobante",
+  espera_respuesta_seg:    "respuesta al pedido",
+  espera_credenciales_seg: "entrega de credenciales",
+  entrega_comprobante_seg: "envío del comprobante",
+  mediana_espera_seg:      "espera mediana por turno",
+  peor_espera_seg:         "peor espera",
+};
+// Conteos. Van aparte de METRICA_LABEL porque NO son segundos: pasarlos por fmtDur
+// mostraria "2 pedidos" como "2s".
+const CONTEO_LABEL = {
+  turnos_pedido:  "pedidos del agente",
+  sin_respuesta:  "pedidos sin responder",
+};
+const HECHO_LABEL = {
+  acredito:             "confirmó la acreditación",
+  entrego_credenciales: "entregó credenciales",
+  convirtio_a_deposito: "logró el depósito",
+  mando_material:       "mandó material",
+  empujo:               "invitó a convertir",
+  hubo_intento:         "dio una salida concreta",
+  pregunto_algo_mas:    "chequeó si faltaba algo",
+};
 const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
 const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
 
-const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia" };
+const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
 const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", sin_motivo:"Sin motivo" };
 // El SEGMENTO dice QUIÉN está del otro lado del chat, no quién atiende. "Agente" es el
@@ -1232,6 +1307,27 @@ createApp({
     const _NON_DIM = new Set(["errores","aciertos","claridad","cliente_reinsistio","recomendacion"]);
     function dimsOnly(dims) { const o={}; for (const [k,v] of Object.entries(dims||{})) if (!_NON_DIM.has(k) && typeof v==="string") o[k]=v; return o; }
     function dimErrors(dims) { return (dims&&dims.errores)||[]; }
+    // Tiempos que dejo la rubrica determinista del motivo, ya con etiqueta legible.
+    function dimTiempos(dims) {
+      const out = [];
+      for (const [k, lbl] of Object.entries(METRICA_LABEL))
+        if (dims && typeof dims[k] === "number") out.push({ lbl, v: dims[k] });
+      return out;
+    }
+    // Hechos si/no de la rubrica. Se muestran los CUMPLIDOS y, aparte, lo que falto:
+    // el hueco es justamente la recomendacion.
+    function dimConteos(dims) {
+      const out = [];
+      for (const [k, lbl] of Object.entries(CONTEO_LABEL))
+        if (dims && typeof dims[k] === "number") out.push({ lbl, v: dims[k] });
+      return out;
+    }
+    function dimHechos(dims, cumplidos) {
+      const out = [];
+      for (const [k, lbl] of Object.entries(HECHO_LABEL))
+        if (dims && typeof dims[k] === "boolean" && dims[k] === cumplidos) out.push(lbl);
+      return out;
+    }
     function dimAciertos(dims) { return (dims&&dims.aciertos)||[]; }
     function dimRecom(dims) { return (dims&&dims.recomendacion)||""; }
     function dimClaridad(dims) { return (dims&&dims.claridad)||""; }
@@ -1416,6 +1512,7 @@ createApp({
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
+      fmtDur, dimTiempos, dimConteos, dimHechos,
       dimClaridad, dimReinsistio, metaGrid };
   }
 }).mount("#app");
