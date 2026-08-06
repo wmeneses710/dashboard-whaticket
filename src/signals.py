@@ -33,6 +33,206 @@ CONFIRMATION_PATTERN = (
 _CONFIRMATION_RE = re.compile(CONFIRMATION_PATTERN, re.IGNORECASE)
 
 
+# --- ACUSE vs ACREDITACION ---------------------------------------------------
+# `operator_confirmation` (arriba) mezcla las dos: "en breve" (voy) y "acreditado"
+# (llego). La rubrica de deposito las necesita separadas, porque su 2 estrellas es
+# exactamente "acuso pero nunca confirmo la acreditacion".
+#
+# Medido sobre 1.254 transacciones de deposito (1 por persona, jul-ago 2026):
+# contando solo plantillas la falla daba 42,4%; sumando toda la taquigrafia daba
+# 28,1%. Ninguno sirve. El primero SUBCUENTA (los operadores confirman con
+# taquigrafia: `listo` 409 veces, `cargado/cargo` 98, `disponible` 36). El segundo
+# SOBRECUENTA por polisemia; falsos positivos verificados leyendo los mensajes:
+#   "la app aun no esta DISPONIBLE"                  -> habla de la app
+#   "Registro o INGRESO con los datos que le pase"   -> ingreso = iniciar sesion
+#   "LISTO, enviame tu usuario para revisar..."      -> listo = "ok", sigue pidiendo
+
+# Tokens que solo significan que la plata se movio. No hay lectura alternativa.
+_ACREDITA_FUERTE_RE = re.compile(
+    # OJO con 'reflej': va la forma consumada (reflejado/reflejo) pero NO el futuro
+    # "se reflejara en breve", que es ACUSE. Por eso no se usa \w* aca.
+    r"\b(acredit\w*|abonad[oa]s?|abon[oó]|reflejad[oa]s?|reflej[oó]|"
+    r"cargad[oa]s?|carg[oó]|ingresad[oa]s?|ingres[óo]s?\b(?!\s+con)|ing|ingr)\b",
+    re.IGNORECASE)
+# 'disponible' solo vale si habla del SALDO, no de la app ni de una promo.
+_ACREDITA_SALDO_RE = re.compile(
+    r"(saldo\w*[^.!?\n]{0,40}disponible|disponible[^.!?\n]{0,25}saldo|"
+    r"recarga (exitosa|acreditada|realizada)|gracias por tu recarga)",
+    re.IGNORECASE)
+# Un "listo" seco confirma; un "listo" seguido de otra instruccion, no.
+_LISTO_RE = re.compile(r"^\s*listo\b", re.IGNORECASE)
+# La negacion invalida la frase entera.
+_NEGACION_RE = re.compile(
+    r"\b(no|aun no|a[uú]n no|todav[ií]a no|nunca)\b", re.IGNORECASE)
+
+# ACUSE: el operador avisa que esta en eso. NO es que llego.
+ACUSE_PATTERN = (
+    r"estamos (verificando|procesando|revisando)|se reflejar[aá] en breve|"
+    r"est[aá] siendo procesad|en proceso|en breve|"
+    r"permitame un momento|perm[ií]tame un momento|dame un momento|un momento por favor|"
+    r"ya (mismo )?(lo|la) (proceso|reviso|verifico)"
+)
+_ACUSE_RE = re.compile(ACUSE_PATTERN, re.IGNORECASE)
+
+
+def _frases(body: str) -> list[str]:
+    """Corta por fin de oracion, NO por coma.
+
+    La coma es justamente donde vive el falso positivo: "Listo, enviame tu usuario"
+    sigue siendo una sola idea y no confirma nada.
+    """
+    return [f.strip() for f in re.split(r"[.!?\n]+", body or "") if f.strip()]
+
+
+def operator_acreditacion(messages: list[dict]) -> bool:
+    """True si el OPERADOR confirmo que la plata LLEGO (no que la esta procesando)."""
+    for m in messages:
+        if not _is_operator(m):
+            continue
+        for frase in _frases(m.get("body") or ""):
+            if _NEGACION_RE.search(frase):
+                continue
+            if _ACREDITA_FUERTE_RE.search(_strip_accents(frase)):
+                return True
+            if _ACREDITA_SALDO_RE.search(_strip_accents(frase)):
+                return True
+            # "Listo amiga" confirma; "Listo, enviame tu usuario para..." no.
+            if _LISTO_RE.match(frase) and len(frase.split()) <= 3:
+                return True
+    return False
+
+
+# El operador CHEQUEA si falta algo antes de cerrar. Distinto de la plantilla de
+# despedida ("Gracias por preferirnos"), que se despide sin ofrecer nada. Linea base
+# medida el 2026-08-06: 13,0% de las sesiones lo hacen, con una varianza enorme entre
+# operadores (Mario 59 de 89 = 66%; Andree Rodriguez 0 de 112). No es una conducta
+# aspiracional: ya existe en la operacion y se puede enseñar.
+ANYTHING_ELSE_PATTERN = (
+    r"algo mas|alguna otra (duda|consulta|solicitud|pregunta|cosa)|otra duda|"
+    r"en que mas (te|le) (puedo|podemos) ayudar|necesitas? algo|necesita algo|"
+    r"te (puedo|podemos) ayudar en algo mas|alguna inquietud|"
+    r"(te )?qued[oó] alguna (duda|inquietud)|te ayudo en algo mas"
+)
+_ANYTHING_ELSE_RE = re.compile(ANYTHING_ELSE_PATTERN, re.IGNORECASE)
+
+
+def operator_asked_anything_else(messages: list[dict]) -> bool:
+    """True si el OPERADOR chequeo que el cliente no necesitara nada mas."""
+    return any(
+        _ANYTHING_ELSE_RE.search(_strip_accents(m.get("body") or ""))
+        for m in messages
+        if _is_operator(m)
+    )
+
+
+def operator_acuse(messages: list[dict]) -> bool:
+    """True si el OPERADOR avisa que esta procesando. Es el "voy", no el "llego"."""
+    return any(
+        _ACUSE_RE.search(_strip_accents(m.get("body") or ""))
+        for m in messages
+        if _is_operator(m)
+    )
+
+
+# CORTESIA / ACUSE / SALUDO: el bloque no pide nada. Se evalua sobre el texto COMPLETO
+# del bloque, no sobre su primer mensaje: el agente suele mandar "gracias" y una imagen
+# en el mismo bloque, y mirar solo el primero clasificaba mal (medido: da 46% de falsas
+# cortesias cuando el numero real es 1,4%).
+#
+# Se decide por VOCABULARIO y no por un regex de alternativas. El regex anterior
+# matcheaba UNA alternativa y despues exigia fin de string, asi que la cortesia
+# COMPUESTA — que es como habla el agente de verdad — se le escapaba entera:
+# "hola buenas noches", "ok muy bien", "listo gracias", "no muchas gracias". Todas
+# contaban como un pedido sin responder. Tambien se le escapaban tokens del dataset
+# que no estaban en la lista ("tks", "bueno", "buen dia", "muy amable") y cualquier
+# emoji fuera de la clase fija que traia ("☺️", "🫂").
+#
+# La regla es conservadora POR DISEÑO: el bloque es cortesia solo si TODAS sus palabras
+# estan en el vocabulario. Alcanza UNA palabra de verdad ("comision", "por fa",
+# "me avisa") para que vuelva a exigir respuesta.
+_CORTESIA_VOCAB = frozenset({
+    # acuse
+    "ok", "oka", "okay", "okey", "oki", "dale", "listo", "lista", "vale", "entendido",
+    "de", "acuerdo", "correcto", "ya", "esta", "voy", "pedi", "va",
+    # agradecimiento
+    "gracias", "gracia", "muchas", "mil", "tks", "thanks", "thank", "you",
+    # valoracion
+    "bien", "muy", "buenisimo", "perfecto", "excelente", "bendiciones", "genial",
+    "amable", "bueno", "buena",
+    # saludo / despedida
+    "hola", "buenas", "buenos", "buen", "dia", "dias", "tardes", "noches",
+    # respuestas minimas
+    "si", "no", "claro",
+})
+
+# Todo lo que no es palabra ni espacio (puntuacion Y emojis) se descarta antes de
+# comparar contra el vocabulario.
+_NO_PALABRA_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+
+def _palabras_normalizadas(texto: str) -> list[str]:
+    """Palabras en minuscula, sin tildes, sin puntuacion ni emojis."""
+    plano = "".join(
+        c for c in unicodedata.normalize("NFD", texto.lower())
+        if unicodedata.category(c) != "Mn"
+    )
+    return [p for p in _NO_PALABRA_RE.sub(" ", plano).split() if p]
+
+
+def es_cortesia(texto: str) -> bool:
+    """El texto es puro saludo/acuse/agradecimiento, sin pedir nada?
+
+    Vacio NO es cortesia: es ausencia de texto, y quien decide en ese caso es
+    `es_pedido` (un bloque vacio sin adjunto no pide nada).
+    """
+    palabras = _palabras_normalizadas(texto)
+    return bool(palabras) and all(p in _CORTESIA_VOCAB for p in palabras)
+
+
+def client_sin_motivo(messages: list[dict]) -> bool:
+    """El cliente nunca planteo NADA: todo lo suyo es saludo, acuse o agradecimiento.
+
+    Es el motivo `sin motivo` que definio el negocio ("hola y se fue"). No se
+    califica: poner nota a una conversacion donde el cliente no pidio nada es
+    calificar al operador por una prospeccion que no prendio.
+
+    SE DETECTA POR LO CERRADO, no por lo abierto. Enumerar "que cuenta como plantear
+    algo" es una lista infinita y siempre se escapan casos — el primer intento marcaba
+    como sin-motivo a "buenas mandeme una cuenta pichincha", "mas informacion por
+    favor" y "de q de trata", que son pedidos y preguntas de verdad. El vocabulario de
+    cortesia SI es un conjunto cerrado: alcanza una sola palabra desconocida para que
+    la sesion vuelva a ser calificable. Falla del lado seguro.
+
+    Un adjunto del cliente TAMPOCO es sin-motivo aunque el texto sea cortesia: mandar
+    un comprobante es plantear algo.
+
+    Medido (2026-08-06, 1 sesion por persona): 42 de 1.008 sesiones de jugador (4,2%),
+    concentradas en `registro` (8,7%), que es donde vive la prospeccion saliente.
+    """
+    cliente = [m for m in messages if not m.get("from_me") and not m.get("is_note")]
+    if not cliente:
+        return False   # sin cliente decide `decide_eligibility`, no esta funcion
+    if any(is_real_media(m.get("media_type")) for m in cliente):
+        return False
+    texto = " ".join(
+        " ".join((m.get("body") or "").split()) for m in cliente
+    ).strip()
+    return bool(texto) and es_cortesia(texto)
+
+
+def tiene_reloj(messages: list[dict]) -> bool:
+    """Todos los mensajes traen `created_at`?
+
+    `fetch_messages` (path por conversacion) NO lo trae; solo lo trae
+    `fetch_session_messages`. Es la trampa documentada en src/context.py, que ya
+    rompio la rubrica de agilidad recien contra la BD y volvio a aparecer con la de
+    deposito. Cualquier rubrica que mida tiempos chequea esto primero y cede el turno
+    en vez de explotar con KeyError.
+    """
+    return all(m.get("created_at") is not None
+               for m in messages if not m.get("is_note"))
+
+
 def _is_operator(m: dict) -> bool:
     """Operador humano: enviado por el negocio (from_me), no nota, no bot."""
     return bool(m.get("from_me")) and not m.get("is_note") and not _is_bot(m)
@@ -50,8 +250,24 @@ def operator_confirmation(messages: list[dict]) -> bool:
 # Tipos de media REAL (comprobante, tutorial en video, audio, doc). Se excluyen a
 # proposito 'chat'/'missed'/'template'/'location', que NO son un adjunto del operador
 # (un texto guardado como 'chat' no debe contar como "mando el comprobante/tutorial").
-_MEDIA_TYPES = frozenset({"image", "video", "audio", "voice", "ptt", "document",
-                          "application", "sticker", "viewonce"})
+MEDIA_TYPES = frozenset({"image", "video", "audio", "voice", "ptt", "document",
+                         "application", "sticker", "viewonce"})
+
+
+def is_real_media(media_type: str | None) -> bool:
+    """El `media_type` de un mensaje es un ADJUNTO de verdad?
+
+    FUENTE UNICA de la respuesta: la usan `operator_sent_media` (aca) y `es_pedido`
+    (src/agilidad.py). Antes cada modulo decidia por su cuenta y agilidad lo hacia con
+    un chequeo de truthiness, que daba True para 'chat' — el media_type de CUALQUIER
+    texto de WhatsApp (679.081 filas en la copia) — y dejaba su regla de cortesia como
+    codigo muerto.
+
+    Tolera la forma MIME ('image/jpeg') ademas del token pelado ('image') que guarda
+    esta BD: se queda con el tipo principal antes de la barra.
+    """
+    principal = (media_type or "").strip().lower().split("/")[0]
+    return principal in MEDIA_TYPES
 
 
 def operator_sent_media(messages: list[dict]) -> bool:
@@ -61,7 +277,7 @@ def operator_sent_media(messages: list[dict]) -> bool:
     auditoria. Si el operador la mando, es evidencia de que atendio.
     """
     return any(
-        _is_operator(m) and (m.get("media_type") or "").strip().lower() in _MEDIA_TYPES
+        _is_operator(m) and is_real_media(m.get("media_type"))
         for m in messages
     )
 

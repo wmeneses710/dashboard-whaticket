@@ -6,6 +6,9 @@ para que el scorer no lo hunda por debajo del piso. Mensajes = dicts con
 from_me, is_note, body, media_type, sent_from.
 """
 from src.signals import (
+    operator_acreditacion,
+    operator_asked_anything_else,
+    operator_acuse,
     operator_confirmation,
     operator_maltrato,
     operator_pushed,
@@ -105,6 +108,109 @@ def test_no_abandono_si_cliente_respondio_ultimo():
 def test_abandono_ignora_notas_finales():
     msgs = [_client("hola"), _agent("listo"), {"from_me": True, "is_note": True, "body": "*resuelto*"}]
     assert client_abandoned(msgs) is True
+
+
+# --- ACUSE vs ACREDITACION ---------------------------------------------------
+# `operator_confirmation` mezcla las dos cosas: "en breve" (voy) y "acreditado"
+# (llego). Para la rubrica de deposito hacen falta separadas, porque el 2 estrellas
+# es exactamente "acuso pero nunca confirmo la acreditacion". Medido sobre 1.254
+# transacciones de deposito: con solo plantillas la falla daba 42,4% y con la
+# taquigrafia entera 28,1%; ninguno servia, el primero subcuenta y el segundo
+# sobrecuenta por polisemia.
+
+def test_acreditacion_por_token_inequivoco():
+    for texto in ("ingresado", "acreditado", "CARGADO", "ya fue abonado",
+                  "ya se reflejo en tu cuenta", "ing", "cargó"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_acreditacion_por_saldo_disponible():
+    for texto in ("Tu saldo ya está disponible. Suerte 🍀",
+                  "Ya se encuentra disponible su saldo estimado 😊",
+                  "¡Gracias por tu recarga, Luis! Tu saldo ya está disponible."):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_disponible_SIN_saldo_no_es_acreditacion():
+    # Falsos positivos REALES del dataset: 'disponible' habla de la app o de una promo.
+    for texto in ("Por el momento puedes usarla por la web ya que la app aún no está "
+                  "disponible, se llama Sorti Reporte",
+                  "por el momento no está disponible la app para ios",
+                  "si quieres aprovechar la promo que tengo disponible"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_ingreso_sustantivo_no_es_acreditacion():
+    # 'Registro o ingreso' = iniciar sesion, no 'se ingreso la plata'.
+    assert operator_acreditacion(
+        [_agent("Registro o ingreso con los datos que le pase amigo ? jeje")]) is False
+
+
+def test_listo_solo_cuenta_si_es_un_acuse_seco():
+    # "Listo amiga" despues del comprobante es una confirmacion.
+    assert operator_acreditacion([_agent("Listo amiga")]) is True
+    # "Listo, <nueva instruccion>" no confirma nada: sigue pidiendo cosas.
+    assert operator_acreditacion(
+        [_agent("Listo, enviame tu usuario para revisar si estas registrado")]) is False
+    assert operator_acreditacion(
+        [_agent("Listo mi bro, una vez que utilices todo tu saldo real podras usar "
+                "el saldo bono")]) is False
+
+
+def test_el_acuse_NO_es_acreditacion():
+    for texto in ("Estamos verificando tu comprobante. Tu recarga se reflejará en breve.",
+                  "🔜 Tu solicitud de recarga está siendo procesada",
+                  "Permítame un momento"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_acuse_detecta_el_voy():
+    for texto in ("Estamos verificando tu comprobante. Tu recarga se reflejará en breve.",
+                  "🔜 Tu solicitud de recarga está siendo procesada",
+                  "Tu retiro está en proceso 🔄",
+                  "Permítame un momento"):
+        assert operator_acuse([_agent(texto)]) is True, texto
+
+
+def test_acuse_no_dispara_con_saludo():
+    assert operator_acuse([_agent("Buenos días, ¿en qué te ayudo?")]) is False
+
+
+def test_acreditacion_ignora_al_cliente_y_al_bot():
+    assert operator_acreditacion([_client("ya está acreditado?")]) is False
+    assert operator_acreditacion([_bot("Tu saldo ya está disponible")]) is False
+
+
+def test_acreditacion_respeta_la_negacion():
+    assert operator_acreditacion([_agent("todavía no está acreditado")]) is False
+    assert operator_acreditacion([_agent("aún no se ha cargado tu saldo")]) is False
+
+
+# --- operator_asked_anything_else -------------------------------------------
+# El criterio NO es "mando la plantilla de despedida" sino "se aseguro de que el
+# cliente no necesitara algo mas": la plantilla es una despedida, la pregunta es un
+# ofrecimiento. Linea base medida el 2026-08-06: 13,0% de las sesiones. Y no es que
+# nadie lo haga — Mario 66% (59 de 89), Andree Rodriguez 0% (0 de 112).
+
+def test_pregunta_si_necesita_algo_mas():
+    for texto in ("Paul ¿Hay algo más en lo que te pueda ayudar? 🙂🍀",
+                  "¿Alguna otra duda?",
+                  "¿En qué más te puedo ayudar?",
+                  "¿Necesitas algo más antes de cerrar?",
+                  "¿Te quedó alguna inquietud?"):
+        assert operator_asked_anything_else([_agent(texto)]) is True, texto
+
+
+def test_la_despedida_NO_cuenta_como_preguntar():
+    # Las plantillas de cierre se despiden; no ofrecen nada.
+    for texto in ("Gracias por preferirnos! 🍀💚",
+                  "¡Fue un placer atenderte! 😊✨",
+                  "Un placer atenderte 😊."):
+        assert operator_asked_anything_else([_agent(texto)]) is False, texto
+
+
+def test_preguntar_algo_mas_ignora_al_cliente():
+    assert operator_asked_anything_else([_client("¿algo más que deba hacer?")]) is False
 
 
 # --- operator_resolved (confirmacion o media del agente) ---------------------
