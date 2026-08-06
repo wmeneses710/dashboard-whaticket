@@ -1,0 +1,187 @@
+"""Rubrica DETERMINISTA del motivo `retiro`. Sin LLM y sin BD.
+
+Espeja a src/deposito.py, con la asimetria que define el motivo:
+
+    deposito   el comprobante lo manda el CLIENTE; el operador debe CONFIRMAR
+    retiro     el comprobante lo manda el OPERADOR y ES la entrega
+
+Igual que en deposito, el motivo lo clasifica el modelo — eso exige leer intencion —
+y la NOTA sale de hechos verificables: cuando pidio la plata, cuando le contestaron,
+cuando llego el comprobante, y si chequearon que no faltara nada.
+
+EL CORTE TRANSACCION / CONSULTA. Medido sobre 250 sesiones de retiro (1 por persona,
+jul-ago 2026): solo el 43,2% pide plata; el 56,8% pregunta POR el retiro sin pedir
+ninguno ("¿como hago para retirar?", "¿cuando me pagan la comision?"). Mezclados, el
+"ni acuse ni comprobante" daba 31,6%; separados es 10,2% en la transaccion y 47,9% en
+la consulta — que es lo esperable, porque ahi no hay nada que entregar. El separador
+es el MONTO: que el cliente diga cuanta plata quiere.
+
+LA ESCALA (definida por el negocio el 2026-08-06):
+    5  respuesta <=2 min + comprobante <=15 min + se aseguro de que no faltara nada
+    4  respuesta <=2 min + comprobante <=15 min
+    3  respuesta 2-5 min, o comprobante 15-30 min
+    2  respondio pero nunca mando el comprobante, o tardo de mas
+    1  ni respondio ni mando comprobante
+
+UMBRALES, calibrados sobre 108 transacciones: el 74,1% responde en <=2 min y el 86,1%
+manda el comprobante dentro de los 15 min del pedido.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import timedelta
+
+from src.scorer import ScoreResult
+from src.signals import (
+    _is_operator,
+    is_real_media,
+    operator_asked_anything_else,
+    tiene_reloj,
+)
+
+MODELO_DETERMINISTA = "determinista/retiro-v1"
+
+AGIL = timedelta(minutes=2)             # respuesta inmediata al pedido
+RESPUESTA_TOPE = timedelta(minutes=5)   # mas que esto ya no es "rapido"
+ENTREGA_AGIL = timedelta(minutes=15)    # comprobante dentro del objetivo
+ENTREGA_TOPE = timedelta(minutes=30)    # mas que esto es una demora, no una espera
+
+# El formulario que manda el agente/jugador para cobrar.
+_FORMULARIO_RE = re.compile(r"monto a retirar", re.IGNORECASE)
+# Plata cerca de una palabra de retiro. El (?<!\d)...(?!\d) es clave: la cedula y el
+# telefono viajan en el MISMO formulario y son corridas de 10 digitos, no montos.
+_MONTO_RE = re.compile(
+    r"(?:monto|retirar|retiro|sacar|cobrar)\D{0,25}(?<!\d)(\d{1,4}(?:[.,]\d{1,2})?)(?!\d)",
+    re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Retiro:
+    """Nota determinista de una sesion de retiro."""
+    stars: int
+    label: str
+    rationale: str
+    espera: timedelta | None       # del pedido a la primera respuesta del operador
+    entrega: timedelta | None      # del pedido al comprobante del operador
+    pregunto_algo_mas: bool
+
+
+_COACHING = {
+    2: "El retiro quedo sin comprobante. Mandalo SIEMPRE: es el respaldo de que la "
+       "plata salio y lo que sostiene la confianza del agente.",
+    3: "Faltó velocidad. El objetivo es responder el pedido dentro de los 2 minutos y "
+       "tener el comprobante arriba en 15.",
+    4: "Antes de cerrar, asegurate de que el cliente no necesite algo mas.",
+}
+_COACHING_1 = ("El pedido de retiro quedo sin ninguna respuesta. Aunque no puedas "
+               "procesarlo en el momento, avisa que lo recibiste.")
+
+
+def _pedido_del_cliente(messages: list[dict]):
+    """Primer mensaje del CLIENTE que pide plata (formulario o monto). None si no hay."""
+    for m in sorted((m for m in messages if not m.get("is_note")),
+                    key=lambda m: m["created_at"]):
+        if m.get("from_me"):
+            continue
+        body = m.get("body") or ""
+        if _FORMULARIO_RE.search(body) or _MONTO_RE.search(body):
+            return m
+    return None
+
+
+def es_transaccion(messages: list[dict]) -> bool:
+    """El cliente PIDIO plata, no pregunto por el retiro."""
+    if not tiene_reloj(messages):
+        return False
+    return _pedido_del_cliente(messages) is not None
+
+
+def calificar_retiro(messages: list[dict]) -> Retiro | None:
+    """Nota determinista de la sesion. None si no es una transaccion de retiro."""
+    if not es_transaccion(messages):
+        return None
+    pedido = _pedido_del_cliente(messages)
+    reales = sorted((m for m in messages if not m.get("is_note")),
+                    key=lambda m: m["created_at"])
+    posteriores = [m for m in reales if m["created_at"] > pedido["created_at"]]
+    respuesta = next((m for m in posteriores if _is_operator(m)), None)
+    # La entrega la hace el OPERADOR: una imagen del cliente no acredita nada.
+    comprobante = next(
+        (m for m in posteriores
+         if _is_operator(m) and is_real_media(m.get("media_type"))), None)
+    espera = respuesta["created_at"] - pedido["created_at"] if respuesta else None
+    entrega = comprobante["created_at"] - pedido["created_at"] if comprobante else None
+    algo_mas = operator_asked_anything_else(reales)
+
+    def _mins(td: timedelta | None) -> str:
+        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+
+    if respuesta is None and comprobante is None:
+        return Retiro(1, "mala", "El pedido de retiro quedo sin ninguna respuesta.",
+                      None, None, algo_mas)
+    if entrega is None:
+        return Retiro(
+            2, "deficiente",
+            f"El operador respondio en {_mins(espera)} pero nunca mando el "
+            "comprobante del retiro.",
+            espera, None, algo_mas)
+    if entrega > ENTREGA_TOPE or (espera is not None and espera > RESPUESTA_TOPE):
+        return Retiro(
+            2, "deficiente",
+            f"Mando el comprobante, pero tarde: respondio en {_mins(espera)} y "
+            f"entrego en {_mins(entrega)}.",
+            espera, entrega, algo_mas)
+    if (espera is not None and espera > AGIL) or entrega > ENTREGA_AGIL:
+        return Retiro(
+            3, "aceptable",
+            f"Entrego el comprobante, pero fuera del objetivo: respuesta "
+            f"{_mins(espera)} y entrega {_mins(entrega)} (objetivo 2 y 15 min).",
+            espera, entrega, algo_mas)
+    if algo_mas:
+        return Retiro(
+            5, "excelente",
+            f"Respondio el pedido en {_mins(espera)}, entrego el comprobante en "
+            f"{_mins(entrega)} y se aseguro de que no faltara nada.",
+            espera, entrega, True)
+    return Retiro(
+        4, "buena",
+        f"Respondio en {_mins(espera)} y entrego el comprobante en {_mins(entrega)}; "
+        "cerro sin chequear si faltaba algo.",
+        espera, entrega, False)
+
+
+def score_retiro(messages: list[dict]) -> ScoreResult | None:
+    """La nota como ScoreResult, lista para build_score_record. SIN LLM.
+
+    None cuando no es una transaccion: una consulta sobre retiros se juzga por si el
+    cliente entendio la respuesta, no por un comprobante que nunca correspondio.
+    """
+    r = calificar_retiro(messages)
+    if r is None:
+        return None
+    return ScoreResult(
+        rubric="retiro",
+        motivo="retiro",
+        rating_label=r.label,
+        stars=r.stars,
+        rating_rationale=r.rationale,
+        dimensions={
+            "espera_respuesta_seg": (int(r.espera.total_seconds())
+                                     if r.espera is not None else None),
+            "entrega_comprobante_seg": (int(r.entrega.total_seconds())
+                                        if r.entrega is not None else None),
+            "pregunto_algo_mas": r.pregunto_algo_mas,
+        },
+        llm_model=MODELO_DETERMINISTA,
+        # El eje de uplift de retencion se saco a proposito: medido, empujar en retiro
+        # EMPEORA el deposito posterior (83,8% -> 69,9%). El cliente ya volvia solo.
+        atencion=None,
+        deposit_observed=False,
+        floor_applied=False,
+        recomendacion="" if r.stars == 5 else (
+            _COACHING_1 if r.stars == 1 else _COACHING[r.stars]),
+        claridad="claro",
+        friccion=False,
+        aciertos=[],
+    )

@@ -40,7 +40,11 @@ class FakeLLM:
 
 
 def _motivo_resp(**over):
-    """Salida base del LLM: hechos que derivan a 'aceptable' (atendio, sin extra)."""
+    """Salida base del LLM: hechos que derivan a 'buena' (atendio limpio, sin extra).
+
+    En v4 el piso limpio vale 4: hacer bien el trabajo ya no necesita un empuje
+    comercial encima para pasar de 3.
+    """
     resp = {
         "motivo": "info",
         "dimensions": {
@@ -64,11 +68,11 @@ def _motivo_resp(**over):
 
 # --- derivacion HECHOS -> etiqueta ----------------------------------------
 
-def test_atendio_solo_es_aceptable():
+def test_atendio_limpio_es_buena():
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="", llm=FakeLLM(_motivo_resp()))
     assert isinstance(r, ScoreResult)
     assert r.motivo == "info"
-    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.rating_label == "buena" and r.stars == 4
     assert r.llm_model == "qwen3.5:4b"
 
 
@@ -78,11 +82,11 @@ def test_no_atendio_es_deficiente():
     assert r.rating_label == "deficiente" and r.stars == 2
 
 
-def test_atendio_mas_extra_con_empuje_es_buena():
-    # buena requiere empuje concreto (PIEZA 2): con el link sobrevive el cap.
+def test_atendio_mas_extra_con_empuje_es_excelente():
+    # v4: una capa por encima del trabajo limpio ya es el mejor escenario.
     r = score_by_motivo(target_messages=PUSH, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True)))
-    assert r.rating_label == "buena" and r.stars == 4
+    assert r.rating_label == "excelente" and r.stars == 5
 
 
 def test_atendio_extra_y_cortesia_con_empuje_es_excelente():
@@ -91,15 +95,111 @@ def test_atendio_extra_y_cortesia_con_empuje_es_excelente():
     assert r.rating_label == "excelente" and r.stars == 5
 
 
-# --- PIEZA 2: cap de uplift (buena/excelente sin empuje -> aceptable) ------
+# --- PIEZA 2: cap de uplift — AHORA SOLO EN `promo` ------------------------
+# Decision del negocio del 2026-08-05, probada con datos: el uplift SOLO mueve la
+# aguja en promo (deposito posterior 24,9% -> 34,1% con empuje+material, +9,2 pp),
+# mientras que en retiro la EMPEORA (83,8% -> 69,9%). Aplicarlo a todos los motivos
+# convertia al empuje comercial en un peaje: medido el 2026-08-06, tumbaba a 3
+# estrellas al 47-67% de las sesiones segun el motivo, incluidas 135 de 149
+# transacciones de deposito hechas perfectas (respuesta <=2 min + acreditacion
+# confirmada). Un deposito bien atendido no necesita que le vendan un bono encima.
 
-def test_cap_uplift_buena_sin_empuje_baja_a_aceptable():
-    # el LLM dice extra+cortesia (deriva buena/excelente) pero NO hay empuje concreto
-    # (solo plantilla/jerga) -> se topa en aceptable.
+def test_cap_uplift_sigue_vivo_en_promo():
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(hizo_accion_extra=True, cortesia_destacada=True)))
+                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True,
+                                                 cortesia_destacada=True)))
     assert r.rating_label == "aceptable" and r.stars == 3
     assert r.floor_applied is True
+
+
+def test_cap_uplift_NO_aplica_fuera_de_promo():
+    # Mismo caso exacto, cambiando solo el motivo: sin empuje comercial, un deposito
+    # bien atendido conserva su nota.
+    for motivo in ("deposito", "retiro", "registro", "soporte_cuenta", "info", "problema"):
+        r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                            llm=FakeLLM(_motivo_resp(motivo=motivo, hizo_accion_extra=True,
+                                                     cortesia_destacada=True)))
+        assert r.rating_label == "excelente" and r.stars == 5, motivo
+
+
+# --- deposito: la nota la manda la rubrica DETERMINISTA -------------------
+# Cuando el LLM clasifica `deposito` y la sesion es una TRANSACCION (el cliente dio
+# contexto de recarga y mando el comprobante), la nota sale de src/deposito.py: los
+# tres hechos que la definen — el reloj, la acreditacion y el chequeo de cierre — son
+# verificables. El LLM conserva su trabajo irremplazable: decir que motivo es.
+
+_DEP_TX = [
+    {"created_at": __import__("datetime").datetime(2026, 3, 10, 20, 0,
+                                                   tzinfo=__import__("datetime").timezone.utc),
+     "from_me": False, "is_note": False, "body": "les mando el comprobante de la recarga",
+     "media_type": "chat"},
+    {"created_at": __import__("datetime").datetime(2026, 3, 10, 20, 0,
+                                                   tzinfo=__import__("datetime").timezone.utc),
+     "from_me": False, "is_note": False, "body": "", "media_type": "image"},
+    {"created_at": __import__("datetime").datetime(2026, 3, 10, 20, 1,
+                                                   tzinfo=__import__("datetime").timezone.utc),
+     "from_me": True, "is_note": False, "sent_from": "OPERATOR", "media_type": "chat",
+     "body": "Estamos verificando tu comprobante. Tu recarga se reflejara en breve."},
+    {"created_at": __import__("datetime").datetime(2026, 3, 10, 20, 3,
+                                                   tzinfo=__import__("datetime").timezone.utc),
+     "from_me": True, "is_note": False, "sent_from": "OPERATOR", "media_type": "chat",
+     "body": "Gracias por tu recarga. Tu saldo ya esta disponible."},
+]
+
+
+def test_deposito_transaccion_usa_la_rubrica_determinista():
+    # El LLM dice cortesia_destacada (que en v4 daria 5), pero la nota real es 4:
+    # acuso rapido y acredito, pero no chequeo si faltaba algo.
+    r = score_by_motivo(target_messages=_DEP_TX, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="deposito",
+                                                 cortesia_destacada=True)))
+    assert r.motivo == "deposito"
+    assert r.rating_label == "buena" and r.stars == 4
+    assert r.llm_model == "determinista/deposito-v1"
+
+
+def test_deposito_CONSULTA_sigue_por_el_pase_con_LLM():
+    # Sin comprobante del cliente no hay transaccion: la rubrica determinista no
+    # aplica y decide el pase normal.
+    msgs = [{"from_me": False, "is_note": False, "body": "como hago para recargar?"},
+            {"from_me": True, "is_note": False, "body": "por transferencia bancaria"}]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="deposito")))
+    assert r.llm_model == "qwen3.5:4b"
+
+
+# --- retiro: la nota la manda la rubrica DETERMINISTA ---------------------
+
+def _ts(minutos):
+    import datetime as _dt
+    return _dt.datetime(2026, 3, 10, 20, 0, tzinfo=_dt.timezone.utc) + _dt.timedelta(minutes=minutos)
+
+
+_RET_TX = [
+    {"created_at": _ts(0), "from_me": False, "is_note": False, "media_type": "chat",
+     "body": "Monto a retirar: 30 Nombres: Alan Cedula: 0951964055"},
+    {"created_at": _ts(1), "from_me": True, "is_note": False, "sent_from": "OPERATOR",
+     "media_type": "chat", "body": "Tu retiro esta en proceso 🔄"},
+    {"created_at": _ts(8), "from_me": True, "is_note": False, "sent_from": "OPERATOR",
+     "media_type": "image", "body": ""},
+]
+
+
+def test_retiro_transaccion_usa_la_rubrica_determinista():
+    r = score_by_motivo(target_messages=_RET_TX, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="retiro",
+                                                 cortesia_destacada=True)))
+    assert r.motivo == "retiro"
+    assert r.rating_label == "buena" and r.stars == 4
+    assert r.llm_model == "determinista/retiro-v1"
+
+
+def test_retiro_CONSULTA_sigue_por_el_pase_con_LLM():
+    msgs = [{"from_me": False, "is_note": False, "body": "como hago para retirar?"},
+            {"from_me": True, "is_note": False, "body": "por transferencia"}]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="retiro")))
+    assert r.llm_model == "qwen3.5:4b"
 
 
 # --- PIEZA 1: piso del front-of-funnel (flujo de anuncio) -----------------
@@ -109,21 +209,22 @@ def test_piso_funnel_info_con_empuje_no_es_deficiente():
     r = score_by_motivo(target_messages=PUSH, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="info", atendio_el_motivo=False,
                                                  hizo_accion_extra=False, cortesia_destacada=False)))
-    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.rating_label == "buena" and r.stars == 4
     assert r.floor_applied is True
 
 
-def test_verifier_recupera_buena_en_borderline():
-    # buena sin señal fuerte (NEUTRAL) sería capeada, pero el verificador confirma uplift real
+def test_verifier_recupera_la_nota_en_borderline():
+    # En promo (unico motivo con cap) sin señal fuerte se capearia, pero el
+    # verificador confirma uplift genuino y la recupera.
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(hizo_accion_extra=True)),
+                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True)),
                         verifier=lambda msgs, motivo: True)
-    assert r.rating_label == "buena" and r.stars == 4
+    assert r.rating_label == "excelente" and r.stars == 5
 
 
-def test_verifier_falso_capea_a_aceptable():
+def test_verifier_falso_capea_a_aceptable_en_promo():
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(hizo_accion_extra=True)),
+                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True)),
                         verifier=lambda msgs, motivo: False)
     assert r.rating_label == "aceptable"
 
@@ -139,16 +240,16 @@ def test_recommender_que_falla_no_tumba_el_score():
     def boom(*a): raise RuntimeError("x")
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
                         llm=FakeLLM(_motivo_resp()), recommender=boom)
-    assert r.rating_label == "aceptable" and r.recomendacion == "podrias invitar a un deposito"
+    assert r.rating_label == "buena" and r.recomendacion == "podrias invitar a un deposito"
 
 
 def test_info_sin_consulta_no_es_deficiente():
-    # cliente solo agradeció (sin pregunta) y el agente respondió cordial -> aceptable
+    # cliente solo agradeció (sin pregunta) y el agente respondió cordial -> piso limpio
     msgs = [{"from_me": False, "is_note": False, "body": "Gracias"},
             {"from_me": True, "is_note": False, "body": "Con gusto, cualquier cosa avisá"}]
     r = score_by_motivo(target_messages=msgs, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="info", atendio_el_motivo=False)))
-    assert r.rating_label == "aceptable" and r.floor_applied is True
+    assert r.rating_label == "buena" and r.floor_applied is True
 
 
 def test_info_con_consulta_evadida_sigue_deficiente():
@@ -255,7 +356,7 @@ def test_override_atendio_si_agente_confirmo_en_transaccional():
     # el LLM dice que NO atendio, pero el agente confirmo ("acredito") en un deposito
     r = score_by_motivo(target_messages=MSGS, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="deposito", atendio_el_motivo=False)))
-    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.rating_label == "buena" and r.stars == 4
     assert r.floor_applied is True
 
 
@@ -313,7 +414,7 @@ def test_confuso_no_baja_si_el_agente_resolvio_determinista():
     # MSGS tiene "acredito" -> operator_resolved=True protege del confuso difuso del LLM
     r = score_by_motivo(target_messages=MSGS, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="deposito", claridad="confuso")))
-    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.rating_label == "buena" and r.stars == 4
 
 
 def test_confuso_corroborado_por_reinsistencia_llm_baja_a_deficiente():
@@ -331,7 +432,7 @@ def test_gate1_confuso_sin_pregunta_ni_reinsistencia_se_neutraliza():
             {"from_me": True, "is_note": False, "body": "genial, que tengas buen dia"}]
     r = score_by_motivo(target_messages=msgs, thread_context="",
                         llm=FakeLLM(_motivo_resp(claridad="confuso")))
-    assert r.rating_label == "aceptable"
+    assert r.rating_label == "buena"
 
 
 def test_gate2_confuso_con_pregunta_y_empuje_concreto_no_corroborado_se_rescata():
@@ -358,9 +459,9 @@ def test_ghosteo_total_no_atendio_con_friccion_es_mala():
     assert r.rating_label == "mala" and r.stars == 1
 
 
-def test_claridad_ausente_es_neutral_aceptable():
+def test_claridad_ausente_es_neutral_no_demota():
     r = score_by_motivo(target_messages=NEUTRAL, thread_context="", llm=FakeLLM(_motivo_resp()))
-    assert r.rating_label == "aceptable"
+    assert r.rating_label == "buena"
 
 
 def test_score_expone_aciertos_y_claridad():

@@ -1,0 +1,134 @@
+"""Rubrica DETERMINISTA del motivo `info`. Sin LLM y sin BD.
+
+EL EJE lo cerro el negocio el 2026-08-05: "si hay pregunta -> se respondio; si no hay
+-> SIN MOTIVO". La segunda mitad de esa regla YA vive en el skip `sin_motivo`
+(`src/sessions.py`), asi que toda sesion de `info` que llega hasta aca tiene algo que
+responder por construccion. Esta rubrica NO lleva detector de preguntas.
+
+POR QUE NO. El primer intento midio con `client_asked_question`, que busca "?" o
+palabras interrogativas, y reportaba que el 53,1% de `info` "no tiene pregunta". No
+era ruido: era el detector mirando lo angosto. El cliente plantea sin preguntar —
+"mas informacion por favor", "quiero jugar", "estoy interesado", "de q de trata". El
+criterio correcto es **"hubo algo que responder"**, que es exactamente el complemento
+de `sin motivo`: si lo que dijo el cliente no es pura cortesia, planteo algo.
+
+`info` es el motivo mas simple de todos: no hay comprobante, ni acreditacion, ni
+material que exigir, ni conversion que perseguir (el uplift se le saco a proposito el
+2026-08-05, junto con derivar, abandono y duplicacion). Lo unico que el operador
+controla es contestar, y hacerlo rapido.
+
+ESCALA:
+    5  respondio <=2 min + se aseguro de que no faltara nada
+    4  respondio <=2 min
+    3  respondio entre 2 y 5 min
+    2  respondio despues de 5 min
+    1  no respondio
+
+UMBRALES sobre 57 sesiones (1 por persona): mediana 1,5 min, 62,5% <=2 min, 26,8%
+entre 2 y 5, 8,9% entre 5 y 15. El chequeo de cierre esta en 12,3%, asi que el 5 queda
+exigente y raro — que es lo que corresponde a un techo.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+from src.scorer import ScoreResult
+from src.signals import _is_operator, operator_asked_anything_else, tiene_reloj
+
+MODELO_DETERMINISTA = "determinista/info-v1"
+
+AGIL = timedelta(minutes=2)
+TOLERABLE = timedelta(minutes=5)
+
+
+@dataclass(frozen=True)
+class Info:
+    """Nota determinista de una sesion de consulta."""
+    stars: int
+    label: str
+    rationale: str
+    espera: timedelta | None
+    pregunto_algo_mas: bool
+
+
+_COACHING = {
+    2: "La consulta tardo mas de 5 minutos en ser respondida. En `info` el cliente "
+       "todavia esta decidiendo si se queda: cada minuto cuenta.",
+    3: "Respondiste, pero fuera de los 2 minutos.",
+    4: "Antes de cerrar, asegurate de que el cliente no necesite algo mas: en una "
+       "consulta suele quedar una segunda duda sin plantear.",
+}
+_COACHING_1 = "La consulta del cliente quedo sin respuesta."
+
+
+def calificar_info(messages: list[dict]) -> Info | None:
+    """Nota determinista de la sesion. None si no hay reloj para medirla."""
+    if not tiene_reloj(messages):
+        return None
+    reales = sorted((m for m in messages if not m.get("is_note")),
+                    key=lambda m: m["created_at"])
+    # El reloj arranca en el PLANTEO del cliente, no en el primer mensaje de la
+    # sesion: en la prospeccion saliente el operador escribe primero, y ese tiempo
+    # no se le puede imputar.
+    planteo = next((m for m in reales if not m.get("from_me")), None)
+    if planteo is None:
+        return None
+    respuesta = next(
+        (m for m in reales
+         if _is_operator(m) and m["created_at"] >= planteo["created_at"]), None)
+    espera = respuesta["created_at"] - planteo["created_at"] if respuesta else None
+    algo_mas = operator_asked_anything_else(reales)
+
+    def _mins(td: timedelta | None) -> str:
+        return "nunca" if td is None else f"{td.total_seconds() / 60:.1f} min"
+
+    if respuesta is None:
+        return Info(1, "mala", "La consulta del cliente quedo sin respuesta.",
+                    None, algo_mas)
+    if espera > TOLERABLE:
+        return Info(2, "deficiente",
+                    f"Respondio la consulta recien a los {_mins(espera)}.",
+                    espera, algo_mas)
+    if espera > AGIL:
+        return Info(3, "aceptable",
+                    f"Respondio en {_mins(espera)} (el objetivo son 2 min).",
+                    espera, algo_mas)
+    if algo_mas:
+        return Info(5, "excelente",
+                    f"Respondio en {_mins(espera)} y se aseguro de que el cliente no "
+                    "necesitara nada mas.",
+                    espera, True)
+    return Info(4, "buena",
+                f"Respondio en {_mins(espera)}; cerro sin chequear si faltaba algo.",
+                espera, False)
+
+
+def score_info(messages: list[dict]) -> ScoreResult | None:
+    """La nota como ScoreResult, lista para build_score_record. SIN LLM."""
+    i = calificar_info(messages)
+    if i is None:
+        return None
+    return ScoreResult(
+        rubric="info",
+        motivo="info",
+        rating_label=i.label,
+        stars=i.stars,
+        rating_rationale=i.rationale,
+        dimensions={
+            "espera_respuesta_seg": (int(i.espera.total_seconds())
+                                     if i.espera is not None else None),
+            "pregunto_algo_mas": i.pregunto_algo_mas,
+        },
+        llm_model=MODELO_DETERMINISTA,
+        # El uplift se saco a proposito de este motivo (decision del 2026-08-05): al
+        # que viene a preguntar un horario no se le vende un bono.
+        atencion=None,
+        deposit_observed=None,
+        floor_applied=False,
+        recomendacion="" if i.stars == 5 else (
+            _COACHING_1 if i.stars == 1 else _COACHING[i.stars]),
+        claridad="claro",
+        friccion=False,
+        aciertos=[],
+    )

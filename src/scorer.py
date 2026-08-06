@@ -139,6 +139,55 @@ def score_by_motivo(
     elif deposit_hint and motivo == "problema" and operator_confirmation(target_messages):
         motivo = "deposito"
 
+    # DEPOSITO TRANSACCIONAL: la nota la manda la rubrica determinista (src/deposito.py).
+    # El LLM ya hizo su trabajo irremplazable — decir que motivo es — y a partir de ahi
+    # los tres hechos que definen la nota son verificables: el reloj del comprobante, si
+    # confirmo la acreditacion, y si chequeo que al cliente no le faltara nada. Medido:
+    # con la escala generica el 86,4% de los depositos caia en 3 estrellas y 135 de 149
+    # transacciones perfectas quedaban ahi; al sacar el cap, el 47,5% llegaba a 5 SOLO
+    # por cortesia. Ninguna de las dos medía el trabajo.
+    # Lo mismo para `retiro`, con la asimetria del motivo: ahi el comprobante lo manda
+    # el OPERADOR y es la entrega misma. Ambos separan TRANSACCION de CONSULTA y ceden
+    # el turno al pase con LLM cuando el cliente solo pregunto (56,8% en retiro, 52,1%
+    # en deposito): sin plata pedida no hay nada que entregar ni que acreditar.
+    # Import diferido: los dos modulos importan ScoreResult de este.
+    if motivo == "deposito":
+        from src.deposito import score_deposito
+
+        determinista = score_deposito(target_messages)
+        if determinista is not None:
+            return determinista
+    elif motivo == "retiro":
+        from src.retiro import score_retiro
+
+        determinista = score_retiro(target_messages)
+        if determinista is not None:
+            return determinista
+    elif motivo == "registro":
+        from src.registro import score_registro
+
+        determinista = score_registro(target_messages)
+        if determinista is not None:
+            return determinista
+    elif motivo == "promo":
+        from src.promo import score_promo
+
+        determinista = score_promo(target_messages)
+        if determinista is not None:
+            return determinista
+    elif motivo == "soporte_cuenta":
+        from src.soporte import score_soporte
+
+        determinista = score_soporte(target_messages)
+        if determinista is not None:
+            return determinista
+    elif motivo == "info":
+        from src.info import score_info
+
+        determinista = score_info(target_messages)
+        if determinista is not None:
+            return determinista
+
     # HECHOS del LLM -> etiqueta por CODIGO. El modelo juzga hechos concretos (que hace
     # bien); la regla de 2 capas la aplica label_from_facts (que el modelo aplicaba de
     # forma inestable). 'atendio' ambiguo -> True (no castigar); el resto solo si es True.
@@ -197,11 +246,22 @@ def score_by_motivo(
     # confuso rescatado (no corroborado) no debe marcarse como override.
     if friccion or (atendio and claridad_eff == "confuso" and confuso_corroborado):
         override = True  # el modulador bajó la nota -> marca el ajuste determinista
-    # PIEZA 2 - CAP DE UPLIFT: buena/excelente exige un EMPUJE CONCRETO (link o invitación
-    # explícita a convertir), no la mera explicación de la promo ni la cortesía de plantilla
-    # ({nombre} autocompletado), jerga o emojis -> si no hay, se topa en aceptable. (Lo
-    # genuinamente difuso -warmth real sin empuje- lo recuperaría un verificador angosto.)
-    if label in ("buena", "excelente") and not operator_strong_uplift(target_messages):
+    # PIEZA 2 - CAP DE UPLIFT, SOLO EN `promo`: buena/excelente exige un EMPUJE CONCRETO
+    # (link o invitación explícita a convertir), no la mera explicación de la promo ni la
+    # cortesía de plantilla ({nombre} autocompletado), jerga o emojis -> si no hay, se topa
+    # en aceptable. (Lo genuinamente difuso -warmth real sin empuje- lo recupera el
+    # verificador angosto.)
+    #
+    # POR QUE SOLO promo. La prueba de negocio del 2026-08-05: con empuje + material el
+    # deposito posterior sube de 24,9% a 34,1% (+9,2 pp) en promo, pero en retiro BAJA de
+    # 83,8% a 69,9% (ahi el cliente ya volvia solo). Aplicado a todos los motivos, el cap
+    # convertia al empuje comercial en un peaje para pasar de 3 estrellas: medido el
+    # 2026-08-06 topaba entre el 47% y el 67% de las sesiones segun el motivo, y en
+    # `deposito` dejaba en 3 a 135 de las 149 transacciones hechas perfectas (respuesta
+    # <=2 min + acreditacion confirmada). Un deposito bien atendido no necesita que le
+    # vendan un bono encima para valer 4.
+    if motivo == "promo" and label in ("buena", "excelente") \
+            and not operator_strong_uplift(target_messages):
         # borderline: sin señal fuerte, se topa en aceptable... salvo que un VERIFICADOR
         # angosto (opcional, 2da pasada del LLM) confirme uplift genuino -> lo recupera.
         if not (verifier and verifier(target_messages, motivo)):
