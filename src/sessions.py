@@ -29,7 +29,7 @@ from datetime import timedelta
 
 from src.metrics import message_stats
 from src.router import decide_eligibility, decide_rubric
-from src.signals import operator_resolved
+from src.signals import client_sin_motivo, operator_resolved
 
 GAP = timedelta(hours=5)
 SPAN_CAP = timedelta(hours=12)  # una sesion no puede abarcar mas que esto
@@ -186,6 +186,13 @@ def evaluate_session(messages: list[dict]):
         customer_text_count=stats.contact_text_message_count,
         operator_resolved=operator_resolved(messages),
     )
+    # `sin motivo`: el cliente nunca planteo nada (todo lo suyo es saludo o acuse).
+    # Va DESPUES de decide_eligibility a proposito, por dos razones: necesita los
+    # mensajes (decide_eligibility solo ve contadores), y los skips previos son
+    # informacion mas util — saber que el negocio nunca respondio explica mejor la
+    # sesion que saber que el cliente solo dijo "hola".
+    if eval_status == "evaluated" and client_sin_motivo(messages):
+        return stats, rubric, "skipped", "sin_motivo"
     return stats, rubric, eval_status, skip_reason
 
 
