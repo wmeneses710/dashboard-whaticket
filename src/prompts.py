@@ -13,15 +13,17 @@ src.rubrics.label_to_stars.
 """
 from __future__ import annotations
 
+from src.fewshot import formatear_fewshot
 from src.rubrics import MOTIVO_LABELS, MOTIVOS, RubricSpec, get_rubric
 
 # Rotulo del lado "negocio" (from_me=True) segun quien atiende esa rubrica.
 _BUSINESS_LABEL = {"human": "Operador", "bot": "Bot"}
 
-# Etiquetas de ATENCION del operador (pasividad portada al pase unificado). ASCII,
-# igual que src/passivity.py (no se importa de alli para no crear un ciclo: passivity
-# ya importa de este modulo). empujo = impulso concreto de la conversion; pasivo =
-# solo saludo/pregunto/informo sin impulsar; no_respondio = casi no atendio.
+# Etiquetas de ATENCION del operador, portadas del pase de pasividad a este pase
+# unificado. empujo = impulso concreto de la conversion; pasivo = solo saludo,
+# pregunto o informo sin impulsar; no_respondio = casi no atendio.
+# (src/passivity.py, que era el pase original, se elimino el 2026-08-06: quedaba
+# superseded por este y no lo usaba nadie fuera de su propio test.)
 ATENCION_LABELS = ("empujo", "pasivo", "no_respondio")
 
 # Truncado de transcripts largos para no reventar num_ctx: si hay mas de
@@ -32,80 +34,6 @@ TRANSCRIPT_MAX = 60
 TRANSCRIPT_HEAD = 15
 TRANSCRIPT_TAIL = 40
 
-_SYSTEM_TEMPLATE = """\
-Sos un evaluador de calidad de atencion al cliente de WhatiCket (chats de \
-WhatsApp/Facebook/Instagram, espanol rioplatense). Evaluas UNA conversacion \
-—una visita del cliente— y emitis una calificacion CUALITATIVA segun la rubrica \
-indicada. No inventas numeros: elegis UNA etiqueta del conjunto permitido y la \
-justificas con evidencia concreta de los mensajes.
-
-Reglas:
-- Evaluas SOLO la CONVERSACION OBJETIVO. Las visitas previas del ticket son \
-CONTEXTO para entender continuidad; no las califiques.
-- Ignora las notas internas; el cliente no las ve (ya vienen excluidas del texto).
-- Juzga la resolucion A NIVEL DE ESTA VISITA: se atendio el motivo y se lo hizo \
-avanzar? No penalices porque el caso completo del ticket siga abierto.
-- Dar un PASO ACCIONABLE concreto (mandar el formulario/link, pedir los datos, \
-indicar el proceso, ofrecer crear la cuenta) CUENTA como hacer avanzar el motivo, \
-aunque el caso no cierre en esta visita.
-- RESPUESTA IMPLICITA: la respuesta al motivo puede estar CONTENIDA en lo que dijo \
-el operador aunque no sea punto-por-punto ni repita la pregunta. Si el operador EXPLICO \
-lo que el cliente pidio (p. ej. dijo el proceso: "registrate, verifica y con tu \
-primer deposito se activa"), el motivo SE ATENDIO, aunque la info venga dentro de un \
-mensaje promocional o de plantilla. NO marques "no explico" / "no respondio" si la \
-informacion PEDIDA esta presente en los mensajes del operador; leela y reconocela.
-- ABANDONO DEL CLIENTE: si el operador dio una respuesta accionable y el cliente NO \
-respondio o se fue, la falta de cierre es del lado del cliente, NO una falla del \
-operador. No lo bajes de nota por el silencio del cliente.
-- MEDIA ILEGIBLE: los mensajes marcados "[media/sin texto]" son imagenes/audios que \
-NO podes ver. No infieras que "no hubo interaccion" ni que el operador fallo por no \
-poder leerlas: evalua SOLO el texto legible; si no hay texto suficiente del cliente, \
-NO inventes un fracaso.
-- TONO: cordial pero informal o con plantilla NO es "cortante". Cortante = seco, sin \
-saludo ni cortesia. Juzga el tono por lo escrito, no por su brevedad.
-- Si la conversacion es un fragmento (p. ej. el cliente solo agradece), \
-interpretalo a la luz del contexto del ticket.
-- Regla de techo: si la dimension dominante ({dominante}) falla, la etiqueta no \
-puede superar "{techo}".
-- Regla de piso: un error grave (info equivocada con dano, o maltrato) fuerza la \
-etiqueta a {piso}.{dos_capas}
-- El rating_rationale debe ser ESPECIFICO de esta conversacion (que paso, quien, \
-por que). Prohibido generico o de plantilla.
-- No inventes emociones, quejas, urgencias ni contexto: evalua SOLO lo que esta \
-EXPLICITO en los mensajes. Si el cliente no expreso frustracion o apuro, no lo \
-asumas. Atribui cada mensaje a quien lo dijo (Cliente vs Operador/Bot); no confundas \
-un mensaje del cliente con una accion del operador.
-
-RUBRICA: {rubric}
-Dimensiones y criterios:
-{criterios}
-
-Etiquetas permitidas (de mejor a peor): {etiquetas}
-Cada dimension DEBE llevar una nota concreta de 1 frase citando evidencia del \
-chat; no dejes ninguna nota vacia. Devolve tambien la lista de errores concretos \
-(vacia si no hay), la etiqueta elegida y su justificacion.
-
-ATENCION DEL OPERADOR (campo "atencion"): ademas de la calificacion, clasifica en \
-UNA etiqueta el ESFUERZO del OPERADOR HUMANO por impulsar la conversion \
-(registro/deposito/apuesta). Juzga SOLO al operador humano: NO al bot, NO al cliente, \
-y NO juzgues si el cliente termino depositando (eso es otro eje).
-- empujo: el operador IMPULSO CONCRETAMENTE la conversion con una accion real: \
-ofrecer/guiar el registro, pedir datos para crear la cuenta, invitar a \
-depositar/recargar/apostar, mandar un link, o presentar la promo/bono. Si no hay \
-NINGUNA de esas acciones, NO es empujo.
-- pasivo: el operador solo saludo, hizo una pregunta suelta, informo o respondio una \
-duda SIN impulsar la conversion. Un simple "Hola", "en que te ayudo" o una pregunta \
-trivial = pasivo (no ofrecio nada).
-- no_respondio: el operador practicamente no atendio lo que el cliente necesitaba.
-Ejemplos: "Hola" -> pasivo; "te ayudo a crear tu cuenta?" -> empujo; "en que le puedo \
-ayudar?" -> pasivo; "registrate y hace tu primera recarga de $5" -> empujo.
-
-OBSERVACION DE DEPOSITO (campo "deposit_observed"): marca true SOLO si en el \
-transcript aparece un comprobante o recarga reconocida (una captura/imagen de pago o \
-un mensaje que confirme la recarga); en caso contrario false. Es una OBSERVACION, NO \
-una decision: el conteo real de depositos lo dictamina un gate DETERMINISTA aparte y \
-ese manda; vos solo reportas lo que se ve en el texto.\
-"""
 
 _USER_TEMPLATE = """\
 ### Contexto del ticket (visitas previas, orden cronologico)
@@ -142,64 +70,10 @@ def format_transcript(messages: list[dict], rubric: str) -> str:
     return "\n".join(lines)
 
 
-def _dos_capas_block(spec: RubricSpec) -> str:
-    """Reglas de las DOS CAPAS (solo rubricas de motivo, con `uplift`). El PISO
-    (dimension dominante = resolucion) da 'aceptable' si atendio el motivo aunque sea
-    templateado; el UPLIFT (dimension `uplift` + cortesia) permite superarlo. Las
-    rubricas legacy (human/bot, sin uplift) NO llevan estas reglas."""
-    if not spec.uplift:
-        return ""
-    upl = next(d for d in spec.dimensions if d.key == spec.uplift)
-    return (
-        "\n- MODELO DE DOS CAPAS (calibracion de la etiqueta):\n"
-        f"  PISO: si el operador ATENDIO el motivo (dimension {spec.dominant}) de forma "
-        'correcta, aunque sea minima o con PLANTILLA, la etiqueta es "aceptable". '
-        "La plantilla NO baja la nota (ver regla de tono).\n"
-        "  DEBAJO DEL PISO: si NO atendio el motivo (no resolvio, dato erroneo, maltrato, "
-        'o cerro muy rapido sin resolver), la etiqueta no supera "deficiente".\n'
-        '  UPLIFT: para superar "aceptable" (llegar a "buena"/"excelente") el operador debe '
-        f"ADEMAS {upl.bien}, y/o mostrar una cortesia destacada (saludo, personalizacion). "
-        'Sin eso, el techo es "aceptable".'
-    )
 
 
-def _criterios_block(spec: RubricSpec) -> str:
-    return "\n".join(
-        f"- {d.key}: BIEN = {d.bien}. MAL = {d.mal}." for d in spec.dimensions
-    )
 
 
-def _etiquetas_block(spec: RubricSpec) -> str:
-    return ", ".join(
-        f'"{label}" ({spec.label_to_stars[label]} estrellas)' for label in spec.labels_desc
-    )
-
-
-def _json_shape_block(spec: RubricSpec) -> str:
-    """Instruccion con la forma EXACTA del JSON de salida.
-
-    Reemplaza al schema-grammar de Ollama (que rompe con este modelo): pedimos
-    el JSON en el prompt y validamos las claves en el scorer.
-    """
-    dims = ", ".join(f'"{d.key}": "<nota de 1 frase con evidencia>"' for d in spec.dimensions)
-    labels = "|".join(spec.labels_desc)
-    atencion = "|".join(ATENCION_LABELS)
-    return (
-        "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, "
-        "con esta forma EXACTA:\n"
-        '{"dimensions": {' + dims + ', "errores": []}, '
-        f'"rating_label": "<una de: {labels}>", '
-        '"rating_rationale": "<2-4 frases especificas de esta conversacion>", '
-        f'"atencion": "<una de: {atencion}>", '
-        '"deposit_observed": <true|false>}'
-    )
-
-
-# ============================================================================
-# Pase v2: el LLM clasifica el MOTIVO (tabla de motivos) y califica en 2 capas.
-# Reemplaza la eleccion de rubrica por handler (human/bot). El determinista quedo
-# descartado para el motivo (31% 'otro' + contamina; ver docs/diseno-scoring-v2.md).
-# ============================================================================
 _MOTIVO_SYSTEM = """\
 Sos un evaluador de calidad de atencion al cliente de una plataforma de apuestas \
 (chats de WhatsApp/Facebook, espanol rioplatense/ecuatoriano). Evaluas UNA SESION (la \
@@ -320,45 +194,6 @@ _MOTIVO_HINT = (
     "promo, soporte) y el comprobante sea secundario."
 )
 
-# Ejemplos few-shot contrastivos: minados de la auditoria, con los HECHOS correctos.
-# Cada uno ensena una trampa que el modelo violaba (plantilla=piso, media=atendio,
-# abandono/sin-necesidad=aceptable, no-respuesta=deficiente-no-mala, abono=deposito,
-# uplift real=excelente). El modelo de 4B/14B imita ejemplos mejor que obedece prosa.
-_MOTIVO_FEWSHOT = """\
-EJEMPLOS (aprende de estos HECHOS; no copies el texto, copia el CRITERIO):
-
-[1] CLIENTE: [image] / CLIENTE: hola / OPERADOR: enseguida te cargo / OPERADOR: Saldo cargado
--> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-(la plantilla "Saldo cargado" YA cumple el piso -> atendio=true)
-
-[2] CLIENTE: agencia Sepy, monto 50, cuenta Pichincha / OPERADOR: [image] / OPERADOR: listo, en breve
--> {"motivo":"retiro","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-(el comprobante [image] lo manda el OPERADOR en un retiro -> atendio=true; NO asumas fracaso por no ver la media)
-
-[3] CLIENTE: Gracias / OPERADOR: Con gusto estimado, cualquier cosa avisas
--> {"motivo":"info","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-(el cliente no planteo consulta y el operador respondio cordial -> aceptable, NO deficiente)
-
-[4] CLIENTE: ¿Como obtengo los bonos? / OPERADOR: Hola?
--> {"motivo":"promo","atendio_el_motivo":false,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-(no atendio -> deficiente; pero NO hubo insulto -> maltrato=false, NO es "mala")
-
-[5] CLIENTE: [image] / CLIENTE: Abono 10 a deuda / OPERADOR: ing
--> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false}
-("Abono a deuda" + comprobante del cliente es DEPOSITO; "ing" confirma -> atendio=true)
-
-[6] CLIENTE: [image] recarga / OPERADOR: Listo Juan, saldo cargado! aprovecha que con tu 2da recarga tenes un bono del 150%
--> {"motivo":"deposito","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":true,"hubo_maltrato_grave":false,"claridad":"claro","cliente_reinsistio":false}
-(confirmo + empujo el bono (extra) + uso el nombre (cortesia) -> excelente)
-
-[7] CLIENTE: ¿Como reclamo mis 10 giros? / OPERADOR: es super facil, solo crea tu cuenta
--> {"motivo":"promo","atendio_el_motivo":true,"hizo_accion_extra":false,"cortesia_destacada":false,"hubo_maltrato_grave":false,"claridad":"confuso","cliente_reinsistio":false}
-(NO explica COMO obtener los giros; deflexion generica "crea tu cuenta" que no responde lo puntual -> claridad=confuso)
-
-[8] CLIENTE: ¿cual es el minimo de deposito? / OPERADOR: El minimo es $5. Te dejo el link para registrarte: https://sorti.ec/reg
--> {"motivo":"info","atendio_el_motivo":true,"hizo_accion_extra":true,"cortesia_destacada":false,"hubo_maltrato_grave":false,"claridad":"claro","cliente_reinsistio":false}
-(responde lo puntual ($5) + proximo paso explicito (link) -> claridad=claro)"""
-
 _MOTIVO_JSON_SHAPE = (
     "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, con esta "
     "forma EXACTA (los 4 HECHOS son booleanos; NO incluyas rating_label, lo calcula el sistema):\n"
@@ -396,7 +231,7 @@ def build_motivo_prompt(
     system = _MOTIVO_SYSTEM.format(
         tabla=_motivo_tabla_block(),
         hint=_MOTIVO_HINT if deposit_hint else "",
-        ejemplos=_MOTIVO_FEWSHOT,
+        ejemplos=formatear_fewshot(),
         json_shape=_MOTIVO_JSON_SHAPE,
     )
     contexto = (thread_context or "").strip() or "(sin visitas previas)"

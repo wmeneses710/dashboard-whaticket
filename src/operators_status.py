@@ -228,36 +228,6 @@ def inactive_names(cur, account: str) -> set[str]:
     return {r[0] for r in cur.fetchall()}
 
 
-def set_active(cur, account: str, operator_name: str, activo: bool,
-               updated_by: str = "ui") -> None:
-    """Prende o apaga UN operador (lo que va a usar el modal del dashboard)."""
-    cur.execute(_APPLY, (account, operator_name, activo, updated_by))
-
-
-# --- actividad: para el bootstrap y para el botón "sugerir por actividad" ---------
-
-# Nombre RESUELTO igual que en los cuadros (src/queries.py): users.name manda y la firma
-# `*Nombre:*` es el fallback. `ancla` = el mes más reciente DE LA CUENTA y no now(): el
-# dataset puede estar pausado o ser un snapshot, y con now() todos darían 0 recientes.
-_ACTIVITY = """
-WITH ancla AS (
-  SELECT account, max(conversation_created_at) AS ultimo
-    FROM conversation_scores GROUP BY 1
-)
-SELECT cs.account,
-       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS operador,
-       count(*) AS sesiones,
-       count(*) FILTER (
-         WHERE cs.conversation_created_at >= a.ultimo - make_interval(days => %(dias)s)
-       ) AS recientes,
-       max(cs.conversation_created_at)::date AS ultima_actividad
-  FROM conversation_scores cs
-  JOIN ancla a ON a.account = cs.account
-  LEFT JOIN users u ON u.id = cs.user_id AND u.account = cs.account
- GROUP BY 1, 2
- ORDER BY 1, 4 DESC
-"""
-
 
 def activity_rows(cur, dias: int = 30) -> list[tuple]:
     """[(cuenta, operador, sesiones, recientes, ultima_actividad)] para todos los
