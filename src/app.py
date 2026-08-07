@@ -20,6 +20,7 @@ from pydantic import BaseModel, field_validator
 
 from src import operators_status, queries
 from src.config import load_config
+from src.operators import build_operator_map
 from src.worker import run_worker_loop
 
 cfg = load_config()
@@ -282,14 +283,21 @@ def charts(account: str = Query(..., description="datos | sistemas"),
     el front rotula lo que de verdad se contó en vez de asumirlo."""
     win = cfg.charts_window_months
     with _conn() as c, c.cursor() as cur:
+        # El mapa de identidad se resuelve UNA vez por request y se inyecta en los tres
+        # cuadros: canonicaliza los user_id que el CRM le recreo a la misma persona (10
+        # personas, 362.944 mensajes) y ademas evita re-derivar la firma en cada query.
+        op_map = build_operator_map(cur, account)
         return {
             "load_by_operator": queries.load_by_operator(cur, account, window_months=win,
-                                                         inactivos=inactivos, ambiente=ambiente),
+                                                         inactivos=inactivos, ambiente=ambiente,
+                                                         op_map=op_map),
             "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account, window_months=win,
                                                                        inactivos=inactivos,
-                                                                       ambiente=ambiente),
+                                                                       ambiente=ambiente,
+                                                                       op_map=op_map),
             "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account, window_months=win,
-                                                                       ambiente=ambiente),
+                                                                       ambiente=ambiente,
+                                                                       op_map=op_map),
             "window_months": win,
             "ambiente": ambiente,
         }

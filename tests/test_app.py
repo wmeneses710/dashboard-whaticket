@@ -219,6 +219,7 @@ def test_charts_pasa_el_ambiente_a_los_TRES_cuadros(monkeypatch):
         return f
 
     monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    monkeypatch.setattr(appmod, "build_operator_map", lambda cur, account=None: {})
     for name in ("load_by_operator", "deposit_pct_by_operator", "new_vs_deposit_by_month"):
         monkeypatch.setattr(appmod.queries, name, fake(name))
     r = client.get("/api/charts", params={"account": "sistemas", "ambiente": "agente"})
@@ -230,6 +231,7 @@ def test_charts_pasa_el_ambiente_a_los_TRES_cuadros(monkeypatch):
 def test_charts_declara_el_ambiente_que_aplico(monkeypatch):
     # El origen del numero viaja CON el numero: sin esto el front rotula de memoria.
     monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    monkeypatch.setattr(appmod, "build_operator_map", lambda cur, account=None: {})
     for name in ("load_by_operator", "deposit_pct_by_operator", "new_vs_deposit_by_month"):
         monkeypatch.setattr(appmod.queries, name, lambda cur, account, **k: {"ok": True})
     r = client.get("/api/charts", params={"account": "sistemas", "ambiente": "sin_clasificar"})
@@ -239,6 +241,7 @@ def test_charts_declara_el_ambiente_que_aplico(monkeypatch):
 def test_charts_default_jugador_conserva_la_conducta_vieja(monkeypatch):
     vistos = {}
     monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    monkeypatch.setattr(appmod, "build_operator_map", lambda cur, account=None: {})
 
     def f(cur, account, **kwargs):
         vistos.update(kwargs)

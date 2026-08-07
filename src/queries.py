@@ -123,6 +123,20 @@ def scored_rows(cur, account: str, **filters) -> list[dict]:
 _RATING_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1}
 
 
+# CLAVE de comparacion de nombres de operador: minusculas y sin tildes.
+# `operator_status` matcheaba por STRING EXACTO, y cuando la canonicalizacion por persona
+# (2026-08-07) eligio la grafia dominante, dos apagados quedaron sin efecto:
+#     'OnlySorti' guardado -> 'onlysorti' resuelto
+#     'Anahi'     guardado -> 'Anahí'     resuelto   (31.626 mensajes, volvia a aparecer)
+# Se compara por clave en vez de renombrar las filas: renombrar arregla esos dos y deja la
+# trampa armada para la proxima grafia que cambie.
+# translate() y NO unaccent(): unaccent es una EXTENSION que puede no estar instalada en la
+# base de produccion, y esto tiene que andar sin pedir superusuario.
+def _clave_sql(expr: str) -> str:
+    return (f"translate(lower({expr}), "
+            "'áéíóúüàèìòùäëïöñÁÉÍÓÚÜÑ', 'aeiouuaeiouaeioanAEIOUUN')")
+
+
 # Nombre del operador RESUELTO: el mismo con el que agrupan todos los cuadros. `users.name`
 # manda y la firma `*Nombre:*` guardada en `user_name` es el fallback (38 de 67 operadores
 # de `sistemas` no existen en `users`).
@@ -143,7 +157,7 @@ _OPERADOR_RESUELTO = ("coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
 _SIN_APAGADOS = f"""NOT EXISTS (
      SELECT 1 FROM operator_status os
       WHERE os.account = cs.account AND os.activo = false
-        AND os.operator_name = {_OPERADOR_RESUELTO})"""
+        AND {_clave_sql('os.operator_name')} = {_clave_sql(_OPERADOR_RESUELTO)})"""
 
 
 def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
@@ -541,6 +555,10 @@ def _build_quality_motivo(rows, top_n: int | None = None, op_min_conv: int = 3,
     (el recorte real lo hace el front, que sabe cuánto espacio tiene).
     """
     by: dict[str, dict[str, dict[str, list]]] = {}
+    # Guard en el builder ademas del SQL: `sin_motivo` es la AUSENCIA de motivo (sesiones de
+    # agente, calificadas con agilidad). Si alguien vuelve a meter el coalesce en la query,
+    # el cuadro no se rompe.
+    rows = [r for r in rows if r[1] and r[1] != "sin_motivo"]
     for mes, motivo, op, n, sum_stars in rows:
         by.setdefault(motivo, {}).setdefault(op, {})[mes] = [float(sum_stars or 0), int(n)]
     months = sorted({mes for mo in by.values() for ops in mo.values() for mes in ops})
@@ -572,12 +590,18 @@ def _build_quality_motivo(rows, top_n: int | None = None, op_min_conv: int = 3,
 # Evolución de la ★ por MOTIVO abierta POR OPERADOR: cada motivo muestra una línea por
 # usuario + el promedio del motivo. Responde "¿quién baja la calidad de depósito?, ¿quién
 # lleva soporte?". Solo evaluadas; respeta filtros; mismo guard de operador que _QUALITY_SQL.
+# `sin_motivo` NO entra: no es un motivo, es la ausencia de uno. Son las sesiones del
+# segmento AGENTE, que se califican con la rubrica de agilidad y nunca pasan por la
+# clasificacion de motivo (motivo NULL). En una tarjeta que compara la calidad ENTRE motivos
+# meterlas es comparar peras con la falta de peras, y en `sistemas` son el grupo mas grande:
+# arrastraban el promedio del cuadro. Decision del negocio, 2026-08-07.
 _QUALITY_MOTIVO_SQL = """
 SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
-       coalesce(cs.motivo, 'sin_motivo') AS motivo,
+       cs.motivo AS motivo,
        coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
        count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
    AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
+   AND cs.motivo IS NOT NULL
    AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
  GROUP BY 1, 2, 3"""
 
@@ -856,33 +880,45 @@ _OP_CHARTS = "coalesce(nullif(u.name, ''), nullif(sig.name, ''), 'Operador sin i
 # interpreta como un placeholder (`KeyError: '2,40'`). `{{2,40}}` llega a Postgres como
 # `{2,40}`. Si algún día este CTE se usa en una query que NO se formatea, hay que
 # des-doblarlas.
-_OP_SIG_CTE = """op_sig AS (
-  SELECT DISTINCT ON (user_id) user_id, name FROM (
-    SELECT user_id, (regexp_match(body, '^\\*([^:*]{{2,40}}):\\*'))[1] AS name, count(*) AS n
-      FROM messages
-     WHERE account = %(account)s AND from_me AND NOT is_note AND user_id IS NOT NULL
-       AND body ~ '^\\*([^:*]{{2,40}}):\\*'
-     GROUP BY 1, 2
-  ) s ORDER BY user_id, n DESC, name
+# El nombre del operador llega YA RESUELTO desde Python (src/operators.build_operator_map),
+# no se re-deriva en SQL. Dos razones:
+#  - CORRECCION: la canonicalizacion por PERSONA — unificar los user_id que el CRM recreo,
+#    sacando tildes y eligiendo la grafia dominante — no se puede hacer en SQL plano. Sin
+#    ella, alguien con dos cuentas aparece como dos operadores y apagarlo en la
+#    configuracion no lo apaga entero. Medido el 2026-08-07: 10 personas, 362.944 mensajes.
+#  - COSTO: el CTE con regex sobre `messages` se calculaba en las TRES queries de cada
+#    request de /api/charts.
+# MATERIALIZED igual: sin eso el planner estimaba `conv_op` en 200 filas (son ~17.000),
+# elegia Nested Loops en cascada y en la cuenta `datos` la query pasaba de 0,2s a mas de 90s
+# -> /api/charts devolvia 500 al cortar en el statement_timeout.
+_OP_SIG_CTE = """op_sig AS MATERIALIZED (
+  SELECT * FROM unnest(%(sig_ids)s::uuid[], %(sig_names)s::text[]) AS t(user_id, name)
 )"""
+def _sig_params(op_map: dict | None) -> dict:
+    """Los dos arrays paralelos del mapa de identidad. Vacios = sin mapa (cae al nombre de
+    `users` y al fallback), que es la conducta de antes."""
+    m = op_map or {}
+    return {"sig_ids": list(m.keys()), "sig_names": list(m.values())}
+
+
 _SIN_APAGADOS_CHARTS = f"""
    AND NOT EXISTS (
      SELECT 1 FROM operator_status os
       WHERE os.account = %(account)s AND os.activo = false
-        AND os.operator_name = {_OP_CHARTS})"""
+        AND {_clave_sql('os.operator_name')} = {_clave_sql(_OP_CHARTS)})"""
 
 
 # --- §10: carga mensual por operador (segmento jugador). Operador = el user_id
 # con más mensajes de negocio en la conversación (conversations.user_id suele ser
 # NULL). Se acota a las colas jugador y se agrupa por (mes, operador).
 _LOAD_SQL = """
-WITH msg_op AS (
+WITH msg_op AS MATERIALIZED (
   SELECT conversation_id, user_id, count(*) AS n
     FROM messages
    WHERE account = %(account)s AND from_me AND NOT is_note AND user_id IS NOT NULL
    GROUP BY conversation_id, user_id
 ),
-conv_op AS (
+conv_op AS MATERIALIZED (
   SELECT DISTINCT ON (conversation_id) conversation_id, user_id
     FROM msg_op ORDER BY conversation_id, n DESC
 ),
@@ -1010,7 +1046,7 @@ def _build_load_series(rows, top_n: int) -> dict:
 
 def load_by_operator(cur, account: str, top_n: int = 7,
                      window_months: int = DEFAULT_WINDOW_MONTHS,
-                     inactivos: str = "ocultar", ambiente: str = "jugador") -> dict:
+                     inactivos: str = "ocultar", ambiente: str = "jugador", op_map: dict | None = None) -> dict:
     """Carga mensual por operador del AMBIENTE, top-N + 'Otros', últimos N meses.
 
     Los operadores apagados no aparecen (baja lógica). Con el filtro puesto, 'Otros' pasa a
@@ -1025,20 +1061,21 @@ def load_by_operator(cur, account: str, top_n: int = 7,
         return {"months": [], "series": []}
     sql = _LOAD_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS,
                            cola=_cola_pred(sin_cola))
-    cur.execute(sql, {"account": account, "qids": qids, "months_back": window_months - 1})
+    cur.execute(sql, {"account": account, "qids": qids, "months_back": window_months - 1,
+                      **_sig_params(op_map)})
     return _build_load_series(cur.fetchall(), top_n)
 
 
 # --- §2: % depósito en WhatsApp por operador (jugador). Une operador dominante +
 # flag de depósito por conversación, acotado a WhatsApp y colas jugador.
 _DEP_PCT_SQL = """
-WITH msg_op AS (
+WITH msg_op AS MATERIALIZED (
   SELECT conversation_id, user_id, count(*) AS n
     FROM messages
    WHERE account = %(account)s AND from_me AND NOT is_note AND user_id IS NOT NULL
    GROUP BY conversation_id, user_id
 ),
-conv_op AS (
+conv_op AS MATERIALIZED (
   SELECT DISTINCT ON (conversation_id) conversation_id, user_id
     FROM msg_op ORDER BY conversation_id, n DESC
 ),
@@ -1101,7 +1138,7 @@ def _build_pct_series(rows, top_n: int, min_conv: int = 8) -> dict:
 
 def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8,
                             window_months: int = DEFAULT_WINDOW_MONTHS,
-                            inactivos: str = "ocultar", ambiente: str = "jugador") -> dict:
+                            inactivos: str = "ocultar", ambiente: str = "jugador", op_map: dict | None = None) -> dict:
     """§2: % depósito en WhatsApp por operador del AMBIENTE, top-N + 'Otros', últimos N meses.
     Los operadores apagados no aparecen (baja lógica).
 
@@ -1118,7 +1155,7 @@ def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8
     sql = _DEP_PCT_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS,
                               cola=_cola_pred(sin_cola))
     cur.execute(sql, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
-                      "months_back": window_months - 1})
+                      "months_back": window_months - 1, **_sig_params(op_map)})
     return _build_pct_series(cur.fetchall(), top_n, min_conv)
 
 
@@ -1179,7 +1216,7 @@ def _build_new_vs_deposit(rows) -> dict:
 
 def new_vs_deposit_by_month(cur, account: str,
                             window_months: int = DEFAULT_WINDOW_MONTHS,
-                            ambiente: str = "jugador") -> dict:
+                            ambiente: str = "jugador", op_map: dict | None = None) -> dict:
     """§9: contactos nuevos y % depósito por mes del AMBIENTE, últimos N meses.
 
     `is_new_contact` cuenta la PRIMERA vez que aparece una persona, así que en `agente` lo
@@ -1194,7 +1231,7 @@ def new_vs_deposit_by_month(cur, account: str,
         return {"months": [], "nuevos": [], "pct": []}
     sql = _NEW_VS_DEP_SQL.format(cola=_cola_pred(sin_cola))
     cur.execute(sql, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
-                      "months_back": window_months - 1})
+                      "months_back": window_months - 1, **_sig_params(op_map)})
     return _build_new_vs_deposit(cur.fetchall())
 
 
@@ -1215,7 +1252,7 @@ _CONV_OP_EXPR = ("CASE WHEN pc.user_id IS NULL THEN 'BOT / sin operador' "
 _SIN_APAGADOS_CONV = f"""NOT EXISTS (
      SELECT 1 FROM operator_status os
       WHERE os.account = pc.account AND os.activo = false
-        AND os.operator_name = ({_CONV_OP_EXPR}))"""
+        AND {_clave_sql('os.operator_name')} = {_clave_sql(_CONV_OP_EXPR)})"""
 
 
 def _conversion_where(account: str, *, canal="all", segment="all", op="all",

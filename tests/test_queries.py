@@ -16,6 +16,7 @@ from src.queries import (
     _build_pct_series,
     _build_quality_evolution,
     _build_quality_motivo,
+    _QUALITY_MOTIVO_SQL,
     _conversion_where,
     _DEP_PCT_SQL,
     _DETAIL_SQL,
@@ -965,10 +966,10 @@ def test_pendientes_sin_colas_del_ambiente_es_cero_sin_consultar():
 # Medido: 34 de los 38 son rescatables por firma; 4 quedan anonimos de verdad.
 
 def test_los_cuadros_resuelven_el_nombre_por_FIRMA_antes_de_rendirse():
+    # La firma YA NO se reconstruye en SQL: llega resuelta y canonicalizada desde Python
+    # (ver test_los_cuadros_reciben_el_mapa_de_identidad_ya_resuelto). Lo que este test
+    # sigue fijando es el ORDEN: el nombre resuelto le gana al fallback.
     for sql in (_LOAD_SQL, _DEP_PCT_SQL):
-        # la firma se reconstruye en la query
-        assert "regexp_match" in sql, "no reconstruye la firma"
-        # y entra en el coalesce ANTES del fallback
         pos_sig = sql.index("sig.name")
         pos_fallback = sql.index("'Operador sin identificar'")
         assert pos_sig < pos_fallback, "la firma tiene que ganarle al fallback"
@@ -1045,3 +1046,70 @@ def test_el_detalle_trae_el_ORIGEN_de_la_conversacion():
     # es justo lo que hay que triajar.
     assert "cs.queue_name" in _DETAIL_SQL
     assert "cs.segment" in _DETAIL_SQL
+
+
+def test_los_CTE_de_los_cuadros_son_MATERIALIZED():
+    """Sin MATERIALIZED, /api/charts devolvia 500 en la cuenta `datos`.
+
+    MEDIDO el 2026-08-07: el planner estimaba `conv_op` en 200 filas cuando son ~17.000, y
+    con esa subestimacion elegia Nested Loops en cascada. Resultado en `datos`:
+
+        actual        FALLO tras 90s   (el endpoint cortaba en el statement_timeout de 20s)
+        MATERIALIZED     0,2s
+
+    En `sistemas` no cambia nada (3,3 -> 3,4s, ruido). MATERIALIZED fuerza a calcular el CTE
+    una vez en vez de inlinearlo y volver a estimarlo mal. `conv_dep` y `per_conv` ya lo
+    usaban por la misma razon; a `msg_op`/`conv_op`/`op_sig` les faltaba.
+    Este test existe para que nadie lo saque pensando que es decorativo.
+    """
+    for nombre, sql in (("_LOAD_SQL", _LOAD_SQL), ("_DEP_PCT_SQL", _DEP_PCT_SQL)):
+        for cte in ("msg_op", "conv_op"):
+            assert f"{cte} AS MATERIALIZED (" in sql, f"{nombre}: {cte} sin MATERIALIZED"
+    from src.queries import _OP_SIG_CTE
+    assert _OP_SIG_CTE.startswith("op_sig AS MATERIALIZED (")
+
+
+def test_calidad_por_motivo_EXCLUYE_sin_motivo():
+    """`sin_motivo` no es un motivo: es la ausencia de uno.
+
+    Son las sesiones del segmento AGENTE, que se califican con la rubrica de agilidad y no
+    pasan por la clasificacion de motivo (motivo NULL -> 'sin_motivo'). En una tarjeta que
+    compara la calidad ENTRE motivos, meterlas es comparar peras con la falta de peras: en
+    `sistemas` son el grupo mas grande y arrastraban el promedio del cuadro.
+    Decision del negocio, 2026-08-07.
+    """
+    assert "cs.motivo IS NOT NULL" in _QUALITY_MOTIVO_SQL
+
+
+def test_el_promedio_del_cuadro_no_mezcla_la_ausencia_de_motivo():
+    # El builder tampoco debe generar la fila: si el SQL cambia, esto sigue protegiendo.
+    filas = [("2026-07", "deposito", "Ana", 10, 40.0),
+             ("2026-07", "sin_motivo", "Ana", 90, 450.0)]
+    out = _build_quality_motivo(filas)
+    assert "sin_motivo" not in [m["motivo"] for m in out["motivos"]]
+
+
+def test_los_cuadros_reciben_el_mapa_de_identidad_ya_resuelto():
+    """El nombre canonico se calcula UNA vez en Python y se inyecta, no se re-deriva en SQL.
+
+    Dos razones. CORRECCION: la canonicalizacion por persona (unificar los user_id que el
+    CRM recreo, sacando tildes y eligiendo la grafia dominante) no se puede hacer en SQL
+    plano, y sin ella una persona con dos ids sigue apareciendo como dos operadores — y
+    apagarla en la configuracion no la apaga entera.
+    COSTO: el CTE con regex se calculaba en las TRES queries de cada request.
+    """
+    cur = _CursorSecuencia([("q1", "Jugadores")], [])
+    load_by_operator(cur, "sistemas", op_map={"u1": "Anahí"})
+    query, params = cur.executed[-1]
+    assert "regexp_match" not in query, "no debe re-derivar la firma en SQL"
+    assert "unnest(%(sig_ids)s" in query
+    assert params["sig_ids"] == ["u1"] and params["sig_names"] == ["Anahí"]
+
+
+def test_sin_mapa_los_cuadros_siguen_andando():
+    # Compatibilidad: quien no pasa el mapa cae al nombre de `users` y al fallback.
+    cur = _CursorSecuencia([("q1", "Jugadores")], [])
+    load_by_operator(cur, "sistemas")
+    query, params = cur.executed[-1]
+    assert params["sig_ids"] == [] and params["sig_names"] == []
+    assert "'Operador sin identificar'" in query

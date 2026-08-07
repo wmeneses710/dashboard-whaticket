@@ -255,8 +255,11 @@ SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identi
   LEFT JOIN users u ON u.id = cs.user_id AND u.account = cs.account
   LEFT JOIN operator_status os
          ON os.account = cs.account
-        AND os.operator_name = coalesce(nullif(coalesce(u.name, cs.user_name), ''),
-                                        'Operador sin identificar')
+        AND translate(lower(os.operator_name),
+                      'áéíóúüàèìòùäëïöñÁÉÍÓÚÜÑ', 'aeiouuaeiouaeioanAEIOUUN')
+          = translate(lower(coalesce(nullif(coalesce(u.name, cs.user_name), ''),
+                                     'Operador sin identificar')),
+                      'áéíóúüàèìòùäëïöñÁÉÍÓÚÜÑ', 'aeiouuaeiouaeioanAEIOUUN')
  WHERE cs.account = %(account)s
  GROUP BY 1
  ORDER BY 3 DESC, 2 DESC
