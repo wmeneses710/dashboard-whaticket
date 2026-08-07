@@ -28,6 +28,7 @@ from collections import defaultdict
 from datetime import timedelta
 
 from src.metrics import message_stats
+from src.redireccion import es_redireccion_total
 from src.router import decide_eligibility, decide_rubric
 from src.signals import client_sin_motivo, operator_resolved
 
@@ -159,8 +160,12 @@ def assign_sessions(episodes: list[dict]) -> list[dict]:
     return result
 
 
-def evaluate_session(messages: list[dict]):
+def evaluate_session(messages: list[dict], lineas: dict | None = None):
     """Stats + rubrica + elegibilidad sobre el transcript MERGEADO de la sesion. PURA.
+
+    `lineas`: mapa tail-de-9-digitos -> status de `connections` (ver
+    src/redireccion.build_lineas_map), para decidir el skip por `redireccion`. Sin el
+    mapa NO se skipea nada por traspaso: falla del lado seguro.
 
     Espeja los pasos deterministas del scorer por conversacion (src/worker.py
     score_and_store) pero a grano SESION: recibe TODOS los mensajes de todos los
@@ -193,6 +198,12 @@ def evaluate_session(messages: list[dict]):
     # sesion que saber que el cliente solo dijo "hola".
     if eval_status == "evaluated" and client_sin_motivo(messages):
         return stats, rubric, "skipped", "sin_motivo"
+    # `redireccion`: la respuesta del negocio fue SOLO un traspaso a otra linea nuestra,
+    # y esa linea esta viva. Va DESPUES de `sin_motivo` por decision del negocio
+    # (2026-08-07): cuando el cliente tampoco planteo nada, la etiqueta que queda es
+    # `sin_motivo`. Ver src/redireccion.py para los tres buckets y el por que.
+    if eval_status == "evaluated" and es_redireccion_total(messages, lineas):
+        return stats, rubric, "skipped", "redireccion"
     return stats, rubric, eval_status, skip_reason
 
 

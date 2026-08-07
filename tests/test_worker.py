@@ -205,7 +205,7 @@ def test_score_sessions_batch_cuenta_y_no_aborta_por_una_excepcion(monkeypatch):
     monkeypatch.setattr(worker, "fetch_pending_sessions",
                         lambda cur, account, limit: sessions)
 
-    def fake_score(conn, sess, llm, op_map, verifier=None, recommender=None):
+    def fake_score(conn, sess, llm, op_map, verifier=None, recommender=None, lineas=None):
         if sess["session_id"] == "s2":
             raise RuntimeError("boom")  # una sesion falla, el lote sigue
         return ("evaluated" if sess["session_id"] == "s1" else "skipped", None, None)
@@ -358,3 +358,58 @@ def test_sesion_de_agente_sin_pedidos_medibles_queda_sin_nota(monkeypatch):
     assert status == "evaluated"       # la sesion es evaluable; solo no tiene nota
     assert score is None
     assert _params_of_upsert(conn)["stars"] is None
+
+
+# --- redireccion: el skip necesita el mapa de lineas cableado hasta aca -----------
+# Sin este cableado la regla existe en src/redireccion.py pero NUNCA se aplica en
+# produccion, que es la unica parte que importa.
+
+def _redireccion_session_messages():
+    return [
+        {"from_me": False, "is_note": False, "body": "Buenas para recargar 5",
+         "sent_from": None, "user_id": None, "media_type": "chat"},
+        {"from_me": True, "is_note": False, "media_type": "chat", "user_id": "u1",
+         "sent_from": "OPERATOR",
+         "body": "A partir de ahora te estaremos atendiendo desde el 0991194133"},
+    ]
+
+
+def test_score_session_and_store_saltea_por_redireccion(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _redireccion_session_messages())
+
+    def boom(**kw):
+        raise AssertionError("no debe correr el LLM en una redireccion skipeada")
+
+    monkeypatch.setattr(worker, "score_by_motivo", boom)
+    conn = _CtxConn()
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, _session_row(), llm=None, op_map={}, lineas={"991194133": "CONNECTED"})
+    assert (eval_status, skip_reason) == ("skipped", "redireccion")
+    assert score is None
+    assert _params_of_upsert(conn)["stars"] is None
+
+
+def test_sin_mapa_de_lineas_la_redireccion_se_evalua_igual(monkeypatch):
+    # Falla del lado seguro: si el mapa no llego, no se regala el skip.
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _redireccion_session_messages())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    eval_status, _, _ = score_session_and_store(
+        _CtxConn(), _session_row(), llm=None, op_map={})
+    assert eval_status == "evaluated"
+
+
+def test_score_sessions_batch_construye_el_mapa_de_lineas_si_no_lo_recibe(monkeypatch):
+    vistos = {}
+    monkeypatch.setattr(worker, "fetch_pending_sessions", lambda cur, a, l: [_session_row()])
+    monkeypatch.setattr(worker, "build_operator_map", lambda cur: {})
+    monkeypatch.setattr(worker, "build_lineas_map", lambda cur: {"991194133": "CONNECTED"})
+
+    def spy(conn, sess, llm, op_map, verifier=None, recommender=None, lineas=None):
+        vistos["lineas"] = lineas
+        return "skipped", "redireccion", None
+
+    monkeypatch.setattr(worker, "score_session_and_store", spy)
+    score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10)
+    assert vistos["lineas"] == {"991194133": "CONNECTED"}

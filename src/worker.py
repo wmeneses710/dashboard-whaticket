@@ -16,6 +16,7 @@ from src.deposits import deposit_candidate_count
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
+from src.redireccion import build_lineas_map
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
@@ -151,13 +152,14 @@ def fetch_pending_sessions(cur, account: str, limit: int) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None, recommender=None):
+def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None,
+                            recommender=None, lineas: dict | None = None):
     """Scorea UNA sesion (transcript mergeado) y la persiste. Devuelve (eval_status,
     skip_reason, score). Espeja score_and_store pero a grano SESION.
     verifier/recommender: sub-evaluadores angostos opcionales (ver src/subeval.py)."""
     with conn.cursor() as cur:
         msgs = fetch_session_messages(cur, sess["session_id"])
-    stats, rubric, eval_status, skip_reason = evaluate_session(msgs)
+    stats, rubric, eval_status, skip_reason = evaluate_session(msgs, lineas=lineas)
     deposit_count = deposit_candidate_count(msgs)  # gate determinista (indep. del eval_status)
     operator_id = primary_operator(msgs)
     op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
@@ -195,17 +197,24 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None, 
 
 
 def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | None = None,
-                         verifier=None, recommender=None) -> dict:
-    """Scorea un lote de sesiones pendientes de una cuenta. Devuelve conteos."""
+                         verifier=None, recommender=None, lineas: dict | None = None) -> dict:
+    """Scorea un lote de sesiones pendientes de una cuenta. Devuelve conteos.
+
+    `lineas`: mapa de las lineas propias (ver src/redireccion.build_lineas_map), para el
+    skip por traspaso. Se construye aca si no viene, igual que `op_map`."""
     if op_map is None:
         with conn.cursor() as cur:
             op_map = build_operator_map(cur)
+    if lineas is None:
+        with conn.cursor() as cur:
+            lineas = build_lineas_map(cur)
     with conn.cursor() as cur:
         pending = fetch_pending_sessions(cur, account, limit)
     counts = {"evaluated": 0, "skipped": 0, "error": 0, "seen": len(pending)}
     for sess in pending:
         try:
-            eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map, verifier, recommender)
+            eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map, verifier,
+                                                        recommender, lineas=lineas)
             counts[eval_status] += 1
         except Exception as e:  # noqa: BLE001 - no abortar el lote por una sesion
             # rollback: si el fallo fue DB-side, la txn queda abortada y cascadearia
@@ -314,10 +323,15 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
             with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
                 with conn.cursor() as cur:
                     op_map = build_operator_map(cur)
+                # Lineas propias (connections) para el skip por `redireccion`. Una vez por
+                # ciclo, como op_map: son 9 filas y cambian cuando el negocio migra una linea.
+                with conn.cursor() as cur:
+                    lineas = build_lineas_map(cur)
                 for account in cfg.scoring_accounts:
                     t0 = time.time()
                     c = score_sessions_batch(conn, llm, account, cfg.scoring_batch_size, op_map,
-                                             verifier=verifier, recommender=recommender)
+                                             verifier=verifier, recommender=recommender,
+                                             lineas=lineas)
                     dt = time.time() - t0
                     seen += c["seen"]
                     if c["seen"]:
