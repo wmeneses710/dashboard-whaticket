@@ -17,6 +17,8 @@ from src.queries import (
     _build_quality_evolution,
     _build_quality_motivo,
     _conversion_where,
+    SIN_COLA_LABEL,
+    ambiente_composition,
     deposit_pct_by_operator,
     load_by_operator,
     _dist_from_labels,
@@ -32,6 +34,7 @@ from src.queries import (
     deposit_by_channel,
     distribution,
     filter_options,
+    new_vs_deposit_by_month,
     operators_table,
     pending_sessions_count,
     scored_rows,
@@ -531,6 +534,12 @@ class _CursorSecuencia:
     def fetchall(self):
         return self._tandas.pop(0) if self._tandas else []
 
+    def fetchone(self):
+        # Misma secuencia que fetchall: consume la tanda y devuelve su primera fila. La
+        # necesitan las funciones que resuelven colas (fetchall) y despues cuentan (fetchone).
+        tanda = self._tandas.pop(0) if self._tandas else []
+        return tanda[0] if tanda else None
+
 
 def test_charts_full_scale_tambien_esconden_operadores_apagados():
     """Los dos cuadros de /api/charts NO pasan por `_scores_filters` (van full-scale sobre
@@ -788,3 +797,153 @@ def test_la_lista_de_interacciones_trae_el_reloj():
     # para encontrar las lentas.
     from src.queries import _TICKETS_CONVS_SQL
     assert "cs.first_response_seconds" in _TICKETS_CONVS_SQL
+
+
+# --- AMBIENTE: el switch jugador / agente / sin_clasificar ----------------------
+# Jerarquia del negocio (2026-08-07): manda OPERADORES (ya vigente via `inactivos` en los
+# dos mundos) y adentro el AMBIENTE. Antes de esto los cuadros de /api/charts estaban
+# clavados a las colas jugador, que son el 24,2% de los comprobantes de deposito: el 71,7%
+# lo carrean los agentes y no se veia en ningun cuadro.
+
+def test_scores_filters_traduce_el_ambiente_a_los_segmentos():
+    where, params = _scores_filters("sistemas", ambiente="sin_clasificar")
+    assert "cs.segment = ANY(%(amb_segments)s)" in where
+    assert set(params["amb_segments"]) == {"interno", "marketing", "otro", "descartar"}
+
+
+def test_scores_filters_con_ambiente_todos_no_filtra_segmento():
+    where, params = _scores_filters("sistemas", ambiente="todos")
+    assert "amb_segments" not in params
+    assert "cs.segment" not in where
+
+
+def test_ambiente_y_segmento_COMPONEN():
+    # El ambiente es el agrupador grueso; el filtro fino de segmento sigue vivo adentro
+    # (p. ej. aislar `marketing` dentro de sin_clasificar). Los dos se aplican con AND.
+    where, params = _scores_filters("sistemas", ambiente="sin_clasificar", segment="marketing")
+    assert "cs.segment = ANY(%(amb_segments)s)" in where
+    assert "cs.segment = %(segment)s" in where
+    assert params["segment"] == "marketing"
+
+
+def test_los_cuadros_resuelven_las_colas_DEL_AMBIENTE_pedido():
+    # La 1ra tanda es la lista de colas de la cuenta; el resolvedor se queda con las del
+    # ambiente. 'Agente 👨👩' es agente, 'Jugadores' es jugador.
+    for fn in (load_by_operator, deposit_pct_by_operator):
+        cur = _CursorSecuencia([("q1", "Jugadores"), ("q2", "Agente 👨👩")], [])
+        fn(cur, "sistemas", ambiente="agente")
+        assert cur.executed[-1][1]["qids"] == ["q2"], fn.__name__
+
+
+def test_el_ambiente_jugador_NO_arrastra_las_conversaciones_sin_cola():
+    cur = _CursorSecuencia([("q1", "Jugadores")], [])
+    load_by_operator(cur, "sistemas", ambiente="jugador")
+    assert "queue_id IS NULL" not in cur.executed[-1][0]
+
+
+def test_los_ambientes_con_cola_vacia_SUMAN_las_conversaciones_sin_cola():
+    # En la BD no hay ninguna cola de nombre vacio: las 16.910 sesiones de "cola vacia"
+    # son `queue_id IS NULL`, inalcanzables por lista de colas. Sin este OR, el ambiente
+    # sin_clasificar saldria vacio y 'todos' perderia 10.939 conversaciones EN SILENCIO.
+    for ambiente in ("sin_clasificar", "todos"):
+        cur = _CursorSecuencia([("q1", "Jugadores")], [])
+        load_by_operator(cur, "sistemas", ambiente=ambiente)
+        assert "queue_id IS NULL" in cur.executed[-1][0], ambiente
+
+
+def test_sin_colas_propias_pero_CON_las_sin_cola_igual_consulta():
+    # Caso borde real: una cuenta sin colas de marketing/otro. qids queda vacio, pero
+    # sin_clasificar TIENE contenido (las sin cola) -> no puede cortar devolviendo vacio.
+    cur = _CursorSecuencia([("q1", "Jugadores")], [("2026-07", "Mario", 5)])
+    r = load_by_operator(cur, "sistemas", ambiente="sin_clasificar")
+    assert len(cur.executed) == 2, "corto antes de consultar los datos"
+    assert r["months"] == ["2026-07"]
+
+
+def test_sin_colas_y_sin_las_sin_cola_si_corta_vacio():
+    # jugador en una cuenta sin colas de jugador: ahi si no hay nada que consultar.
+    cur = _CursorSecuencia([("q1", "Agente 👨👩")], [])
+    r = load_by_operator(cur, "sistemas", ambiente="jugador")
+    assert r == {"months": [], "series": []}
+    assert len(cur.executed) == 1, "consulto datos sin colas que consultar"
+
+
+def test_el_default_de_los_cuadros_sigue_siendo_jugador():
+    # Compatibilidad: quien no pasa ambiente ve lo mismo que veia antes.
+    cur = _CursorSecuencia([("q1", "Jugadores"), ("q2", "Agente 👨👩")], [])
+    load_by_operator(cur, "sistemas")
+    assert cur.executed[-1][1]["qids"] == ["q1"]
+
+
+def test_new_vs_deposit_tambien_respeta_el_ambiente():
+    cur = _CursorSecuencia([("q1", "Jugadores"), ("q2", "Agente 👨👩")], [])
+    new_vs_deposit_by_month(cur, "sistemas", ambiente="agente")
+    assert cur.executed[-1][1]["qids"] == ["q2"]
+
+
+def test_composicion_dice_QUE_COMPONE_cada_ambiente():
+    # Las colas reales de `sistemas` con sus conversaciones medidas el 2026-08-07.
+    cur = _FakeCursor([("Jugadores", 36763), ("Agente 👨👩", 78968), ("", 21546),
+                       ("Departamento de Makerting", 849), ("Prueba", 6)])
+    amb = ambiente_composition(cur, "sistemas")["ambientes"]
+    assert amb["jugador"]["conversaciones"] == 36763
+    assert amb["agente"]["conversaciones"] == 78968
+    assert amb["sin_clasificar"]["conversaciones"] == 21546 + 849 + 6
+    assert amb["todos"]["conversaciones"] == 36763 + 78968 + 21546 + 849 + 6
+
+
+def test_la_composicion_nombra_la_cola_sin_asignar_por_lo_que_SABEMOS():
+    # El codigo la clasifica 'interno', pero el 90% tiene mensajes de cliente reales.
+    # La etiqueta dice lo que se sabe (no hay cola), no lo que se supone (es interno).
+    cur = _FakeCursor([("", 21546)])
+    colas = ambiente_composition(cur, "sistemas")["ambientes"]["sin_clasificar"]["colas"]
+    assert colas[0]["cola"] == SIN_COLA_LABEL
+    assert colas[0]["segmento"] == "interno"
+
+
+def test_la_composicion_ordena_las_colas_por_peso():
+    cur = _FakeCursor([("ModoSorti", 2102), ("Jugadores", 36763), ("sortiGO", 1473)])
+    colas = ambiente_composition(cur, "sistemas")["ambientes"]["jugador"]["colas"]
+    assert [c["cola"] for c in colas] == ["Jugadores", "ModoSorti", "sortiGO"]
+
+
+def test_la_composicion_lista_los_segmentos_presentes():
+    cur = _FakeCursor([("", 10), ("Departamento de Makerting", 5)])
+    segs = ambiente_composition(cur, "sistemas")["ambientes"]["sin_clasificar"]["segmentos"]
+    # solo los PRESENTES, en el orden que define el ambiente (no el azar de un set)
+    assert segs == ["interno", "marketing"]
+
+
+def test_scored_rows_ahora_recorta_por_ambiente():
+    cur = _FakeCursor([], description=[])
+    scored_rows(cur, "datos", ambiente="agente")
+    query, params = cur.executed[0]
+    assert "cs.segment = ANY(%(amb_segments)s)" in query
+    assert params["amb_segments"] == ["agente"]
+
+
+def test_pendientes_tambien_respeta_el_ambiente():
+    # "Backfill en curso" es un numero que el tablero muestra al lado de los KPIs. Si
+    # ignora el switch, dice 112.187 pendientes mires jugador, agente o sin_clasificar:
+    # justo el numero-sin-origen que el ambiente viene a eliminar.
+    cur = _CursorSecuencia([("q1", "Jugadores"), ("q2", "Agente 👨👩")], [(99,)])
+    assert pending_sessions_count(cur, "sistemas", ambiente="agente") == 99
+    query, params = cur.executed[-1]
+    assert "JOIN conversations c ON c.id = cs.session_id" in query
+    assert params["qids"] == ["q2"]
+
+
+def test_pendientes_en_todos_NO_paga_el_join():
+    # 'todos' es el default y el caso mas frecuente: sin recorte no hace falta el join.
+    cur = _FakeCursor([(112187,)], one=(112187,))
+    n = pending_sessions_count(cur, "sistemas", ambiente="todos")
+    query, params = cur.executed[0]
+    assert "JOIN conversations" not in query
+    assert "qids" not in params
+    assert n == 112187
+
+
+def test_pendientes_sin_colas_del_ambiente_es_cero_sin_consultar():
+    cur = _CursorSecuencia([("q1", "Agente 👨👩")])
+    assert pending_sessions_count(cur, "sistemas", ambiente="jugador") == 0
+    assert len(cur.executed) == 1

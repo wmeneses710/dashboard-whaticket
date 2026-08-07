@@ -33,7 +33,7 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
   LEFT JOIN users    u  ON u.id  = cs.user_id
- WHERE cs.account = %(account)s
+ WHERE {where}
  ORDER BY cs.conversation_created_at DESC
 """
 
@@ -104,9 +104,15 @@ def list_accounts(cur) -> list[str]:
     return [{"account": a, "count": n} for a, n in cur.fetchall()]
 
 
-def scored_rows(cur, account: str) -> list[dict]:
-    """Todas las conversaciones scoreadas de UNA cuenta (sin transcript)."""
-    cur.execute(_SCORES_SQL, {"account": account})
+def scored_rows(cur, account: str, **filters) -> list[dict]:
+    """Conversaciones scoreadas de UNA cuenta (sin transcript), con los filtros aplicados.
+
+    Antes ignoraba todo filtro y devolvía la cuenta entera. Con el switch de ambiente eso
+    dejaba de servir: la lista mezclaba jugadores, agentes y sin clasificar sin recorte
+    posible. Comparte el WHERE con el resto del tablero (`_scores_filters`), así que la
+    baja lógica de operadores también aplica acá."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_SCORES_SQL.format(where=where), params)
     return _rows_as_dicts(cur)
 
 
@@ -142,13 +148,27 @@ _SIN_APAGADOS = f"""NOT EXISTS (
 
 def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
                     op="all", date_from=None, date_to=None, rating="all",
-                    search="", motivo="all", inactivos="ocultar") -> tuple[str, dict]:
+                    search="", motivo="all", inactivos="ocultar",
+                    ambiente="todos") -> tuple[str, dict]:
     """(where_sql, params) para conversation_scores, replicando matchBase del front.
-    Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas."""
+    Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas.
+
+    ORDEN DE LOS FILTROS (jerarquía del negocio, 2026-08-07): manda OPERADORES —
+    `inactivos`, la baja lógica— y adentro de eso el AMBIENTE. Por eso los dos van
+    primero. `segment` sigue vivo como filtro FINO adentro del ambiente (p. ej. aislar
+    `marketing` dentro de sin_clasificar): los dos componen con AND."""
+    from src.segments import segments_for_ambiente
+
     where = ["cs.account = %(account)s"]
     params: dict = {"account": account}
     if inactivos != "incluir":
         where.append(_SIN_APAGADOS)
+    if ambiente and ambiente != "todos":
+        # `todos` NO agrega predicado a propósito: `cs.segment` no es NULL en ninguna fila
+        # (0 de 130.558 medidas), así que sin filtro y con la lista completa dan lo mismo,
+        # y sin filtro es una condición menos que planificar.
+        where.append("cs.segment = ANY(%(amb_segments)s)")
+        params["amb_segments"] = list(segments_for_ambiente(ambiente))
     if estado and estado != "all":
         where.append("cs.eval_status = %(estado)s"); params["estado"] = estado
     if motivo and motivo != "all":
@@ -228,7 +248,7 @@ SELECT count(*) AS total,
 # no aplican a lo aún-no-scoreado.
 _PENDING_SESSIONS_COUNT_SQL = """
 SELECT count(*) AS pendientes
-  FROM conversation_sessions cs
+  FROM conversation_sessions cs{join}
  WHERE cs.account = %(account)s
    AND cs.end_at < now() - interval '6 hours'
    AND NOT EXISTS (
@@ -237,15 +257,33 @@ SELECT count(*) AS pendientes
    {date_clause}"""
 
 
-def pending_sessions_count(cur, account: str, date_from=None, date_to=None) -> int:
-    """Sesiones cerradas de la cuenta que aún no fueron scoreadas (backfill en curso)."""
+def pending_sessions_count(cur, account: str, date_from=None, date_to=None,
+                           ambiente="todos") -> int:
+    """Sesiones cerradas de la cuenta que aún no fueron scoreadas (backfill en curso).
+
+    Respeta el AMBIENTE: sin eso el tablero decía los mismos 112.187 pendientes mirando
+    jugador, agente o sin_clasificar — un número sin origen al lado de los KPIs, que es
+    exactamente lo que el switch viene a eliminar. `conversation_sessions` no tiene columna
+    `segment`, así que el recorte pasa por la cola de la conversación (hash join, 24 ms
+    medidos). En 'todos' no se paga el join."""
     params: dict = {"account": account}
     clause = ""
+    join = ""
+    if ambiente and ambiente != "todos":
+        from src.segments import ambiente_incluye_sin_cola
+
+        qids = _queue_ids_for_ambiente(cur, account, ambiente)
+        sin_cola = ambiente_incluye_sin_cola(ambiente)
+        if not qids and not sin_cola:
+            return 0
+        join = "\n  JOIN conversations c ON c.id = cs.session_id"
+        clause += f" AND {_cola_pred(sin_cola)}"
+        params["qids"] = qids
     if date_from:
         clause += " AND cs.start_at >= %(dfrom)s"; params["dfrom"] = date_from
     if date_to:
         clause += " AND cs.start_at <= %(dto)s"; params["dto"] = date_to
-    cur.execute(_PENDING_SESSIONS_COUNT_SQL.format(date_clause=clause), params)
+    cur.execute(_PENDING_SESSIONS_COUNT_SQL.format(date_clause=clause, join=join), params)
     return int(cur.fetchone()[0])
 
 
@@ -295,7 +333,8 @@ def summary_kpis(cur, account: str, **filters) -> dict:
     row = cur.fetchone()
     kpis = {c: _coerce(v) for c, v in zip(cols, row)}
     kpis["pendientes"] = pending_sessions_count(
-        cur, account, filters.get("date_from"), filters.get("date_to")
+        cur, account, filters.get("date_from"), filters.get("date_to"),
+        ambiente=filters.get("ambiente", "todos"),
     )
     return kpis
 
@@ -796,18 +835,102 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
   FROM conversations c
   JOIN conv_op co ON co.conversation_id = c.id
   LEFT JOIN users u ON u.id = co.user_id
- WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND c.queue_id = ANY(%(qids)s)""" \
+ WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND {cola}""" \
     + _MONTH_WINDOW + "{apagados}" + """
  GROUP BY 1, 2
 """
 
 
-def _jugador_queue_ids(cur, account: str) -> list:
-    """IDs de las colas del segmento jugador (clasificadas con segment_for_queue)."""
-    from src.segments import segment_for_queue
+def _queue_ids_for_ambiente(cur, account: str, ambiente: str = "jugador") -> list:
+    """IDs de las colas que componen un AMBIENTE (clasificadas con segment_for_queue).
 
+    OJO: la lista de colas NO alcanza para describir un ambiente que incluya la cola
+    vacia. En la BD no existe ninguna cola de nombre vacio: las conversaciones de
+    "cola vacia" tienen `queue_id IS NULL` (10.939 medidas el 2026-08-07), asi que por
+    lista son inalcanzables. Quien filtre por estos ids debe combinarlos con
+    `_cola_pred(ambiente_incluye_sin_cola(ambiente))`, no usarlos sueltos.
+    """
+    from src.segments import segment_for_queue, segments_for_ambiente
+
+    segs = set(segments_for_ambiente(ambiente))
     cur.execute("SELECT id, name FROM queues WHERE account = %s", (account,))
-    return [qid for qid, name in cur.fetchall() if segment_for_queue(name) == "jugador"]
+    return [qid for qid, name in cur.fetchall() if segment_for_queue(name) in segs]
+
+
+def _jugador_queue_ids(cur, account: str) -> list:
+    """IDs de las colas del segmento jugador.
+
+    Sigue existiendo porque `src/conversions.py` precomputa `player_conversions`, que es
+    la conversion de jugador potencial a jugador: ahi el recorte a jugador es la
+    DEFINICION de la metrica, no un filtro de tablero que deba seguir al switch.
+    """
+    return _queue_ids_for_ambiente(cur, account, "jugador")
+
+
+# Etiqueta de las conversaciones sin cola asignada (`queue_id IS NULL`). El nombre importa:
+# el codigo las clasifica como 'interno' pero NO son personal hablando entre si — medido el
+# 2026-08-07, el 90% tiene mensajes de cliente reales y arrastran 6.795 comprobantes. Decir
+# "sin cola asignada" es lo que efectivamente sabemos; decir "interno" seria afirmar de mas.
+SIN_COLA_LABEL = "(sin cola asignada)"
+
+# Cuenta CONVERSACIONES, no sesiones, por dos razones: es el grano que los cuadros de
+# /api/charts filtran por `queue_id`, y la version que pasaba por conversation_sessions
+# (JOIN de 128k sesiones contra conversations) se comia el statement_timeout de 20s del
+# endpoint. Esta corre en 24 ms medidos.
+_COMPOSICION_SQL = """
+SELECT coalesce(q.name, '') AS cola, count(*) AS conversaciones
+  FROM conversations c
+  LEFT JOIN queues q ON q.id = c.queue_id
+ WHERE c.account = %(account)s
+ GROUP BY 1
+"""
+
+
+def ambiente_composition(cur, account: str) -> dict:
+    """Que compone cada ambiente en ESTA cuenta: colas, segmentos y conversaciones.
+
+    Existe para que el tablero pueda DECIR el origen de lo que muestra en vez de que el que
+    mira lo deduzca. Devuelve tambien 'todos' (la suma), asi el front puede mostrar el peso
+    relativo de cada ambiente sin recalcular nada.
+    """
+    from src.segments import ambiente_for_segment, segment_for_queue, segments_for_ambiente
+
+    cur.execute(_COMPOSICION_SQL, {"account": account})
+    acc: dict = {amb: {"conversaciones": 0, "segmentos": set(), "colas": []}
+                 for amb in ("todos", "jugador", "agente", "sin_clasificar")}
+    for cola, conversaciones in cur.fetchall():
+        segmento = segment_for_queue(cola)
+        ambiente = ambiente_for_segment(segmento)
+        etiqueta = cola or SIN_COLA_LABEL
+        n = int(conversaciones)
+        for destino in (ambiente, "todos"):
+            acc[destino]["conversaciones"] += n
+            acc[destino]["segmentos"].add(segmento)
+            acc[destino]["colas"].append({"cola": etiqueta, "segmento": segmento,
+                                          "conversaciones": n})
+    return {
+        "account": account,
+        "ambientes": {
+            amb: {
+                "conversaciones": d["conversaciones"],
+                # orden estable: el ambiente define el orden, no el azar del set
+                "segmentos": [s for s in segments_for_ambiente(amb) if s in d["segmentos"]],
+                "colas": sorted(d["colas"], key=lambda c: -c["conversaciones"]),
+            }
+            for amb, d in acc.items()
+        },
+    }
+
+
+def _cola_pred(incluye_sin_cola: bool) -> str:
+    """Predicado de cola para los cuadros full-scale (que filtran sobre conversations).
+
+    Con la cola vacia adentro hay que sumar `OR c.queue_id IS NULL`: sin eso el ambiente
+    `sin_clasificar` sale vacio y `todos` pierde 10.939 conversaciones en silencio.
+    """
+    if incluye_sin_cola:
+        return "(c.queue_id = ANY(%(qids)s) OR c.queue_id IS NULL)"
+    return "c.queue_id = ANY(%(qids)s)"
 
 
 def _build_load_series(rows, top_n: int) -> dict:
@@ -828,15 +951,21 @@ def _build_load_series(rows, top_n: int) -> dict:
 
 def load_by_operator(cur, account: str, top_n: int = 7,
                      window_months: int = DEFAULT_WINDOW_MONTHS,
-                     inactivos: str = "ocultar") -> dict:
-    """Carga mensual por operador (jugadores), top-N + 'Otros', últimos N meses.
+                     inactivos: str = "ocultar", ambiente: str = "jugador") -> dict:
+    """Carga mensual por operador del AMBIENTE, top-N + 'Otros', últimos N meses.
 
     Los operadores apagados no aparecen (baja lógica). Con el filtro puesto, 'Otros' pasa a
-    ser "el resto de los ACTIVOS", que es lo que corresponde."""
-    qids = _jugador_queue_ids(cur, account)
-    if not qids:
+    ser "el resto de los ACTIVOS", que es lo que corresponde.
+
+    `ambiente` default 'jugador' = la conducta histórica de este cuadro."""
+    from src.segments import ambiente_incluye_sin_cola
+
+    qids = _queue_ids_for_ambiente(cur, account, ambiente)
+    sin_cola = ambiente_incluye_sin_cola(ambiente)
+    if not qids and not sin_cola:
         return {"months": [], "series": []}
-    sql = _LOAD_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS)
+    sql = _LOAD_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS,
+                           cola=_cola_pred(sin_cola))
     cur.execute(sql, {"account": account, "qids": qids, "months_back": window_months - 1})
     return _build_load_series(cur.fetchall(), top_n)
 
@@ -874,7 +1003,7 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
   LEFT JOIN conv_dep cd ON cd.conversation_id = c.id
   LEFT JOIN users u ON u.id = co.user_id
   JOIN tickets t ON t.id = c.ticket_id
- WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s)
+ WHERE c.account = %(account)s AND {cola}
    AND t.channel = 'WHATSAPP' AND c.created_at IS NOT NULL""" \
     + _MONTH_WINDOW + "{apagados}" + """
  GROUP BY 1, 2
@@ -911,15 +1040,22 @@ def _build_pct_series(rows, top_n: int, min_conv: int = 8) -> dict:
 
 def deposit_pct_by_operator(cur, account: str, top_n: int = 7, min_conv: int = 8,
                             window_months: int = DEFAULT_WINDOW_MONTHS,
-                            inactivos: str = "ocultar") -> dict:
-    """§2: % depósito en WhatsApp por operador (jugadores), top-N + 'Otros', últimos N meses.
-    Los operadores apagados no aparecen (baja lógica)."""
-    from src.deposits import RECHARGE_PATTERN
+                            inactivos: str = "ocultar", ambiente: str = "jugador") -> dict:
+    """§2: % depósito en WhatsApp por operador del AMBIENTE, top-N + 'Otros', últimos N meses.
+    Los operadores apagados no aparecen (baja lógica).
 
-    qids = _jugador_queue_ids(cur, account)
-    if not qids:
+    Este cuadro es el que más gana con el switch: medido el 2026-08-07, los agentes carrean
+    121.180 de los 168.919 comprobantes (71,7%) contra 40.807 de jugador (24,2%). Clavado en
+    jugador, mostraba el cuarto de la evidencia de depósito."""
+    from src.deposits import RECHARGE_PATTERN
+    from src.segments import ambiente_incluye_sin_cola
+
+    qids = _queue_ids_for_ambiente(cur, account, ambiente)
+    sin_cola = ambiente_incluye_sin_cola(ambiente)
+    if not qids and not sin_cola:
         return {"months": [], "series": []}
-    sql = _DEP_PCT_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS)
+    sql = _DEP_PCT_SQL.format(apagados="" if inactivos == "incluir" else _SIN_APAGADOS_CHARTS,
+                              cola=_cola_pred(sin_cola))
     cur.execute(sql, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
                       "months_back": window_months - 1})
     return _build_pct_series(cur.fetchall(), top_n, min_conv)
@@ -948,7 +1084,7 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
        count(*) FILTER (WHERE c.is_new_contact AND pc.has_ctx AND pc.img > 0) AS nuevos_con_dep
   FROM conversations c
   LEFT JOIN per_conv pc ON pc.conversation_id = c.id
- WHERE c.account = %(account)s AND c.queue_id = ANY(%(qids)s) AND c.created_at IS NOT NULL""" + _MONTH_WINDOW + """
+ WHERE c.account = %(account)s AND {cola} AND c.created_at IS NOT NULL""" + _MONTH_WINDOW + """
  GROUP BY 1
 """
 
@@ -981,15 +1117,23 @@ def _build_new_vs_deposit(rows) -> dict:
 
 
 def new_vs_deposit_by_month(cur, account: str,
-                            window_months: int = DEFAULT_WINDOW_MONTHS) -> dict:
-    """§9: nuevos jugadores y % depósito por mes (segmento jugador), últimos N meses."""
-    from src.deposits import RECHARGE_PATTERN
+                            window_months: int = DEFAULT_WINDOW_MONTHS,
+                            ambiente: str = "jugador") -> dict:
+    """§9: contactos nuevos y % depósito por mes del AMBIENTE, últimos N meses.
 
-    qids = _jugador_queue_ids(cur, account)
-    if not qids:
+    `is_new_contact` cuenta la PRIMERA vez que aparece una persona, así que en `agente` lo
+    que cuenta son agentes nuevos, no jugadores. Es la misma métrica sobre otra audiencia:
+    quién la mira lo sabe por la composición que devuelve /api/charts."""
+    from src.deposits import RECHARGE_PATTERN
+    from src.segments import ambiente_incluye_sin_cola
+
+    qids = _queue_ids_for_ambiente(cur, account, ambiente)
+    sin_cola = ambiente_incluye_sin_cola(ambiente)
+    if not qids and not sin_cola:
         return {"months": [], "nuevos": [], "pct": []}
-    cur.execute(_NEW_VS_DEP_SQL, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
-                                  "months_back": window_months - 1})
+    sql = _NEW_VS_DEP_SQL.format(cola=_cola_pred(sin_cola))
+    cur.execute(sql, {"account": account, "re": RECHARGE_PATTERN, "qids": qids,
+                      "months_back": window_months - 1})
     return _build_new_vs_deposit(cur.fetchall())
 
 

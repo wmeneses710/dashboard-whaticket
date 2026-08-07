@@ -146,13 +146,6 @@ def accounts() -> list[dict]:
         return queries.list_accounts(cur)
 
 
-@app.get("/api/scores")
-def scores(account: str = Query(..., description="datos | sistemas")) -> list[dict]:
-    """Conversaciones scoreadas de una cuenta (sin transcript)."""
-    with _conn() as c, c.cursor() as cur:
-        return queries.scored_rows(cur, account)
-
-
 def _filters(
     estado: str = "all",
     segment: str = "all",
@@ -164,16 +157,39 @@ def _filters(
     search: str = "",
     motivo: str = "all",
     inactivos: str = "ocultar",
+    ambiente: str = Query("todos", pattern="^(todos|jugador|agente|sin_clasificar)$"),
 ) -> dict:
     """Filtros del dashboard (matchBase del front) como dependencia común. `from`/`to`
     llegan como alias porque `from` es palabra reservada en Python.
 
+    JERARQUÍA (definida por el negocio el 2026-08-07): el filtro MAYOR es OPERADORES
+    (`inactivos`), y adentro de eso el AMBIENTE. `segment` queda como filtro fino dentro
+    del ambiente; los dos componen.
+
     `inactivos`: 'ocultar' (default) esconde a los operadores apagados de TODO lo que sale
     de conversation_scores; 'incluir' los trae de vuelta. La baja es lógica, así que la
-    salida tiene que existir."""
+    salida tiene que existir.
+
+    `ambiente`: 'todos' (default: no esconder nada sin que alguien lo pida) | 'jugador' |
+    'agente' | 'sin_clasificar'. Se valida con `pattern` para que un typo devuelva 422 en
+    vez de degradarse al tablero completo: un número de la audiencia equivocada es peor
+    que un error, porque nadie lo nota."""
     return {"estado": estado, "segment": segment, "canal": canal, "op": op,
             "date_from": date_from, "date_to": date_to, "rating": rating,
-            "search": search, "motivo": motivo, "inactivos": inactivos}
+            "search": search, "motivo": motivo, "inactivos": inactivos,
+            "ambiente": ambiente}
+
+
+@app.get("/api/scores")
+def scores(account: str = Query(..., description="datos | sistemas"),
+           filters: dict = Depends(_filters)) -> list[dict]:
+    """Conversaciones scoreadas de una cuenta (sin transcript).
+
+    Era el único endpoint de lectura que ignoraba TODO filtro y devolvía la cuenta
+    entera; con el switch de ambiente eso mezclaba las audiencias sin manera de recortar.
+    Definido DESPUÉS de `_filters` a propósito: `Depends` se evalúa al definir la función."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.scored_rows(cur, account, **filters)
 
 
 @app.get("/api/options")
@@ -229,25 +245,49 @@ def conversion_cohort(account: str = Query(..., description="datos | sistemas"),
 
 @app.get("/api/charts")
 def charts(account: str = Query(..., description="datos | sistemas"),
-           inactivos: str = "ocultar") -> dict:
-    """Agregados FULL-SCALE para los cuadros del análisis (deterministas, sobre el
-    segmento jugador; no dependen del scoring LLM): carga por operador, % depósito
-    en WhatsApp por operador y nuevos jugadores vs % depósito por mes.
+           inactivos: str = "ocultar",
+           ambiente: str = Query("jugador",
+                                 pattern="^(todos|jugador|agente|sin_clasificar)$")) -> dict:
+    """Agregados FULL-SCALE para los cuadros del análisis (deterministas; no dependen del
+    scoring LLM): carga por operador, % depósito en WhatsApp por operador y contactos
+    nuevos vs % depósito por mes.
 
-    Estos cuadros ignoran los filtros del dashboard a propósito (ventana fija), con UNA
-    excepción: `inactivos`. Si no la respetaran, un operador apagado seguiría apareciendo
-    acá y la baja lógica tendría un agujero justo a la vista. `new_vs_deposit_by_month` no
-    lo necesita: agrega por mes, sin abrir por operador."""
+    Estos cuadros ignoran los filtros del dashboard a propósito (ventana fija), con DOS
+    excepciones: `inactivos` y `ambiente`.
+    - `inactivos`: si no la respetaran, un operador apagado seguiría apareciendo acá y la
+      baja lógica tendría un agujero justo a la vista.
+    - `ambiente`: hasta el 2026-08-07 los tres cuadros estaban CLAVADOS a las colas del
+      segmento jugador, que son el 24,2% de los comprobantes de depósito. El 71,7% lo
+      carrean los agentes y no aparecía en ningún cuadro. El default sigue siendo
+      'jugador' para no cambiarle la lectura a nadie sin avisar.
+
+    Devuelve el `ambiente` aplicado junto a los datos: el origen viaja CON el número, así
+    el front rotula lo que de verdad se contó en vez de asumirlo."""
     win = cfg.charts_window_months
     with _conn() as c, c.cursor() as cur:
         return {
             "load_by_operator": queries.load_by_operator(cur, account, window_months=win,
-                                                         inactivos=inactivos),
+                                                         inactivos=inactivos, ambiente=ambiente),
             "deposit_pct_by_operator": queries.deposit_pct_by_operator(cur, account, window_months=win,
-                                                                       inactivos=inactivos),
-            "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account, window_months=win),
+                                                                       inactivos=inactivos,
+                                                                       ambiente=ambiente),
+            "new_vs_deposit_by_month": queries.new_vs_deposit_by_month(cur, account, window_months=win,
+                                                                       ambiente=ambiente),
             "window_months": win,
+            "ambiente": ambiente,
         }
+
+
+@app.get("/api/ambientes")
+def ambientes(account: str = Query(..., description="datos | sistemas")) -> dict:
+    """Qué hay ADENTRO de cada ambiente en esta cuenta: colas, segmentos y sesiones.
+
+    Es la respuesta a "no se sabe de qué son qué": el front puede decir literalmente qué
+    compone el número que está mostrando, en vez de que el usuario lo deduzca. Estable por
+    cuenta -> se pide una vez, como /api/options (el agregado recorre las sesiones y no
+    tiene por qué correr en cada cambio de filtro)."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.ambiente_composition(cur, account)
 
 
 @app.get("/api/conversation/{cid}")

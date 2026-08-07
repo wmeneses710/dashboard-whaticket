@@ -180,3 +180,92 @@ def test_options_endpoint(monkeypatch):
     r = client.get("/api/options", params={"account": "datos"})
     assert r.status_code == 200 and r.json() == {"ok": True}
     assert calls["account"] == "datos"
+
+
+# --- AMBIENTE: el switch en las peticiones --------------------------------------
+
+def test_summary_pasa_el_ambiente_al_query_layer(monkeypatch):
+    calls = _stub(monkeypatch, "summary")
+    r = client.get("/api/summary", params={"account": "datos", "ambiente": "agente"})
+    assert r.status_code == 200
+    assert calls["kwargs"]["ambiente"] == "agente"
+
+
+def test_el_ambiente_por_default_es_todos(monkeypatch):
+    # Sin el param, el tablero no esconde nada. El recorte es una decision explicita.
+    calls = _stub(monkeypatch, "summary")
+    client.get("/api/summary", params={"account": "datos"})
+    assert calls["kwargs"]["ambiente"] == "todos"
+
+
+def test_un_ambiente_inventado_es_422_no_un_tablero_entero(monkeypatch):
+    # Degradar un typo a 'todos' mostraria TODAS las audiencias haciendole creer al que
+    # mira que ve una sola. Se rechaza en el borde.
+    _stub(monkeypatch, "summary")
+    r = client.get("/api/summary", params={"account": "datos", "ambiente": "jugadores"})
+    assert r.status_code == 422
+
+
+def test_charts_pasa_el_ambiente_a_los_TRES_cuadros(monkeypatch):
+    vistos = {}
+
+    def fake(name):
+        def f(cur, account, **kwargs):
+            vistos[name] = kwargs
+            return {"ok": True}
+        return f
+
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    for name in ("load_by_operator", "deposit_pct_by_operator", "new_vs_deposit_by_month"):
+        monkeypatch.setattr(appmod.queries, name, fake(name))
+    r = client.get("/api/charts", params={"account": "sistemas", "ambiente": "agente"})
+    assert r.status_code == 200
+    for name in ("load_by_operator", "deposit_pct_by_operator", "new_vs_deposit_by_month"):
+        assert vistos[name]["ambiente"] == "agente", name
+
+
+def test_charts_declara_el_ambiente_que_aplico(monkeypatch):
+    # El origen del numero viaja CON el numero: sin esto el front rotula de memoria.
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    for name in ("load_by_operator", "deposit_pct_by_operator", "new_vs_deposit_by_month"):
+        monkeypatch.setattr(appmod.queries, name, lambda cur, account, **k: {"ok": True})
+    r = client.get("/api/charts", params={"account": "sistemas", "ambiente": "sin_clasificar"})
+    assert r.json()["ambiente"] == "sin_clasificar"
+
+
+def test_charts_default_jugador_conserva_la_conducta_vieja(monkeypatch):
+    vistos = {}
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+
+    def f(cur, account, **kwargs):
+        vistos.update(kwargs)
+        return {"ok": True}
+
+    for name in ("load_by_operator", "deposit_pct_by_operator", "new_vs_deposit_by_month"):
+        monkeypatch.setattr(appmod.queries, name, f)
+    client.get("/api/charts", params={"account": "sistemas"})
+    assert vistos["ambiente"] == "jugador"
+
+
+def test_scores_ahora_acepta_los_filtros(monkeypatch):
+    # Era el unico endpoint de lectura que ignoraba TODO filtro: traia la cuenta entera.
+    # Stub propio: este endpoint declara list[dict], no dict.
+    calls = {}
+
+    def fake(cur, account, **kwargs):
+        calls["account"] = account
+        calls["kwargs"] = kwargs
+        return [{"conversation_id": "c1"}]
+
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    monkeypatch.setattr(appmod.queries, "scored_rows", fake)
+    r = client.get("/api/scores", params={"account": "datos", "ambiente": "agente"})
+    assert r.status_code == 200
+    assert calls["kwargs"]["ambiente"] == "agente"
+
+
+def test_endpoint_de_composicion_de_ambientes(monkeypatch):
+    calls = _stub(monkeypatch, "ambiente_composition")
+    r = client.get("/api/ambientes", params={"account": "sistemas"})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert calls["account"] == "sistemas"
