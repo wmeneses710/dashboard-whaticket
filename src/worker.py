@@ -17,6 +17,7 @@ from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
 from src.redireccion import build_lineas_map
+from src.signals import cliente_abandono_tras_pedido
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
@@ -181,6 +182,9 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None,
             score = score_by_motivo(
                 target_messages=msgs, thread_context="", llm=llm,
                 deposit_hint=deposit_count > 0, verifier=verifier, recommender=recommender,
+                # Cierre del ticket: lo necesita la pregunta de cierre para exigir la espera
+                # de 5 min (regla del negocio). Sin el, el credito se mantiene.
+                cierre_at=sess.get("resolved_at"),
             )
     # rubric queda como el legacy human/bot (satisface chk_rubric); el motivo del LLM
     # se persiste en su propia columna dentro de build_score_record (desde el score).
@@ -190,6 +194,14 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None,
         operator_id=operator_id, operator_name=op_name, deposit_count=deposit_count,
         session_id=sess["session_id"],
     )
+    # EL HECHO DEL ABANDONO VA EN TODAS LAS FILAS, no solo en las del camino LLM.
+    # `score_by_motivo` lo mete en sus `dimensions`, pero las rubricas deterministas
+    # (deposito/retiro/registro/promo/soporte/info/agilidad) devuelven su propio
+    # ScoreResult sin pasar por ahi — el 63,2% de las sesiones. Sin esto el chip del front
+    # aparecia en un tercio de los casos y el que mira no tenia forma de saber por que.
+    if isinstance(record.get("dimensions"), dict):
+        record["dimensions"].setdefault(
+            "cliente_abandono", cliente_abandono_tras_pedido(msgs))
     with conn.cursor() as cur:
         upsert_score(cur, record)
     conn.commit()

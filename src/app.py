@@ -193,11 +193,16 @@ def scores(account: str = Query(..., description="datos | sistemas"),
 
 
 @app.get("/api/options")
-def options(account: str = Query(..., description="datos | sistemas")) -> dict:
-    """Valores de los desplegables de filtros (segmento/canal/operador) de la cuenta.
-    Estable -> el front lo pide una vez por cuenta."""
+def options(account: str = Query(..., description="datos | sistemas"),
+            ambiente: str = Query("todos",
+                                  pattern="^(todos|jugador|agente|sin_clasificar)$")) -> dict:
+    """Valores de los desplegables de filtros (segmento/canal/operador/motivo).
+
+    Recortados por AMBIENTE: en `agente` el motivo es NULL (se califica con agilidad), así
+    que ofrecer los 7 motivos era prometer un filtro que devuelve cero filas sin decir por
+    qué. Estable por cuenta+ambiente -> el front lo pide una vez por combinación."""
     with _conn() as c, c.cursor() as cur:
-        return queries.filter_options(cur, account)
+        return queries.filter_options(cur, account, ambiente=ambiente)
 
 
 @app.get("/api/summary")
@@ -225,9 +230,21 @@ def tickets(account: str = Query(..., description="datos | sistemas"),
 def conversion(account: str = Query(..., description="datos | sistemas"),
                filters: dict = Depends(_filters)) -> dict:
     """Conversión jugador potencial->jugador (agrega player_conversions): ranking por
-    operador + serie mensual. Filtrable por canal/segmento/operador/fecha de entrada."""
+    operador + serie mensual. Filtrable por canal/segmento/operador/fecha de entrada.
+
+    SOLO APLICA a jugadores. `player_conversions` se precomputa con las colas del segmento
+    jugador y guarda `segment='jugador'` fijo, asi que antes del 2026-08-07 este endpoint
+    devolvia los MISMOS datos para cualquier ambiente: apretabas "Agentes" y las tarjetas
+    seguian mostrando jugadores, sin aviso (verificado: hash md5 identico en los tres).
+    Ahora se DECLARA con `aplica` y el front pone el cartel en vez de datos de otra
+    audiencia. Es una metrica que solo existe para una audiencia, no un filtro que falte."""
+    ambiente = filters.get("ambiente", "todos")
+    if not queries.conversion_aplica(ambiente):
+        return {"aplica": False, "ambiente": ambiente,
+                "by_operator": None, "by_month": None, "evolution": None}
     with _conn() as c, c.cursor() as cur:
         return {
+            "aplica": True, "ambiente": ambiente,
             "by_operator": queries.conversion_by_operator(cur, account, **filters),
             "by_month": queries.conversion_by_month(cur, account, **filters),
             "evolution": queries.conversion_passivity_evolution(cur, account, **filters),

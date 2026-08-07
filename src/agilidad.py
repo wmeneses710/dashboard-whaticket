@@ -50,6 +50,9 @@ from src.signals import (
     operator_confirmation,
     operator_sent_media,
 )
+# El horario vive en src/horario.py (fuente unica); se reexporta para no romper
+# los imports existentes de agilidad.
+from src.horario import HORA_ABRE, HORA_CIERRA, espera_efectiva
 
 # Sentinela que va en la columna `llm_model`. No hubo modelo: sirve para poder separar
 # por SQL las filas del path determinista de las del pase con LLM.
@@ -64,8 +67,7 @@ ACEPTABLE = timedelta(minutes=15)  # <= 15 min -> aceptable (3)
 
 # Horario de operacion (inclusive), en hora local de Ecuador. Ver confound 1.
 TZ = ZoneInfo("America/Guayaquil")
-HORA_ABRE = 6
-HORA_CIERRA = 23
+
 
 @dataclass(frozen=True)
 class Turno:

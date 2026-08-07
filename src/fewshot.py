@@ -91,14 +91,42 @@ EJEMPLOS_MOTIVO: tuple[Ejemplo, ...] = (
     ),
 
     # ---- REGISTRO: quiere una cuenta nueva ------------------------------------
+    # OJO: en ESTE negocio el alta NO se hace con un link. El OPERADOR pide los datos en
+    # el chat y devuelve usuario y clave. El negocio lo marco como falso el 2026-08-06 (no
+    # existe codigo de afiliado y el registro lo hace el operador), se saco el fragmento de
+    # coaching que lo repetia — 151 de 624 recomendaciones, el 24,2% — pero este ejemplo
+    # seguia ENSEÑANDO lo contrario, con premio explicito ("mando el link -> accion extra").
+    # Los ejemplos le ganan a las instrucciones: por eso el modelo seguia recomendando un
+    # link inexistente aunque src/prompts.py ya decia como es.
     Ejemplo(
         motivo="registro",
         transcript="CLIENTE: Hola / CLIENTE: Quiero crear una cuenta / "
-                   "OPERADOR: Registrate en Sorti365, link de registro: https://sorti.ec/reg / "
-                   "OPERADOR: cuando te registres me pasas el usuario para ayudarte",
+                   "OPERADOR: Con gusto te la creo. Pasame nombre completo, correo y "
+                   "numero / CLIENTE: Ana Rios ana@mail.com 0991234567 / "
+                   "OPERADOR: Listo, tu usuario es anarios y la clave 12345, cambiala "
+                   "en tu primer ingreso",
         hechos=_h(True, extra=True, claridad="claro", cliente_reinsistio=False),
         porque="pide crear cuenta -> registro (NO info, NO promo aunque el operador "
-               "mencione beneficios). Mando el link concreto -> accion extra",
+               "mencione beneficios). El alta se hace ACA: pidio los datos y entrego "
+               "usuario y clave en el chat -> eso es cerrar el alta, no mandar un link",
+    ),
+    # El caso del ejemplo del negocio (2026-08-07): el operador OFRECIO crear la cuenta y
+    # el cliente no volvio. Hizo lo que podia; lo que falta es explicar COMO sigue el
+    # tramite, no un link. Sin este ejemplo el modelo listaba "no proporciono un link de
+    # registro" como error, que es un reproche por algo que no existe.
+    Ejemplo(
+        motivo="registro",
+        transcript="CLIENTE: Quiero registrarme y recibir mi Bono de $5 / "
+                   "OPERADOR: Trabajo como agente de Sorti365 y por tu primera recarga "
+                   "tengo una Freebet de $5 / "
+                   "OPERADOR: Te creo un usuario para que juegues y te voy explicando? / "
+                   "(el cliente no volvio a escribir)",
+        hechos=_h(True, extra=True, claridad="dudoso", cliente_reinsistio=False),
+        porque="OFRECIO crear la cuenta, que es el empuje concreto de este negocio -> "
+               "atendio el motivo. El alta no se cerro porque el CLIENTE no contesto, no "
+               "por el operador: NO es un error suyo. Lo mejorable es que no explico como "
+               "sigue el tramite ni que datos necesita, y arrancar pidiendo datos "
+               "personales sin aclarar para que son resta confianza -> claridad dudosa",
     ),
 
     # ---- PROBLEMA: la disputa se formula como pregunta -----------------------
@@ -138,10 +166,11 @@ EJEMPLOS_MOTIVO: tuple[Ejemplo, ...] = (
     Ejemplo(
         motivo="info",
         transcript="CLIENTE: cual es el minimo de deposito? / "
-                   "OPERADOR: El minimo es $5. Te dejo el link para registrarte: "
-                   "https://sorti.ec/reg",
+                   "OPERADOR: El minimo es $5. Si queres te abro la cuenta ahora, "
+                   "pasame nombre y correo",
         hechos=_h(True, extra=True, claridad="claro", cliente_reinsistio=False),
-        porque="responde lo puntual ($5) + proximo paso explicito (link) -> claridad=claro",
+        porque="responde lo puntual ($5) + proximo paso CONCRETO y del mecanismo real "
+               "(ofrece abrir la cuenta y pide los datos) -> claridad=claro",
     ),
 
     # ---- PROMO: no atendio, y la deflexion generica --------------------------

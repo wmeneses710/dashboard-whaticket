@@ -35,7 +35,11 @@ from datetime import timedelta
 
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
-from src.signals import _is_operator, operator_asked_anything_else, tiene_reloj
+from src.signals import _is_operator, operator_asked_and_waited, tiene_reloj
+# La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
+# deficientes eran clientes que escribieron de madrugada y operadores que contestaron
+# ni bien abrio el turno. La noche no es una demora del operador.
+from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/info-v1"
 
@@ -63,7 +67,7 @@ _COACHING = {
 _COACHING_1 = "El cliente preguntó y nadie le respondió."
 
 
-def calificar_info(messages: list[dict]) -> Info | None:
+def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:
     """Nota determinista de la sesion. None si no hay reloj para medirla."""
     if not tiene_reloj(messages):
         return None
@@ -78,8 +82,8 @@ def calificar_info(messages: list[dict]) -> Info | None:
     respuesta = next(
         (m for m in reales
          if _is_operator(m) and m["created_at"] >= planteo["created_at"]), None)
-    espera = respuesta["created_at"] - planteo["created_at"] if respuesta else None
-    algo_mas = operator_asked_anything_else(reales)
+    espera = espera_efectiva(planteo["created_at"], respuesta["created_at"]) if respuesta else None
+    algo_mas = operator_asked_and_waited(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:
         return formato_espera(None if td is None else td.total_seconds())
@@ -106,9 +110,9 @@ def calificar_info(messages: list[dict]) -> Info | None:
                 espera, False)
 
 
-def score_info(messages: list[dict]) -> ScoreResult | None:
+def score_info(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM."""
-    i = calificar_info(messages)
+    i = calificar_info(messages, cierre_at)
     if i is None:
         return None
     return ScoreResult(

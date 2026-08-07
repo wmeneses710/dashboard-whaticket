@@ -352,7 +352,8 @@ def test_recomendacion_se_augmenta_con_fragmento_determinista():
     r = score_by_motivo(target_messages=msgs, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="soporte_cuenta")))
     assert "cambie la contraseña" in r.recomendacion
-    assert r.recomendacion.endswith("podrias invitar a un deposito")
+    # el consejo del modelo lidera; el fragmento determinista queda de apendice
+    assert r.recomendacion.startswith("podrias invitar a un deposito")
 
 
 # --- validacion de salida -------------------------------------------------
@@ -457,12 +458,23 @@ def test_pasa_deposit_hint_al_prompt():
 # --- Modulador claridad + fricción (v3) -----------------------------------
 
 # Cliente reinsiste sin respuesta y el agente NO resuelve (deflexión) -> fricción.
+# Con RELOJES: desde el 2026-08-07 la friccion exige silencio real del negocio (>=5 min),
+# porque medido el 50,6% de los disparos eran 4+ mensajes del cliente en menos de un minuto.
+_RB = __import__("datetime").datetime(2026, 3, 10, 20, 0,
+                                      tzinfo=__import__("datetime").timezone.utc)
+
+
+def _reask_msg(body, seg, from_me=False):
+    return {"created_at": _RB + __import__("datetime").timedelta(seconds=seg),
+            "from_me": from_me, "is_note": False, "body": body}
+
+
 REASK = [
-    {"from_me": False, "is_note": False, "body": "hice un deposito"},
-    {"from_me": False, "is_note": False, "body": "ayuda"},
-    {"from_me": False, "is_note": False, "body": "?"},
-    {"from_me": False, "is_note": False, "body": "?"},
-    {"from_me": True, "is_note": False, "body": "comuníquese con su agente al 099"},
+    _reask_msg("hice un deposito", 0),
+    _reask_msg("ayuda", 400),
+    _reask_msg("?", 600),
+    _reask_msg("?", 800),
+    _reask_msg("comuníquese con su agente al 099", 900, from_me=True),
 ]
 
 
@@ -533,3 +545,100 @@ def test_score_expone_aciertos_y_claridad():
     claves = [a["clave"] for a in r.aciertos]
     assert "iniciativa" in claves and "cortesia" in claves
     assert r.claridad in ("claro", "confuso", "dudoso")
+
+
+# --- el ABANDONO del cliente no es un error del operador -------------------------
+# Correccion del 2026-08-07 tras un caso que trajo el negocio: el operador ofrecio crear
+# la cuenta ("¿Te creo un usuario?") y el cliente no volvio. El sistema listaba como
+# errores "no se creo el usuario" y "no se proporciono un link de registro" — el primero
+# dependia de una respuesta que nunca llego, el segundo es un mecanismo que en este
+# negocio NO EXISTE (el alta la hace el operador pidiendo los datos en el chat).
+
+_ABANDONO = [
+    {"from_me": False, "is_note": False, "body": "Quiero registrarme y recibir mi Bono de $5"},
+    {"from_me": True, "is_note": False, "body": "Trabajo como agente de Sorti365 y por tu "
+                                                "primera recarga tengo una Freebet de $5"},
+    {"from_me": True, "is_note": False, "body": "¿Te creo un usuario para que juegues?"},
+]
+
+
+def test_el_techo_de_registro_NO_castiga_cuando_el_cliente_abandono():
+    # Mismo caso que test_registro_sin_transaccion_no_llega_a_excelente, pero acá el alta
+    # no se cerró porque el CLIENTE se fue. El operador hizo lo que podía.
+    r = score_by_motivo(target_messages=_ABANDONO, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="registro", hizo_accion_extra=True,
+                                                 cortesia_destacada=True)))
+    assert r.rating_label == "excelente" and r.stars == 5
+
+
+def test_el_techo_sigue_aplicando_si_NO_hubo_abandono():
+    # Sin pedido pendiente, el techo de la mañana sigue vivo (el operador se zafó).
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="registro", hizo_accion_extra=True,
+                                                 cortesia_destacada=True)))
+    assert r.rating_label == "buena" and r.stars == 4
+
+
+def test_el_modelo_RECIBE_el_hecho_del_abandono():
+    # Lo que de verdad importa: que el juicio lo haga el modelo con la info completa.
+    llm = FakeLLM(_motivo_resp(motivo="registro"))
+    score_by_motivo(target_messages=_ABANDONO, thread_context="", llm=llm)
+    system = llm.calls[0][0]
+    assert "NO VOLVIO A ESCRIBIR" in system
+    assert "RECOMENDACION" in system
+
+
+def test_sin_abandono_el_hint_no_se_manda():
+    llm = FakeLLM(_motivo_resp(motivo="deposito"))
+    score_by_motivo(target_messages=MSGS, thread_context="", llm=llm)
+    assert "NO VOLVIO A ESCRIBIR" not in llm.calls[0][0]
+
+
+# --- un 5 no convive con un error detectado ---------------------------------------
+# MEDIDO el 2026-08-07 sobre 769 sesiones con 5 estrellas: las 612 deterministas salen
+# limpias por construccion (no emiten `errores`), pero de las 157 del camino LLM **33 (21%)
+# listaban errores al lado de la nota maxima** — "no se aclaro por que los giros aun no se
+# activaban" con 5 estrellas. Y 157/157 traian recomendacion, cuando el contrato dice que
+# en excelente va vacia.
+# DECISION DEL NEGOCIO: manda el TEXTO, no la nota. Si el modelo detecto algo que faltó, la
+# sesion no fue el mejor escenario -> topa en `buena`. Lo contrario (borrar los errores para
+# salvar el 5) escondia informacion real.
+
+def test_un_error_detectado_impide_el_excelente():
+    r = score_by_motivo(
+        target_messages=PUSH, thread_context="",
+        llm=FakeLLM(_motivo_resp(motivo="deposito", hizo_accion_extra=True,
+                                 cortesia_destacada=True,
+                                 dimensions={"resolucion": "acredito", "iniciativa": "ofrecio",
+                                             "cortesia": "cordial",
+                                             "errores": ["No aclaró por qué los giros no se activaban"]})))
+    assert r.rating_label == "buena" and r.stars == 4
+    assert r.floor_applied is True
+
+
+def test_sin_errores_el_excelente_sobrevive():
+    r = score_by_motivo(
+        target_messages=PUSH, thread_context="",
+        llm=FakeLLM(_motivo_resp(motivo="deposito", hizo_accion_extra=True,
+                                 cortesia_destacada=True)))
+    assert r.rating_label == "excelente" and r.stars == 5
+
+
+def test_una_lista_de_errores_VACIA_no_capea():
+    r = score_by_motivo(
+        target_messages=PUSH, thread_context="",
+        llm=FakeLLM(_motivo_resp(motivo="deposito", hizo_accion_extra=True,
+                                 cortesia_destacada=True,
+                                 dimensions={"resolucion": "ok", "iniciativa": "ok",
+                                             "cortesia": "ok", "errores": ["", "   "]})))
+    assert r.rating_label == "excelente"
+
+
+def test_el_cap_no_sube_una_nota_baja():
+    # Solo BAJA el excelente; un deficiente con errores queda como estaba.
+    r = score_by_motivo(
+        target_messages=NEUTRAL, thread_context="",
+        llm=FakeLLM(_motivo_resp(motivo="deposito", atendio_el_motivo=False,
+                                 dimensions={"resolucion": "no atendio", "iniciativa": "-",
+                                             "cortesia": "-", "errores": ["no respondio"]})))
+    assert r.rating_label == "deficiente"

@@ -74,8 +74,9 @@
      fila 1 = los 7 selects (1 columna cada uno) · fila 2 = rango de fechas (3) +
      búsqueda (3) + limpiar (1) = 7. Dos filas prolijas, mismas posiciones siempre.
      Si se agrega un control hay que recontar: la suma de cada fila tiene que dar 7. */
-  .filters { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:12px; align-items:end; margin-bottom:12px; }
-  @media (max-width:1240px){ .filters{ grid-template-columns:repeat(4,minmax(0,1fr)); } }
+  /* auto-fit y no un numero fijo de columnas: el sub-filtro de "Otros" aparece y desaparece
+     segun el ambiente, y con 7 columnas fijas eso dejaba un hueco visible en la fila. */
+  .filters { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; align-items:end; margin-bottom:12px; }
   @media (max-width:900px){ .filters{ grid-template-columns:repeat(2,minmax(0,1fr)); } }
   .filters > div { display:flex; flex-direction:column; gap:5px; min-width:0; }
   .filters select { width:100%; }
@@ -318,6 +319,48 @@
   @keyframes shimmer { 100% { transform:translateX(100%); } }
   .skel-bars .skel { height:16px; margin:11px 0; }
   .skel-rows .skel { height:64px; margin-bottom:11px; border-radius:var(--radius); }
+
+/* Ayuda de etiquetas: aparece solo cuando se pide, con el mismo lenguaje visual del
+   resto (borde suave, sin sombras nuevas). Dos columnas en pantalla ancha para que se
+   lea de un barrido y no como un muro de texto. */
+.ayuda-panel{margin:0 auto 14px;max-width:1400px;padding:12px 14px;border:1px solid var(--border);
+  border-radius:12px;background:var(--card)}
+.ayuda-panel .ap-head{display:flex;justify-content:space-between;align-items:center;
+  font-weight:700;font-size:13px;margin-bottom:10px}
+.ayuda-panel .ap-x{background:none;border:none;color:var(--faint);cursor:pointer;font-size:14px}
+.ayuda-panel .ap-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:8px 18px}
+.ayuda-panel .ap-item{font-size:12.5px;line-height:1.45}
+.ayuda-panel .ap-item b{display:block;color:var(--accent);font-size:12px;margin-bottom:1px}
+.ayuda-panel .ap-item span{color:var(--faint)}
+
+/* Hora del mensaje: discreta, al lado del autor. No compite con el texto. */
+.bub .au .hora{margin-left:8px;font-weight:500;color:var(--faint);font-variant-numeric:tabular-nums;font-size:10.5px}
+/* Sobre el fondo ACENTUADO (operador y bot) el gris de --faint no se lee. Se hereda el
+   color del texto de la burbuja con opacidad, asi funciona en los dos temas sin fijar un
+   color: el blanco al 75% se lee sobre el azul y no compite con el mensaje. */
+.bub.age .au .hora, .bub.bot .au .hora{color:currentColor;opacity:.75}
+/* El salto va como separador centrado: es lo que pasó ENTRE dos mensajes. */
+.gap{display:flex;align-items:center;justify-content:center;gap:6px;margin:8px 0;
+  font-size:11px;color:var(--r-aceptable);font-weight:600}
+.gap::before,.gap::after{content:"";height:1px;flex:1;background:var(--border)}
+/* Ayuda contextual dentro del modal: mismo lenguaje que el panel del header, mas compacta. */
+.ap-mini{margin-left:2px;width:18px;height:18px;border-radius:50%;border:1px solid var(--border);
+  background:transparent;color:var(--faint);font-size:11px;line-height:1;cursor:pointer}
+.ayuda-inline{margin:0 0 10px;padding:8px 10px;border:1px dashed var(--border);border-radius:10px;
+  display:grid;gap:6px}
+.ayuda-inline .ap-item{font-size:12px;line-height:1.4}
+.ayuda-inline .ap-item b{display:block;color:var(--accent);font-size:11.5px}
+.ayuda-inline .ap-item span{color:var(--faint)}
+/* El switch de ambiente comparte el look del selector de cuenta, con acento propio para
+   que se lea como una decision de contexto y no como un filtro mas. */
+.acct.amb button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
+/* Cartel de "esta tarjeta no aplica": informativo, no de error. Ocupa poco y solo aparece
+   cuando el ambiente elegido no es compatible con la metrica. */
+.no-aplica{margin:0 auto 12px;max-width:1400px;padding:9px 12px;border-radius:10px;font-size:12.5px;
+  color:var(--faint);background:color-mix(in srgb, var(--faint) 8%, transparent);
+  border:1px dashed var(--border)}
+/* Chip de ORIGEN: neutro, es procedencia y no una calificacion. */
+.chip.origen{background:color-mix(in srgb, var(--faint) 12%, transparent);color:var(--faint);font-weight:600}
 </style>
 <style>
 .tiempos{margin:10px 0;padding:9px 11px;border:1px solid var(--line);border-radius:8px}
@@ -328,6 +371,12 @@
 .hechos .ok-chip{background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)}
 .hechos .falta-chip{background:color-mix(in srgb, var(--r-deficiente) 12%, transparent);color:var(--r-deficiente)}
 .conv .t-chip{background:color-mix(in srgb, var(--faint) 14%, transparent);color:var(--faint);font-variant-numeric:tabular-nums}
+/* Contexto, no nota: mismo peso visual que el reloj para que no compita con la estrella. */
+.conv .ab-chip{background:transparent;color:var(--faint);border:1px dashed var(--border);font-weight:500}
+
+
+
+
 </style>
 </head>
 <body>
@@ -336,6 +385,13 @@
     <div class="brand"><div class="dot">✦</div>
       <div><h1>Calidad de atención</h1><div class="sub">Sorti · cómo atendemos a cada cliente que se contacta</div></div></div>
     <div class="head-ctl">
+      <!-- AMBIENTE: el switch grueso. Va en el header, al lado de la cuenta, porque manda
+           sobre TODO lo que se ve abajo (KPIs, lista, cuadros) — no es un filtro más. -->
+      <div class="acct amb" role="group" aria-label="Ambiente">
+        <button v-for="a in AMBIENTES" :key="a.k" type="button"
+                :aria-pressed="a.k===filters.ambiente" :title="a.tip"
+                @click="setAmbiente(a.k)">{{ a.lbl }}</button>
+      </div>
       <div class="acct" role="group" aria-label="Cuenta">
         <button v-for="a in accounts" :key="a.account" type="button"
                 :aria-pressed="a.account===account" @click="switchAccount(a.account)">
@@ -349,18 +405,49 @@
         ↻ Actualizar</button>
       <button class="toggle" type="button" @click="openOps"
               title="Prender o apagar operadores de esta cuenta (baja lógica: no borra nada)">Operadores</button>
+      <!-- Los tooltips no se descubren solos y en touch no existen. Esta ayuda hace
+           visible el vocabulario del tablero sin ocupar lugar hasta que se pide. -->
+      <button class="toggle" type="button" :aria-pressed="ayudaAbierta" @click="ayudaAbierta=!ayudaAbierta"
+              title="Qué significa cada etiqueta del tablero">? Etiquetas</button>
       <button class="toggle" type="button" @click="toggleTheme">Tema</button>
     </div>
   </header>
+
+  <div class="ayuda-panel" v-if="ayudaAbierta">
+    <div class="ap-head">Qué significa cada etiqueta
+      <button type="button" class="ap-x" @click="ayudaAbierta=false" aria-label="Cerrar">✕</button></div>
+    <div class="ap-grid">
+      <div class="ap-item" v-for="(txt,k) in AYUDA" :key="k">
+        <b>{{ AYUDA_TITULO[k]||k }}</b><span>{{ txt }}</span></div>
+    </div>
+  </div>
+
+  <!-- La conversion existe SOLO para jugadores (player_conversions se precomputa con las
+       colas jugador). Antes devolvia datos de jugador en cualquier ambiente sin decirlo:
+       apretabas "Agentes" y seguias viendo jugadores. Ahora se declara. -->
+  <div class="no-aplica" v-if="conversion && conversion.aplica === false">
+    ⓘ Las tarjetas de <b>conversión</b> no aplican a <b>{{ ambienteLbl }}</b>: miden el paso de
+    jugador potencial a jugador, y solo existen para jugadores. Cambiá el ambiente a
+    <b>Jugadores</b> para verlas.
+  </div>
 
   <div class="snapshot" v-html="snapText"></div>
 
   <div class="filters">
     <div><label>Estado</label>
       <select v-model="filters.estado" :class="{on: filters.estado!=='all'}"><option value="all">Todas</option><option value="evaluated">Evaluadas</option><option value="skipped">Sin evaluar</option></select></div>
-    <div><label>Segmento</label>
-      <select v-model="filters.segment" :class="{on: filters.segment!=='all'}"><option value="all">Todos</option>
-        <option v-for="s in options.segments" :key="s" :value="s">{{ SEGMENT_LABEL[s]||cap(s) }}</option></select></div>
+    <!-- El filtro de segmento salio de la barra general: para Jugadores, Agentes y Todos el
+         switch de ambiente hace exactamente lo mismo y mejor. Sobrevive SOLO dentro de
+         "Otros", que junta 4 segmentos y esta dominado por la cola sin asignar (21.548 de
+         22.415 = 96,1%): sin esto, `marketing` (849) queda invisible adentro y no hay forma
+         de aislar `interno` para triajarlo. Aparece en contexto, no ocupa lugar el resto
+         del tiempo. -->
+    <div v-if="filters.ambiente==='sin_clasificar'"><label>Qué es «Otros»</label>
+      <select v-model="filters.segment" :class="{on: filters.segment!=='all'}"
+              title="«Otros» junta cola sin asignar, marketing y lo no reconocido. Acá se separan.">
+        <option value="all">Todo lo no clasificado</option>
+        <option v-for="s in options.segments.filter(x => !['jugador','agente'].includes(x))"
+                :key="s" :value="s">{{ SEGMENT_LABEL[s]||cap(s) }}</option></select></div>
     <div><label>Canal</label>
       <select v-model="filters.canal" :class="{on: filters.canal!=='all'}"><option value="all">Todos</option>
         <option v-for="c in options.channels" :key="c" :value="c">{{ c }}</option></select></div>
@@ -620,10 +707,13 @@
                    poder barrer las lentas sin abrir una por una. -->
               <span class="chip t-chip" v-if="cv.first_response_seconds!=null"
                     :title="'Tardó '+fmtDur(cv.first_response_seconds)+' en la primera respuesta'">⏱ {{ fmtDur(cv.first_response_seconds) }}</span>
-              <span class="chip" v-if="cv.eval_status==='evaluated' && cv.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[cv.motivo]||cv.motivo }}</span>
-              <span class="chip at" :class="'at-'+cv.atencion" v-if="cv.eval_status==='evaluated' && cv.atencion">{{ ATENCION_LABEL[cv.atencion]||cv.atencion }}</span>
-              <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
-              <span class="chip skip" v-else>sin evaluar</span>
+              <span class="chip" v-if="cv.eval_status==='evaluated' && cv.motivo" :title="AYUDA.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[cv.motivo]||cv.motivo }}</span>
+              <span class="chip at" :class="'at-'+cv.atencion" v-if="cv.eval_status==='evaluated' && cv.atencion" :title="AYUDA[cv.atencion]">{{ ATENCION_LABEL[cv.atencion]||cv.atencion }}</span>
+              <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)" :title="AYUDA.estrella"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
+              <span class="chip skip" v-else :title="AYUDA.sin_evaluar">sin evaluar</span>
+              <!-- Compacto a proposito: es un dato de CONTEXTO, no una nota. Un chip entero
+                   por sesion sobrecargaria la fila, y pasa en 1 de cada 4. -->
+              <span class="chip ab-chip" v-if="cv.cliente_abandono" :title="AYUDA.abandono">↩ no contestó</span>
             </span>
           </div>
         </div>
@@ -645,20 +735,34 @@
           <div v-if="modal.loading" class="loading">Cargando conversación…</div>
           <div v-else-if="!modal.detail" class="loading">No se pudo cargar.</div>
           <div v-else>
-            <div class="bub" v-for="(m,i) in (modal.detail.transcript||[])" :key="i" :class="bubClass(m.role)">
-              <div class="au">{{ bubAuthor(m) }}</div>{{ bubText(m) || '' }}<i v-if="!bubText(m)">[multimedia]</i>
-            </div>
+            <template v-for="(m,i) in (modal.detail.transcript||[])" :key="i">
+              <!-- El SALTO se muestra como separador y no como dato en la burbuja: la demora
+                   es lo que pasa ENTRE dos mensajes, no una propiedad de uno. Umbral 5 min,
+                   el mismo que usa la friccion. -->
+              <div class="gap" v-if="bubGap(modal.detail.transcript, i)">
+                ⏳ {{ bubGap(modal.detail.transcript, i) }} sin respuesta</div>
+              <div class="bub" :class="bubClass(m.role)">
+                <div class="au">{{ bubAuthor(m) }}<span class="hora" v-if="m.at">{{ horaEc(m.at) }}</span></div>{{ bubText(m) || '' }}<i v-if="!bubText(m)">[multimedia]</i>
+              </div>
+            </template>
             <div v-if="!(modal.detail.transcript||[]).length" style="color:var(--faint)">Sin mensajes.</div>
           </div>
         </div>
         <div class="pane"><h3>Análisis del modelo</h3>
           <div v-if="modal.detail && (modal.detail.motivo || modal.detail.deposit_count>0 || modal.detail.conversion_returned || fastClose(modal.detail))"
                style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap">
-            <span class="chip" v-if="modal.detail.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
+            <span class="chip" v-if="modal.detail.motivo" :title="AYUDA.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[modal.detail.motivo]||modal.detail.motivo }}</span>
             <span class="chip deposit" v-if="modal.detail.deposit_count>0"
                   :title="'El cliente mandó '+modal.detail.deposit_count+' comprobante(s) de recarga en esta conversación. Se detecta por la imagen del cliente más el contexto de recarga, sin intervención del modelo.'">El cliente recargó<span v-if="modal.detail.deposit_count>1"> ×{{ modal.detail.deposit_count }}</span></span>
             <span class="chip player" v-if="modal.detail.conversion_returned"
                   title="Era la primera vez que esta persona escribía, y volvió a hacerlo en otra ocasión. Es la señal de que el contacto no se perdió.">Volvió después de este chat</span>
+            <!-- ORIGEN: de donde viene esta conversacion. Imprescindible en "Otros", que
+                 junta 4 segmentos y es 96,1% cola sin asignar: sin esto no se puede
+                 distinguir marketing de la cola vacia, que es lo que hay que triajar. -->
+            <span class="chip origen" v-if="modal.detail.segment"
+                  :title="'Origen: cola «'+(modal.detail.queue_name||'sin asignar')+'» → segmento '+(SEGMENT_LABEL[modal.detail.segment]||modal.detail.segment)+'. La cola es lo que trae el ETL; el segmento lo deduce el sistema a partir de ella.'">
+              {{ SEGMENT_LABEL[modal.detail.segment]||modal.detail.segment }}
+              <span style="opacity:.65"> · {{ modal.detail.queue_name || 'sin cola' }}</span></span>
             <span class="chip fast" v-if="fastClose(modal.detail)" title="Duró menos de 10 minutos y quedó con nota baja. No es una falta en sí: es un caso para mirar, porque puede haberse cerrado antes de resolver.">⏱ Chat corto: {{ Math.round(modal.detail.session_seconds/60) }} min</span>
           </div>
           <div v-if="modal.detail && modal.detail.pending">
@@ -670,13 +774,28 @@
           </div>
           <div v-else-if="modal.detail">
             <div style="margin-bottom:12px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-              <span class="chip" :style="chipStyle(modal.detail)"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span>
-              <span class="chip at" :class="'at-'+modal.detail.atencion" v-if="modal.detail.atencion">{{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion }}</span>
+              <span class="chip" :style="chipStyle(modal.detail)" :title="AYUDA.estrella"><span class="st">{{ modal.detail.stars }}★</span>{{ modal.detail.rating_label }}</span>
+              <span class="chip at" :class="'at-'+modal.detail.atencion" v-if="modal.detail.atencion" :title="AYUDA[modal.detail.atencion]">{{ ATENCION_LABEL[modal.detail.atencion]||modal.detail.atencion }}</span>
               <span class="chip" v-if="modal.detail.deposit_mismatch" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
                     title="El comprobante está en el chat pero el modelo no lo vio (o al revés). Sirve para auditar al modelo; la nota se calcula con el dato duro, no con su observación.">revisar: el modelo y el comprobante no coinciden</span>
-              <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='claro'" style="background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)">claro</span>
-              <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='confuso'" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">poco claro</span>
-              <span class="chip" v-if="dimReinsistio(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">el cliente reinsistió</span>
+              <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='claro'" :title="AYUDA.claro" style="background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)">claro</span>
+              <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='confuso'" :title="AYUDA.confuso" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">poco claro</span>
+              <span class="chip" v-if="dimReinsistio(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)"
+                    :title="AYUDA.reinsistio">el cliente reinsistió</span>
+              <span class="chip" v-if="dimAbandono(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
+                    :title="AYUDA.abandono">el cliente no contestó más</span>
+              <button type="button" class="ap-mini" @click="ayudaModal=!ayudaModal"
+                      :title="'Qué significan estas etiquetas'">?</button>
+            </div>
+            <!-- La ayuda del header quedaba lejos de donde se usan los tags. Esta muestra
+                 SOLO los presentes en esta sesión, al lado de ellos. -->
+            <!-- OJO: el `?` va DENTRO de la fila de chips. Cuando lo puse afuera quedo un
+                 </div> de mas que cerraba el v-else-if="modal.detail" antes de tiempo, y el
+                 rating_rationale se renderizaba con detail en null -> el front no montaba. -->
+
+            <div class="ayuda-inline" v-if="ayudaModal">
+              <div class="ap-item" v-for="k in tagsDeLaSesion(modal.detail)" :key="k">
+                <b>{{ AYUDA_TITULO[k]||k }}</b><span>{{ AYUDA[k] }}</span></div>
             </div>
             <div class="why">{{ modal.detail.rating_rationale }}</div>
 
@@ -801,7 +920,11 @@
   </div>
 </div>
 
-<style>[v-cloak]{display:none}</style>
+<style>[v-cloak]{display:none}
+
+
+
+</style>
 <script src="/vendor/chart.umd.js"></script>
 <script src="/vendor/vue.global.prod.js"></script>
 <script>
@@ -892,6 +1015,53 @@ const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
 
+// ---- AYUDA DE LOS TAGS ------------------------------------------------------
+// Auditados el 2026-08-07: de 20 chips del tablero, solo 3 tenían explicación. El resto
+// quedaba "al aire": el que mira ve "empujó" o "poco claro" y no tiene forma de saber qué
+// significa ni de dónde salió. Las explicaciones van TODAS acá y no como strings sueltos
+// en el markup, para que se puedan revisar juntas y no se dupliquen con distinta redacción.
+// Regla de redacción: decir qué se midió y con qué, en lenguaje de quien NO escribió el
+// código. Sin nombres de función, sin nombres de columna.
+// Como se llama cada etiqueta en pantalla (la clave del mapa es interna).
+// Los cuatro AMBIENTES del tablero (ver src/segments.py). "Otros" es `sin_clasificar`:
+// la cola vacía, marketing y lo no reconocido. Se muestra en vez de esconderse, porque son
+// 22.413 conversaciones con 6.932 comprobantes de depósito: fundirlas en agentes les
+// atribuiría esos depósitos, y esconderlas dejaría el total sin cerrar.
+// Como se llama al del OTRO LADO del chat, segun el ambiente. "Cliente" solo es correcto
+// para jugadores: el agente es un revendedor (un cliente nuestro, pero no el jugador), y en
+// "Otros" no sabemos quien es. Decir "cliente" en los tres era decir algo falso en dos.
+const CONTRAPARTE = {
+  todos:          { uno:"Contraparte", varios:"Contrapartes" },
+  jugador:        { uno:"Cliente",     varios:"Clientes" },
+  agente:         { uno:"Agente",      varios:"Agentes" },
+  sin_clasificar: { uno:"Contacto",    varios:"Contactos" },
+};
+const AMBIENTES = [
+  { k:"todos",          lbl:"Todos",    tip:"Todas las audiencias juntas. Sirve para el total, no para comparar." },
+  { k:"jugador",        lbl:"Jugadores",tip:"El usuario final que apuesta." },
+  { k:"agente",         lbl:"Agentes",  tip:"El vendedor/afiliador que opera una caja. Es un CLIENTE nuestro, no personal: carrea el 71,7% de los comprobantes de depósito." },
+  { k:"sin_clasificar", lbl:"Otros",    tip:"Cola vacía, marketing y lo no reconocido. Se muestra aparte porque todavía no sabemos qué es." },
+];
+const AYUDA_TITULO = {
+  motivo:"Motivo", estrella:"La estrella", empujo:"empujó", pasivo:"pasivo",
+  no_respondio:"no respondió", claro:"claro", confuso:"poco claro",
+  reinsistio:"el cliente reinsistió", abandono:"el cliente no contestó más",
+  sin_evaluar:"sin evaluar", reloj:"⏱ el reloj", convirtio:"volvió después",
+};
+const AYUDA = {
+  motivo:      "De qué se trató la conversación, según el modelo. Define con qué vara se mide: un depósito y un reclamo no se evalúan igual.",
+  estrella:    "Nota de 1 a 5, ESTIMADA a partir de la conversación. No es una encuesta al cliente ni un dato de la plataforma.",
+  empujo:      "El operador impulsó algo concreto: ofreció crear la cuenta, invitó a recargar o presentó un bono atado a una recarga.",
+  pasivo:      "El operador respondió lo que se le pidió y nada más. No es una falta: es la ausencia de impulso comercial.",
+  no_respondio:"No hubo respuesta del negocio a lo que el cliente planteó.",
+  claro:       "El cliente no tuvo que adivinar: la respuesta se entendía sola.",
+  confuso:     "La respuesta dejó al cliente teniendo que inferir. Solo baja la nota si además el cliente reinsistió o el operador no resolvió.",
+  reinsistio:  "El cliente insistió y el negocio estuvo callado al menos 5 minutos. Una ráfaga de mensajes seguidos NO cuenta: si nadie tuvo tiempo de contestar, no fue ignorado.",
+  abandono:    "El operador pidió u ofreció algo concreto y el cliente no volvió a escribir. El trámite quedó abierto por el cliente, no por el operador: lo que dependía de esa respuesta no cuenta como error.",
+  sin_evaluar: "Esta sesión no lleva nota. Queda registrada para que la cobertura sea visible, sin ensuciar los promedios.",
+  reloj:       "Cuánto tardó la primera respuesta del negocio desde que el cliente escribió.",
+  convirtio:   "Esta persona escribía por primera vez y después volvió a interactuar. Es la señal de que el contacto no se perdió.",
+};
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
 const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", sin_motivo:"Sin motivo" };
@@ -914,7 +1084,10 @@ const FILTER_DEFAULTS = { estado:"all", segment:"all", canal:"all", op:"all", mo
                           sort:"new", from:"", to:"", search:"", rating:"all",
                           // Baja lógica de operadores: por default los apagados no se ven.
                           // "incluir" los trae de vuelta — nunca se borró nada.
-                          inactivos:"ocultar" };
+                          inactivos:"ocultar",
+                          // AMBIENTE: el switch grueso. Default "todos" — no se esconde nada
+                          // sin que alguien lo pida (mismo criterio que el backend).
+                          ambiente:"todos" };
 const cap = s => s ? s[0].toUpperCase()+s.slice(1) : s;
 const ESTADO_LABEL = { evaluated:"Evaluadas", skipped:"Sin evaluar" };
 // Cómo se rotula cada filtro en los chips de "Filtros activos". `sort` NO está a
@@ -964,7 +1137,13 @@ createApp({
     // (condición de carrera al tipear filtros). Cada fetch descarta si ya no es el último.
     const seqs = { summary:0, tickets:0, conversion:0 };
     const openKeys = reactive(new Set());
-    const updating = ref(false);
+    const updating = ref(false)
+    const ayudaAbierta = ref(false);
+    const ayudaModal = ref(false);
+    // Palabras que cambian con el ambiente. "Cliente" solo aplica a jugadores.
+    const contraparte = computed(() => CONTRAPARTE[filters.ambiente] || CONTRAPARTE.todos);
+    const ambienteLbl = computed(() =>
+      (AMBIENTES.find(a => a.k === filters.ambiente) || {}).lbl || filters.ambiente);
     // Cuántos mini-gráficos se muestran cuando la tarjeta está PLEGADA.
     const OPS_CAP = 8;
     const expand = reactive({ qual:true, convPasv:true, qualMotivo:false });
@@ -995,6 +1174,7 @@ createApp({
       if (filters.op!=="all") p.set("op", filters.op);
       if (filters.motivo!=="all") p.set("motivo", filters.motivo);
       if (filters.inactivos!=="ocultar") p.set("inactivos", filters.inactivos);
+      if (filters.ambiente!=="todos") p.set("ambiente", filters.ambiente);
       if (filters.rating!=="all") p.set("rating", filters.rating);
       if (filters.from) p.set("from", filters.from);
       if (filters.to) p.set("to", filters.to);
@@ -1040,20 +1220,24 @@ createApp({
       finally { if (seq === seqs.tickets) loadingTickets.value = false; }
     }
     async function fetchOptions() {
-      try { const d = await fetchJSON("/api/options?account=" + encodeURIComponent(account.value)); Object.assign(options, d); }
+      try { const d = await fetchJSON("/api/options?account=" + encodeURIComponent(account.value) + "&ambiente=" + encodeURIComponent(filters.ambiente)); Object.assign(options, d); }
       catch(e) {}
     }
     async function loadCharts() {
       // La caché se keyea por cuenta Y por `inactivos`: /api/charts ignora todos los
       // filtros MENOS ese, así que sin incluirlo en la clave, cambiar Equipo servía datos
       // viejos con los operadores apagados todavía dibujados.
-      const acc = account.value, key = acc + "|" + filters.inactivos, c = chartsCache[key];
+      // El ambiente entra en la clave: /api/charts SI lo respeta desde el 2026-08-07, y sin
+      // esto cambiar de Jugadores a Agentes servía los cuadros del anterior desde la caché.
+      const acc = account.value, key = acc + "|" + filters.inactivos + "|" + filters.ambiente,
+            c = chartsCache[key];
       if (c && (Date.now()-c.ts < CHARTS_TTL)) { charts.value = c.data; chartsStatus.value=null; await nextTick(); renderCharts(); return; }
       if (chartsInFlight === key) return;
       chartsInFlight = key; chartsStatus.value = {kind:"loading", msg:"Cargando cuadros…"};
       try {
         const d = await fetchJSON("/api/charts?account=" + encodeURIComponent(acc)
-                                  + (filters.inactivos!=="ocultar" ? "&inactivos=" + filters.inactivos : ""));
+                                  + (filters.inactivos!=="ocultar" ? "&inactivos=" + filters.inactivos : "")
+                                  + "&ambiente=" + encodeURIComponent(filters.ambiente));
         chartsCache[key] = { data:d, ts:Date.now() };
         if (acc === account.value) { charts.value = d; chartsStatus.value=null; await nextTick(); renderCharts(); }
       } catch(e) { if (acc === account.value) chartsStatus.value = {kind:"error", msg:"No se pudieron cargar los cuadros. Probá con Actualizar."}; }
@@ -1338,11 +1522,41 @@ createApp({
 
     // modal helpers
     function bubClass(role) { return role==="CLIENTE"?"cli":role==="BOT"?"bot":"age"; }
+    // Hora del mensaje en HORA DE ECUADOR. El dato llega en ISO/UTC; formatearlo acá evita
+    // que el navegador de quien mira (otra zona) muestre una hora que no es la de la operación.
+    const _HORA_EC = new Intl.DateTimeFormat("es-EC", {
+      hour: "2-digit", minute: "2-digit", timeZone: "America/Guayaquil", hour12: false });
+    function horaEc(iso) { try { return _HORA_EC.format(new Date(iso)); } catch(e) { return ""; } }
+    // Salto ENTRE mensajes: solo se muestra si supera el umbral y el mensaje previo es del
+    // otro lado (un operador mandando 3 mensajes seguidos no es una demora).
+    const GAP_MIN_MS = 5*60*1000;
+    function bubGap(tr, i) {
+      if (!tr || i===0) return "";
+      const a = tr[i-1], b = tr[i];
+      if (!a.at || !b.at || a.role === b.role) return "";
+      const ms = new Date(b.at) - new Date(a.at);
+      if (!(ms >= GAP_MIN_MS)) return "";
+      const min = Math.round(ms/60000);
+      return min < 60 ? min + " min" : (min/60).toFixed(1).replace(".", ",") + " h";
+    }
+    // Solo los tags PRESENTES en esta sesión: la ayuda al lado de lo que se está mirando.
+    function tagsDeLaSesion(d) {
+      const dims = (d && d.dimensions) || {}, out = [];
+      if (d.motivo) out.push("motivo");
+      if (d.stars) out.push("estrella");
+      if (d.atencion && AYUDA[d.atencion]) out.push(d.atencion);
+      if (dims.claridad === "claro") out.push("claro");
+      if (dims.claridad === "confuso") out.push("confuso");
+      if (dims.cliente_reinsistio) out.push("reinsistio");
+      if (dims.cliente_abandono) out.push("abandono");
+      return out;
+    }
     function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
     function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Operador")); }
     // Claves del jsonb que NO son notas de dimensión (se muestran aparte): errores,
     // aciertos, recomendación y los ejes del modulador (claridad/reinsistió).
-    const _NON_DIM = new Set(["errores","aciertos","claridad","cliente_reinsistio","recomendacion"]);
+    const _NON_DIM = new Set(["errores","aciertos","claridad","cliente_reinsistio","recomendacion",
+                          "cliente_abandono","friccion"]);
     function dimsOnly(dims) { const o={}; for (const [k,v] of Object.entries(dims||{})) if (!_NON_DIM.has(k) && typeof v==="string") o[k]=v; return o; }
     function dimErrors(dims) { return (dims&&dims.errores)||[]; }
     // Tiempos que dejo la rubrica determinista del motivo, ya con etiqueta legible.
@@ -1370,6 +1584,9 @@ createApp({
     function dimRecom(dims) { return (dims&&dims.recomendacion)||""; }
     function dimClaridad(dims) { return (dims&&dims.claridad)||""; }
     function dimReinsistio(dims) { return !!(dims&&dims.cliente_reinsistio); }
+    // El cliente dejó de contestar tras un pedido del operador. Se muestra para que el
+    // trámite abierto no se lea como culpa del operador (ver src/signals.py).
+    function dimAbandono(dims) { return !!(dims&&dims.cliente_abandono); }
     function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
       return m("operador",esc(opName(r)))+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} operador${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
     }
@@ -1521,6 +1738,19 @@ createApp({
     // `inactivos` es el ÚNICO filtro que también mueve /api/charts (los otros los ignora),
     // así que hay que recargarlos aparte del debounce general.
     watch(() => filters.inactivos, () => { loadCharts(); });
+    // El AMBIENTE mueve TODO: KPIs, lista y cuadros. Por eso no va en el debounce de los
+    // filtros finos — es un cambio de contexto, no un ajuste, y se espera que recargue ya.
+    function setAmbiente(k) {
+      if (filters.ambiente === k) return;
+      // Salir de "Otros" limpia el sub-filtro: si quedara aplicado, el selector ya no se
+      // muestra y la lista aparece vacia sin ninguna pista de por que.
+      if (k !== "sin_clasificar") filters.segment = "all";
+      filters.ambiente = k;
+      tickets.page = 1;
+      // Los desplegables se recortan por ambiente (en agente el motivo es NULL), asi que
+      // hay que recargarlos: si no, ofrecen filtros que devuelven cero filas.
+      fetchOptions(); fetchSummary(); fetchTickets(); loadCharts(); fetchConversion();
+    }
     // Plegar/expandir monta o desmonta canvases -> hay que re-dibujar DESPUÉS del re-render
     // (nextTick), si no las tarjetas nuevas quedan en blanco.
     watch(() => [expand.qual, expand.convPasv, expand.qualMotivo], async () => {
@@ -1551,7 +1781,10 @@ createApp({
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
       fmtDur, dimTiempos, dimConteos, dimHechos,
-      dimClaridad, dimReinsistio, metaGrid };
+      dimClaridad, dimReinsistio, dimAbandono, metaGrid, AYUDA, AYUDA_TITULO,
+      ayudaAbierta, ayudaModal, AMBIENTES, setAmbiente, horaEc, bubGap,
+      CONTRAPARTE, contraparte, ambienteLbl, SEGMENT_LABEL,
+      tagsDeLaSesion };
   }
 }).mount("#app");
 </script>

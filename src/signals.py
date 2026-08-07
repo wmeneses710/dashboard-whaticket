@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import timedelta
 
 from src.metrics import _is_bot
 
@@ -339,29 +340,61 @@ def _is_reask_ping(body: str) -> bool:
     return bool(_REASK_PING_RE.search(b))
 
 
-def client_reasked(messages: list[dict], *, min_run: int = 4) -> bool:
-    """True si hubo FRICCION: el cliente tuvo que reinsistir sin respuesta del negocio.
+# Cuanto silencio del negocio hace falta para poder decir que el cliente fue IGNORADO.
+# MEDIDO el 2026-08-07 sobre 3.000 sesiones: sin esta condicion, el 50,6% de la rama por
+# conteo eran 4+ mensajes del cliente en MENOS DE UN MINUTO (79,1% en la rama del ping), y
+# solo 74 de 449 disparos (16,5%) superaban los 5 minutos. El negocio sospechaba de la
+# duplicacion de mensajes, pero eso explicaba apenas el 2,2%: el confusor grande eran las
+# RAFAGAS (23,2%), o sea como escribe la gente — un run incluia "Listo eso era tdo gracias".
+# `friccion` SIEMPRE demota a 'deficiente', asi que cada falso positivo eran 2 estrellas
+# injustas para quien atendio a alguien que escribe rapido.
+MIN_SILENCIO_FRICCION = timedelta(minutes=5)
 
-    Senal determinista de que el cliente quedo colgado (agnostica al motivo): una
-    corrida de mensajes CONSECUTIVOS del cliente SIN respuesta del negocio (operador o
-    bot). Dispara si la corrida llega a `min_run`, o si en una corrida de >=2 el
-    cliente manda un ping de desesperacion ("?", "ayuda", "me responden"). El caso
-    multi-transaccion (cliente manda mucho pero el operador contesta entre medio) NO
-    dispara, porque cada respuesta del negocio corta la corrida.
+
+def client_reasked(messages: list[dict], *, min_run: int = 4,
+                   min_silencio: timedelta = MIN_SILENCIO_FRICCION) -> bool:
+    """True si hubo FRICCION: el cliente reinsistio y el negocio lo dejo callado.
+
+    Senal determinista de que el cliente quedo colgado (agnostica al motivo). Exige LAS
+    DOS cosas:
+      1. una corrida de mensajes CONSECUTIVOS del cliente sin respuesta del negocio, que
+         llegue a `min_run` o que tenga >=2 con un ping de desesperacion ("?", "ayuda",
+         "me responden");
+      2. que dentro de esa corrida el negocio haya estado callado al menos
+         `min_silencio` — o sea que TUVO TIEMPO de responder y no lo hizo.
+    El reloj arranca en el ultimo mensaje del negocio (o en el primero del cliente si el
+    negocio todavia no hablo): es el silencio real que sufrio el cliente.
+
+    El caso multi-transaccion (el cliente manda mucho pero el operador contesta entre
+    medio) NO dispara, porque cada respuesta del negocio corta la corrida.
+
+    SIN `created_at` no dispara. No se puede afirmar que hubo silencio sin relojes, y
+    demotar a 'deficiente' sin evidencia es peor que perder la señal. En produccion el
+    worker scorea por SESION y ahi los timestamps siempre vienen (ver
+    src/context.fetch_session_messages); el path por-conversacion de scripts/ no los trae.
     """
     run = 0
     run_has_ping = False
+    inicio_silencio = None   # ultimo mensaje del negocio, o 1ro del cliente de la corrida
     for m in messages:
         if m.get("is_note"):
             continue
-        if m.get("from_me"):  # el negocio (operador o bot) respondio -> corta la corrida
+        if m.get("from_me"):  # el negocio respondio -> corta la corrida
             run = 0
             run_has_ping = False
+            inicio_silencio = m.get("created_at")
             continue
         run += 1  # mensaje del cliente
+        if inicio_silencio is None:
+            inicio_silencio = m.get("created_at")
         if _is_reask_ping(m.get("body") or ""):
             run_has_ping = True
-        if run >= min_run or (run >= 2 and run_has_ping):
+        if not (run >= min_run or (run >= 2 and run_has_ping)):
+            continue
+        ahora = m.get("created_at")
+        if ahora is None or inicio_silencio is None:
+            continue  # sin relojes no se puede probar el silencio
+        if ahora - inicio_silencio >= min_silencio:
             return True
     return False
 
@@ -501,3 +534,105 @@ def app_mentioned(messages: list[dict]) -> bool:
         for m in messages
         if not m.get("is_note")
     )
+
+
+# --- ABANDONO DEL CLIENTE TRAS UN PEDIDO DEL OPERADOR ---------------------------
+# El HECHO que le faltaba al modelo. Medido el 2026-08-07: el 92,9% de las sesiones de
+# `sistemas` y el 95,3% de `datos` terminan hablando el operador, asi que "el cliente no
+# contesto" NO informa nada — es la forma normal de cerrar (el top-18 de ultimos mensajes
+# explica el 86,9% y son plantillas de despedida, mas el token `ing` de acreditacion).
+#
+# Lo que SI informa es la combinacion: el operador PIDIO u OFRECIO algo concreto y el
+# cliente no volvio. Ahi el tramite quedo abierto por el CLIENTE, no por el operador, y
+# reprocharle "no completo el registro" es calificarlo por algo que no controla. Medido
+# sobre el baseline de 130k, las sesiones con marcador de abandono promediaban 2,82 contra
+# 3,09, con 40,3% en 1-2 estrellas contra 31,1%.
+#
+# Se le pasa al modelo como HINT (no se usa para mover la nota por codigo): el modelo tiene
+# que poder decir "hizo lo que podia, y lo mejorable es X". Determinismo para el hecho
+# verificable, juicio para el modelo.
+_PEDIDO_PENDIENTE_PATTERN = (
+    # ofrecer hacer el alta (el empuje concreto de este negocio, no un link)
+    r"te creo (un |tu )?(usuario|cuenta)|creo tu (usuario|cuenta)|"
+    r"te (ayudo a )?registr|te registro|te abro (la|tu) cuenta|"
+    # pedir datos o una accion al cliente
+    r"pasame|pásame|mandame|mándame|env[ií]ame|env[ií]a\w* (tus|los|el)|"
+    r"indicame|indícame|compartime|dame (tu|los|el)|"
+    r"necesito (tus|los|el|que)|nos falta|confirmame|confírmame|adjunta|"
+    # proponer y quedar esperando el si
+    r"quieres que|queres que|deseas que|te parece si|te gustar[ií]a|me avisas si"
+)
+_PEDIDO_PENDIENTE_RE = re.compile(_PEDIDO_PENDIENTE_PATTERN, re.IGNORECASE)
+
+
+def cliente_abandono_tras_pedido(messages: list[dict]) -> bool:
+    """El operador pidio/ofrecio algo concreto y el cliente NO volvio a escribir.
+
+    Se mira solo el TRAMO FINAL: los mensajes del negocio posteriores al ultimo mensaje
+    del cliente. Un pedido que el cliente SI contesto no quedo pendiente, aunque despues
+    la sesion cierre con el operador hablando.
+
+    No cuenta como pedido pendiente:
+      - la formula de cierre "¿algo mas?" (es cortesia, no un tramite abierto)
+      - una confirmacion de transaccion ('ing', 'acreditado'): cierra, no pide
+      - sin mensajes del cliente (eso es prospeccion saliente: `no_customer_reply`)
+    """
+    reales = [m for m in messages if not m.get("is_note")]
+    if not any(m.get("from_me") for m in reales):
+        return False
+    idx_cliente = [i for i, m in enumerate(reales) if not m.get("from_me")]
+    if not idx_cliente:
+        return False
+    tramo = reales[idx_cliente[-1] + 1:]
+    for m in tramo:
+        body = (m.get("body") or "").strip()
+        if not body or _ANYTHING_ELSE_RE.search(body):
+            continue
+        if _PEDIDO_PENDIENTE_RE.search(body):
+            return True
+        if "?" in body and not _CONFIRMATION_RE.search(body):
+            return True
+    return False
+
+
+# --- LA PREGUNTA DE CIERRE, Y LA ESPERA QUE LA HACE VALER ------------------------
+# El mensaje canonico del negocio es "¿Hay algo más en lo que te pueda ayudar? 🙂🍀", y la
+# regla es ponerlo Y ESPERAR la respuesta. MEDIDO el 2026-08-07 sobre 2.493 sesiones: 280
+# mandaron la pregunta y **193 (69 por ciento) cerraron el ticket en menos de un minuto**.
+# Mediana de espera antes de cerrar: **0,0 minutos**; p75 = 0,1. Solo 29 pasaron los 5 min.
+# O sea que la pregunta se escribe y el ticket se cierra en el mismo instante: el cliente no
+# tiene ventana para una segunda duda, y cuatro rubricas deterministas (deposito, retiro,
+# info, soporte) daban credito de uplift SOLO por haberla escrito.
+# Regla del negocio: el minimo son 5 MINUTOS.
+MIN_ESPERA_CIERRE = timedelta(minutes=5)
+
+
+def operator_asked_and_waited(messages: list[dict], cierre_at=None,
+                              min_espera: timedelta = MIN_ESPERA_CIERRE) -> bool:
+    """Mando la pregunta de cierre Y dejo una ventana real antes de cerrar el ticket.
+
+    Dos formas de cumplir, porque las dos prueban que la ventana existio:
+      - el CLIENTE contesto despues de la pregunta (68 de las 280 medidas), o
+      - paso al menos `min_espera` entre la pregunta y el cierre del ticket.
+
+    Sin la hora de cierre, o sin reloj en la pregunta, devuelve True: no se puede PROBAR que
+    no espero, y quitar credito sin evidencia es el error que ya cometimos con la friccion.
+    Lo que se mide es lo que el operador CONTROLA — cuando cierra —, no si el cliente
+    contesto.
+    """
+    reales = [m for m in messages if not m.get("is_note")]
+    idx = None
+    for i, m in enumerate(reales):
+        # _strip_accents como en operator_asked_anything_else: el patron esta sin tildes y el
+        # mensaje canonico del negocio lleva "algo MÁS". Sin normalizar no matchea nada — y
+        # los tests que esperaban False pasaban igual, por la razon equivocada.
+        if _is_operator(m) and _ANYTHING_ELSE_RE.search(_strip_accents(m.get("body") or "")):
+            idx = i
+    if idx is None:
+        return False
+    if any(not m.get("from_me") for m in reales[idx + 1:]):
+        return True
+    pregunta_at = reales[idx].get("created_at")
+    if cierre_at is None or pregunta_at is None:
+        return True
+    return (cierre_at - pregunta_at) >= min_espera

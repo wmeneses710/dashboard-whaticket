@@ -38,6 +38,10 @@ from src.deposits import deposit_candidate_count
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import _is_operator, operator_sent_credentials, tiene_reloj
+# La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
+# deficientes eran clientes que escribieron de madrugada y operadores que contestaron
+# ni bien abrio el turno. La noche no es una demora del operador.
+from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/registro-v1"
 
@@ -117,7 +121,7 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
     datos = _datos_del_cliente(reales)
     cred = _credenciales_del_operador(reales)
     convirtio = deposit_candidate_count(reales) > 0
-    espera = (cred["created_at"] - datos["created_at"]
+    espera = (espera_efectiva(datos["created_at"], cred["created_at"])
               if cred and datos and cred["created_at"] > datos["created_at"] else None)
 
     def _mins(td: timedelta | None) -> str:
@@ -190,3 +194,101 @@ def score_registro(messages: list[dict]) -> ScoreResult | None:
         friccion=False,
         aciertos=[],
     )
+
+
+# --- EL CLIENTE PIDIO REGISTRARSE Y NUNCA LE PIDIERON LOS DATOS -------------------
+# MEDIDO el 2026-08-07 sobre 2.549 sesiones donde el CLIENTE pide registrarse explicito:
+# el operador NO va al punto en **972 (38,1%)**. Con pedido de datos el alta cierra ~40%;
+# sin pedido, **12,8%**. Y de esas 972, en **510 (52,5%) el cliente SIGUIO escribiendo** —
+# habia conversacion viva y el pedido nunca llego.
+#
+# LA HIPOTESIS DE LA VERBOSIDAD SE DESCARTO. El negocio sospechaba que el relleno previo
+# aburria al cliente; medido: 0 relleno cierra 41,5%, 1 mensaje 46,3%, 2-3 mensajes 30,7%,
+# pero 4+ SUBE a 64,9%. Contar mensajes del operador correlaciona con cliente enganchado
+# (el operador esta respondiendo preguntas), asi que la causalidad se invierte. Lo que pesa
+# no es cuanto hablo antes de ir al punto: es que nunca fue.
+_QUIERE_REGISTRARSE_RE = re.compile(
+    r"quiero registrarme|me quiero registrar|quiero crear (una |mi )?cuenta|"
+    r"quiero (abrir|tener) (una |mi )?cuenta|como me registro|como puedo registrarme|"
+    r"c[oó]mo (hago para )?(me )?registr|quiero una cuenta|necesito una cuenta|"
+    r"reg[íi]strame|me registro",
+    re.IGNORECASE,
+)
+
+# EL PUNTO: pedir los datos u ofrecer crear la cuenta. Es el mecanismo real de este
+# negocio — NO existe un link de registro (ver src/prompts.py y src/recommendations.py).
+_AL_PUNTO_RE = re.compile(
+    r"te creo (un |tu |la )?(usuario|cuenta)|creo tu (usuario|cuenta)|"
+    r"te (ayudo a )?registr|te registro|te abro (la|tu) cuenta|"
+    r"quieres que te (ayude|cree|registre)|queres que te (ayude|cree|registre)|"
+    r"me ayudas con (estos |los )?datos|pasame (tus |los )?datos|"
+    r"(nombre de usuario|correo electr[oó]nico|numero de celular|n[uú]mero de celular)|"
+    r"necesito (tus|los) datos|env[ií]ame (tus|los) datos|ayudame con (estos |los )?datos",
+    re.IGNORECASE,
+)
+
+
+def nunca_pidio_los_datos(messages: list[dict]) -> bool:
+    """El cliente pidio registrarse, siguio ahi, y el operador nunca fue al punto.
+
+    Las CUATRO condiciones, todas necesarias (el criterio de justicia lo puso el negocio:
+    "si no hay nada no se podria bajarle porque no seria justo"):
+      1. el cliente pidio registrarse EXPLICITAMENTE (la intencion no esta en disputa),
+      2. el cliente SIGUIO escribiendo despues (habia con quien hablar),
+      3. ningun mensaje del operador pide los datos ni ofrece crear la cuenta,
+      4. el alta NO se cerro.
+
+    La 4ta no es redundante, es un GUARD medido: 124 de las 972 sesiones sin patron
+    cerraron el alta igual, o sea que `_AL_PUNTO_RE` tiene falsos negativos. Sin ella se
+    penalizaria un registro exitoso por estar redactado distinto.
+
+    Las sesiones donde el cliente se FUE quedan afuera a proposito: no se puede separar
+    "el operador no tuvo chance" de "se fue porque no le pidieron nada", y la duda
+    favorece al operador.
+    """
+    reales = [m for m in messages if not m.get("is_note")]
+    idx = next((k for k, m in enumerate(reales)
+                if not m.get("from_me")
+                and _QUIERE_REGISTRARSE_RE.search(m.get("body") or "")), None)
+    if idx is None:
+        return False                                    # 1
+    posteriores = reales[idx + 1:]
+    if not any(_is_operator(m) for m in posteriores):
+        return False                                    # sin operador -> no_agent_reply
+    if not any(not m.get("from_me") for m in posteriores):
+        return False                                    # 2: el cliente se fue
+    if any(_is_operator(m) and _AL_PUNTO_RE.search(m.get("body") or "")
+           for m in reales[idx:]):
+        return False                                    # 3: si fue al punto
+    if operator_sent_credentials(reales) or es_transaccion(reales):
+        return False                                    # 4: el alta se cerro igual
+    return True
+
+
+def se_creo_la_cuenta(messages: list[dict]) -> bool:
+    """En esta sesion SE CREO una cuenta nueva: el cliente paso sus datos Y el operador
+    devolvio usuario y clave.
+
+    Es la señal que fuerza el motivo a `registro` (ver src/scorer.py). Decision del negocio
+    del 2026-08-07: "si en una se crea la cuenta es registro independientemente de lo que
+    haya antes o despues". La promo o la recarga son el gancho y el cierre; el alta es el
+    hecho consumado, y es lo que define con que vara se mide.
+
+    Exige LAS DOS PUNTAS a proposito. Credenciales SIN datos del cliente es un RESETEO de
+    contraseña de una cuenta que ya existia (30 sesiones medidas, 18 de ellas del segmento
+    agente): ahi `soporte_cuenta` es el motivo correcto y el guard NO debe pisarlo.
+
+    NO usa `_datos_del_cliente` ni `_credenciales_del_operador` a proposito: esos dos
+    ordenan por `created_at` porque necesitan el RELOJ (la espera entre las dos puntas), y
+    este guard corre en TODAS las sesiones del pase con LLM — incluido el path
+    por-conversacion de scripts/, que no trae timestamps. Aca solo importa si las dos cosas
+    PASARON, no cuando: es una pregunta de texto, no de tiempo.
+    """
+    reales = [m for m in messages if not m.get("is_note")]
+    dio_datos = any(
+        not m.get("from_me")
+        and (_EMAIL_RE.search(m.get("body") or "") or _CEDULA_RE.search(m.get("body") or ""))
+        for m in reales
+    )
+    entrego_creds = any(_is_operator(m) and operator_sent_credentials([m]) for m in reales)
+    return dio_datos and entrego_creds

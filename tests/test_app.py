@@ -82,7 +82,10 @@ def test_conversion_endpoint_mapea_filtros_y_combina(monkeypatch):
                         lambda cur, account, **k: {"months": [], "operators": []})
     r = client.get("/api/conversion", params={"account": "sistemas", "canal": "WHATSAPP", "from": "2026-01-01"})
     assert r.status_code == 200
-    assert set(r.json()) == {"by_operator", "by_month", "evolution"}
+    # `aplica`/`ambiente` se agregaron el 2026-08-07: la conversion solo existe para
+    # jugadores y antes devolvia datos de jugador en CUALQUIER ambiente sin decirlo.
+    assert set(r.json()) == {"aplica", "ambiente", "by_operator", "by_month", "evolution"}
+    assert r.json()["aplica"] is True   # default ambiente=todos -> aplica
     account, k = seen["op"]
     assert account == "sistemas" and k["canal"] == "WHATSAPP" and k["date_from"] == "2026-01-01"
 
@@ -269,3 +272,27 @@ def test_endpoint_de_composicion_de_ambientes(monkeypatch):
     r = client.get("/api/ambientes", params={"account": "sistemas"})
     assert r.status_code == 200 and r.json() == {"ok": True}
     assert calls["account"] == "sistemas"
+
+
+def test_conversion_declara_cuando_NO_aplica(monkeypatch):
+    # Antes devolvia datos de jugador para cualquier ambiente (mismo hash md5 en los tres).
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    for name in ("conversion_by_operator", "conversion_by_month",
+                 "conversion_passivity_evolution"):
+        monkeypatch.setattr(appmod.queries, name, lambda cur, account, **k: {"ok": True})
+    r = client.get("/api/conversion", params={"account": "sistemas", "ambiente": "agente"})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["aplica"] is False
+    assert d["ambiente"] == "agente"
+    # y no manda datos de otra audiencia disfrazados
+    assert d["by_operator"] in (None, {}, [])
+
+
+def test_conversion_SI_aplica_en_jugador(monkeypatch):
+    monkeypatch.setattr(appmod, "_conn", lambda: _DummyCtx())
+    for name in ("conversion_by_operator", "conversion_by_month",
+                 "conversion_passivity_evolution"):
+        monkeypatch.setattr(appmod.queries, name, lambda cur, account, **k: {"ok": True})
+    d = client.get("/api/conversion", params={"account": "sistemas", "ambiente": "jugador"}).json()
+    assert d["aplica"] is True and d["by_operator"] == {"ok": True}

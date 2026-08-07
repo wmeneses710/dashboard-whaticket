@@ -689,6 +689,13 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        -- es el eje de seis de las siete rubricas, y sin el hay que abrir sesion por
        -- sesion para encontrar las lentas. Es un numero, pesa nada.
        cs.first_response_seconds,
+       -- El cliente dejó de contestar tras un pedido del operador. Viaja a la LISTA (no
+       -- solo al detalle) porque pasa en el 24,7 por ciento de las sesiones (medido el
+       -- 2026-08-07; sin el signo a proposito, ver el guard de porcentajes sueltos) y
+       -- es el dato que explica que un trámite abierto NO sea culpa del operador. Sin esto
+       -- hay que abrir sesión por sesión para entenderlo. Booleano derivado del jsonb: sin
+       -- migración y sin peso en el payload.
+       (cs.dimensions->>'cliente_abandono')::boolean AS cliente_abandono,
        COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
@@ -747,29 +754,40 @@ def tickets_page(cur, account: str, page: int = 1, sort: str = "new",
             "page": page, "pages": pages, "page_size": page_size}
 
 
-def filter_options(cur, account: str) -> dict:
-    """Valores para los desplegables de filtros (segmento, canal, operador) de UNA
-    cuenta, sin filtrar (el front los derivaba de DATA; ahora salen del server).
-    Estable por cuenta -> el front lo pide una vez, no en cada cambio de filtro."""
-    cur.execute("SELECT DISTINCT segment FROM conversation_scores "
-                "WHERE account = %(account)s AND segment IS NOT NULL ORDER BY 1",
-                {"account": account})
+def filter_options(cur, account: str, ambiente: str = "todos") -> dict:
+    """Valores para los desplegables de filtros (segmento, canal, operador, motivo).
+
+    RECORTADOS POR AMBIENTE desde el 2026-08-07. Antes salian de la cuenta entera y en
+    `agente` el desplegable de motivo ofrecia los 7, aunque ahi las sesiones se califican
+    con agilidad y el motivo es NULL: elegir "Depósito" devolvia CERO filas sin ninguna
+    explicacion. Un desplegable no puede prometer un filtro que el ambiente no puede dar.
+    Estable por cuenta+ambiente -> el front lo pide una vez por combinacion."""
+    from src.segments import segments_for_ambiente
+
+    params: dict = {"account": account}
+    amb = ""
+    if ambiente and ambiente != "todos":
+        amb = " AND cs.segment = ANY(%(amb_segments)s)"
+        params["amb_segments"] = list(segments_for_ambiente(ambiente))
+    # Alias `cs` en las cuatro para que el predicado del ambiente sea el MISMO texto.
+    cur.execute("SELECT DISTINCT cs.segment FROM conversation_scores cs "
+                "WHERE cs.account = %(account)s AND cs.segment IS NOT NULL" + amb
+                + " ORDER BY 1", params)
     segments = [r[0] for r in cur.fetchall()]
     cur.execute("SELECT DISTINCT t.channel FROM conversation_scores cs "
                 "JOIN tickets t ON t.id = cs.ticket_id "
-                "WHERE cs.account = %(account)s AND t.channel IS NOT NULL ORDER BY 1",
-                {"account": account})
+                "WHERE cs.account = %(account)s AND t.channel IS NOT NULL" + amb
+                + " ORDER BY 1", params)
     channels = [r[0] for r in cur.fetchall()]
     cur.execute("SELECT DISTINCT coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
                 "'Operador sin identificar') AS op FROM conversation_scores cs "
                 "LEFT JOIN users u ON u.id = cs.user_id WHERE cs.account = %(account)s "
                 "AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL "
-                "OR cs.user_id IS NOT NULL) ORDER BY 1",
-                {"account": account})
+                "OR cs.user_id IS NOT NULL)" + amb + " ORDER BY 1", params)
     operators = [r[0] for r in cur.fetchall()]
-    cur.execute("SELECT DISTINCT motivo FROM conversation_scores "
-                "WHERE account = %(account)s AND motivo IS NOT NULL ORDER BY 1",
-                {"account": account})
+    cur.execute("SELECT DISTINCT cs.motivo FROM conversation_scores cs "
+                "WHERE cs.account = %(account)s AND cs.motivo IS NOT NULL" + amb
+                + " ORDER BY 1", params)
     motivos = [r[0] for r in cur.fetchall()]
     return {"segments": segments, "channels": channels, "operators": operators,
             "motivos": motivos}
@@ -783,7 +801,13 @@ def _transcript(msgs: list[dict]) -> list[dict]:
         # OPERADOR = nuestro personal de soporte. NO "AGENTE": el agente es el CLIENTE
         # vendedor/afiliador (segmento `agente`, cola "Agente 👨👩"), del otro lado del chat.
         role = "CLIENTE" if not m["from_me"] else ("BOT" if m.get("sent_from") == "CHATBOT" else "OPERADOR")
-        out.append({"role": role, "text": (m.get("body") or "[media]").strip()[:800]})
+        # La HORA de cada mensaje viaja al front. Es lo que permite ver la demora de un
+        # vistazo en el chat, que es donde se entiende: un salto de 40 minutos entre el
+        # pedido y la respuesta no se lee en ningun KPI. Va en ISO y el front la formatea en
+        # hora de Ecuador (la operacion corre 06:00-23:59 alla).
+        at = m.get("created_at")
+        out.append({"role": role, "text": (m.get("body") or "[media]").strip()[:800],
+                    "at": at.isoformat() if at is not None else None})
     return out
 
 
@@ -804,10 +828,43 @@ _MONTH_WINDOW = """
 # necesitan su propia cláusula: sin esto un operador apagado desaparecía de todo el
 # dashboard MENOS de estos dos, el peor de los dos mundos.
 #
-# OJO con el nombre: acá NO existe `conversation_scores.user_name`, así que el operador se
-# resuelve solo por `users.name`. El fallback tiene que ser el MISMO string que guarda
-# `operator_status` ('Operador sin identificar'), o el apagado no matchearía nunca.
-_OP_CHARTS = "coalesce(u.name, 'Operador sin identificar')"
+# EL NOMBRE DEL OPERADOR EN LOS CUADROS. Acá no existe `conversation_scores.user_name`
+# (se lee `conversations`/`messages`), así que la firma '*Nombre:*' se reconstruye en SQL
+# con el CTE `op_sig` — la misma fuente que usa src/operators.build_operator_map para el
+# scoring. El fallback tiene que ser el MISMO string que guarda `operator_status`, o el
+# apagado no matchearía nunca.
+#
+# POR QUE. Medido el 2026-08-07 en `sistemas`: 29 operadores existen en `users` (729.683
+# mensajes) y **38 NO existen** (502.766 mensajes, el 40,8%). Resolviendo solo por
+# `users.name`, esas 38 personas colapsaban en UNA fila 'Operador sin identificar': un
+# operador ficticio gigante en la carga y un promedio sobre 38 personas en el % de
+# depósito. La firma rescata 34 de los 38; 4 no firman nunca y siguen en el fallback.
+#
+# Y ARREGLA UN AGUJERO MÁS GRAVE que el nombre: el modal apaga por el nombre REAL (que sí
+# resuelve, vía `cs.user_name`), pero acá se comparaba contra 'Operador sin identificar'
+# -> para esos 38 la BAJA LÓGICA no funcionaba en los cuadros. Apagabas a alguien, seguía
+# apareciendo, y no había forma de saber por qué.
+_OP_CHARTS = "coalesce(nullif(u.name, ''), nullif(sig.name, ''), 'Operador sin identificar')"
+
+# user_id -> nombre firmado más frecuente. Espeja build_operator_map (nombre más frecuente
+# por operador, no el último). El tiebreaker por nombre lo hace determinista: sin él, dos
+# firmas con el mismo conteo alternan entre corridas y el cuadro cambia sin que cambien
+# los datos.
+#
+# LLAVES DOBLADAS a propósito: este CTE se embebe en `_LOAD_SQL`/`_DEP_PCT_SQL`, que pasan
+# por `.format(cola=..., apagados=...)`, y ahí `{2,40}` del cuantificador del regex se
+# interpreta como un placeholder (`KeyError: '2,40'`). `{{2,40}}` llega a Postgres como
+# `{2,40}`. Si algún día este CTE se usa en una query que NO se formatea, hay que
+# des-doblarlas.
+_OP_SIG_CTE = """op_sig AS (
+  SELECT DISTINCT ON (user_id) user_id, name FROM (
+    SELECT user_id, (regexp_match(body, '^\\*([^:*]{{2,40}}):\\*'))[1] AS name, count(*) AS n
+      FROM messages
+     WHERE account = %(account)s AND from_me AND NOT is_note AND user_id IS NOT NULL
+       AND body ~ '^\\*([^:*]{{2,40}}):\\*'
+     GROUP BY 1, 2
+  ) s ORDER BY user_id, n DESC, name
+)"""
 _SIN_APAGADOS_CHARTS = f"""
    AND NOT EXISTS (
      SELECT 1 FROM operator_status os
@@ -828,13 +885,15 @@ WITH msg_op AS (
 conv_op AS (
   SELECT DISTINCT ON (conversation_id) conversation_id, user_id
     FROM msg_op ORDER BY conversation_id, n DESC
-)
+),
+""" + _OP_SIG_CTE + """
 SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
        """ + _OP_CHARTS + """ AS op,
        count(*) AS conv
   FROM conversations c
   JOIN conv_op co ON co.conversation_id = c.id
   LEFT JOIN users u ON u.id = co.user_id
+  LEFT JOIN op_sig sig ON sig.user_id = co.user_id
  WHERE c.account = %(account)s AND c.created_at IS NOT NULL AND {cola}""" \
     + _MONTH_WINDOW + "{apagados}" + """
  GROUP BY 1, 2
@@ -993,7 +1052,8 @@ conv_dep AS MATERIALIZED (
          count(*) FILTER (WHERE from_me = false AND NOT is_note
                           AND lower(coalesce(media_type, '')) LIKE '%%image%%') AS img
     FROM messages WHERE account = %(account)s GROUP BY conversation_id
-)
+),
+""" + _OP_SIG_CTE + """
 SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
        """ + _OP_CHARTS + """ AS op,
        count(*) AS conv,
@@ -1002,6 +1062,7 @@ SELECT to_char(c.created_at, 'YYYY-MM') AS mes,
   JOIN conv_op co ON co.conversation_id = c.id
   LEFT JOIN conv_dep cd ON cd.conversation_id = c.id
   LEFT JOIN users u ON u.id = co.user_id
+  LEFT JOIN op_sig sig ON sig.user_id = co.user_id
   JOIN tickets t ON t.id = c.ticket_id
  WHERE c.account = %(account)s AND {cola}
    AND t.channel = 'WHATSAPP' AND c.created_at IS NOT NULL""" \
@@ -1361,3 +1422,24 @@ def conversation_detail(cur, conversation_id: str) -> dict | None:
         return None
     return {"conversation_id": conversation_id, "eval_status": None,
             "pending": True, "transcript": transcript}
+
+
+# --- COMPATIBILIDAD DE LAS TARJETAS CON EL AMBIENTE -------------------------------
+# AUDITORIA del 2026-08-07 sobre las 25 queries del tablero: 12 respetan el ambiente via
+# `_scores_filters`, 5 via queue_ids, y **4 lo IGNORABAN** — las de conversion. La causa:
+# `_conversion_where` recibe `**_ignored` y se tragaba el `ambiente`, y `player_conversions`
+# guarda `'jugador'` HARDCODEADO (src/conversions.py:120).
+# Verificado en vivo: /api/conversion devolvia el MISMO hash md5 para jugador, agente y
+# sin_clasificar. Apretabas "Agentes" y seguias viendo jugadores, sin aviso. Una tarjeta
+# vacia se nota; una que muestra otra cosa, no.
+#
+# NO se "arregla" agregandole el filtro: la conversion es POR DEFINICION "jugador potencial
+# -> jugador" (`player_conversions` existe solo para el segmento jugador). No es un filtro
+# que falte, es una metrica que solo aplica a una audiencia. Se DECLARA.
+def conversion_aplica(ambiente: str = "todos") -> bool:
+    """La conversion jugador-potencial -> jugador aplica a este ambiente?
+
+    'todos' aplica porque es la SUMA, no una audiencia: la conversion de los jugadores que
+    hay adentro sigue siendo un dato real, y esconderla seria peor que mostrarla.
+    """
+    return ambiente in ("todos", "jugador")

@@ -42,9 +42,13 @@ from src.signals import (
     _is_operator,
     is_real_media,
     operator_acreditacion,
-    operator_asked_anything_else,
+    operator_asked_and_waited,
     tiene_reloj,
 )
+# La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
+# deficientes eran clientes que escribieron de madrugada y operadores que contestaron
+# ni bien abrio el turno. La noche no es una demora del operador.
+from src.horario import espera_efectiva
 
 # Sentinela para la columna `llm_model`: no hubo modelo en la nota. Permite separar
 # por SQL las filas del path determinista de las del pase con LLM.
@@ -99,7 +103,7 @@ def es_transaccion(messages: list[dict]) -> bool:
     return has_recharge_context(messages) and _comprobante_del_cliente(messages) is not None
 
 
-def calificar_deposito(messages: list[dict]) -> Deposito | None:
+def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
     """Nota determinista de la sesion. None si no es una transaccion de deposito."""
     if not es_transaccion(messages):
         return None
@@ -111,9 +115,9 @@ def calificar_deposito(messages: list[dict]) -> Deposito | None:
     respuesta = next(
         (m for m in reales
          if _is_operator(m) and m["created_at"] > comprobante["created_at"]), None)
-    espera = respuesta["created_at"] - comprobante["created_at"] if respuesta else None
+    espera = espera_efectiva(comprobante["created_at"], respuesta["created_at"]) if respuesta else None
     acredito = operator_acreditacion(reales)
-    algo_mas = operator_asked_anything_else(reales)
+    algo_mas = operator_asked_and_waited(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:
         return formato_espera(None if td is None else td.total_seconds())
@@ -153,14 +157,14 @@ def calificar_deposito(messages: list[dict]) -> Deposito | None:
         espera, True, False)
 
 
-def score_deposito(messages: list[dict]) -> ScoreResult | None:
+def score_deposito(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
     None cuando la sesion no es una transaccion de deposito: ahi decide el caller
     (hoy, el pase con LLM), porque una consulta sobre recargas se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca existio.
     """
-    d = calificar_deposito(messages)
+    d = calificar_deposito(messages, cierre_at)
     if d is None:
         return None
     return ScoreResult(

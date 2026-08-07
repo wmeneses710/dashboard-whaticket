@@ -18,13 +18,13 @@ def fetch_messages(cur, conversation_id) -> list[dict]:
     Trae sent_from (para distinguir bot/humano) y user_id (para atribuir el
     operador, ya que conversations.user_id suele venir NULL)."""
     cur.execute(
-        "SELECT from_me, is_note, body, sent_from, user_id, media_type FROM messages "
-        "WHERE conversation_id=%s ORDER BY created_at",
+        "SELECT from_me, is_note, body, sent_from, user_id, media_type, created_at "
+        "FROM messages WHERE conversation_id=%s ORDER BY created_at",
         (conversation_id,),
     )
     return [
         {"from_me": r[0], "is_note": r[1], "body": r[2], "sent_from": r[3],
-         "user_id": r[4], "media_type": r[5]}
+         "user_id": r[4], "media_type": r[5], "created_at": r[6]}
         for r in cur.fetchall()
     ]
 

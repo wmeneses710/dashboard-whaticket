@@ -15,6 +15,7 @@ Ver tambien db/scores_schema.sql.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 Rubric = str  # "human" | "bot"
@@ -181,6 +182,27 @@ _ACIERTO_DEFAULTS: dict[str, str] = {
 }
 
 
+# Marcas de que la frase CONCEDE algo y despues lo desmiente. Un texto asi no puede ser la
+# evidencia de un acierto: el panel de "lo que se hizo bien" terminaba mostrando la critica.
+# Medido el 2026-08-07 con el modelo de prod sobre 45 sesiones: 20 (44,4%) caian en esto.
+# El arreglo de fondo es el contrato del prompt (la nota de dimension dice SOLO lo hecho);
+# esto es la RED por si el modelo desobedece.
+_CONTRADICE_RE = re.compile(
+    r"\b(pero|aunque|sin embargo|no obstante)\b"
+    r"|\bfalt[oó]\b"
+    r"|\bno (se )?(complet|confirm|gui|cerr|ofreci|dio|brind|proporcion|solicit|"
+    r"proces|resolvi|acredit|entreg|explic|aclar|proporcion)\w*",
+    re.IGNORECASE,
+)
+
+
+def _evidencia_limpia(detalle: str, defecto: str) -> str:
+    """El detalle del LLM si describe lo HECHO; la frase por defecto si se contradice."""
+    if not detalle or _CONTRADICE_RE.search(detalle):
+        return defecto
+    return detalle
+
+
 def derive_aciertos(
     *,
     atendio_motivo: bool,
@@ -204,7 +226,8 @@ def derive_aciertos(
     out: list[dict] = []
 
     def add(clave: str) -> None:
-        detalle = (dims.get(clave) or "").strip() or _ACIERTO_DEFAULTS[clave]
+        detalle = _evidencia_limpia((dims.get(clave) or "").strip(),
+                                    _ACIERTO_DEFAULTS[clave])
         out.append({"clave": clave, "detalle": detalle})
 
     piso_limpio = atendio_motivo and not friccion and claridad != "confuso"

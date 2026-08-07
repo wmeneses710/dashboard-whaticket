@@ -39,10 +39,14 @@ from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
     is_real_media,
-    operator_asked_anything_else,
+    operator_asked_and_waited,
     operator_sent_credentials,
     tiene_reloj,
 )
+# La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
+# deficientes eran clientes que escribieron de madrugada y operadores que contestaron
+# ni bien abrio el turno. La noche no es una demora del operador.
+from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/soporte-v1"
 
@@ -105,7 +109,7 @@ def esperas_por_turno(messages: list[dict]) -> list[timedelta]:
             if abierto is None:
                 abierto = m["created_at"]
         elif _is_operator(m) and abierto is not None:
-            out.append(m["created_at"] - abierto)
+            out.append(espera_efectiva(abierto, m["created_at"]))
             abierto = None
     return out
 
@@ -123,7 +127,7 @@ def _hubo_intento(messages: list[dict]) -> bool:
     return operator_sent_credentials(messages)
 
 
-def calificar_soporte(messages: list[dict]) -> Soporte | None:
+def calificar_soporte(messages: list[dict], cierre_at=None) -> Soporte | None:
     """Nota determinista de la sesion. None si no hay reloj para medirla."""
     if not tiene_reloj(messages):
         return None
@@ -131,7 +135,7 @@ def calificar_soporte(messages: list[dict]) -> Soporte | None:
                     key=lambda m: m["created_at"])
     esperas = esperas_por_turno(reales)
     intento = _hubo_intento(reales)
-    algo_mas = operator_asked_anything_else(reales)
+    algo_mas = operator_asked_and_waited(reales, cierre_at)
 
     if not esperas:
         return Soporte(1, "mala",
@@ -168,9 +172,9 @@ def calificar_soporte(messages: list[dict]) -> Soporte | None:
                    med, True, False)
 
 
-def score_soporte(messages: list[dict]) -> ScoreResult | None:
+def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM."""
-    s = calificar_soporte(messages)
+    s = calificar_soporte(messages, cierre_at)
     if s is None:
         return None
     return ScoreResult(

@@ -20,11 +20,15 @@ def _client(body=""):
 
 # --- credenciales ----------------------------------------------------------
 
-def test_credenciales_antepone_fragmento_de_password():
+def test_credenciales_agrega_fragmento_de_password_AL_FINAL():
+    # ORDEN INVERTIDO el 2026-08-07: el consejo del modelo LIDERA y el fragmento es un
+    # apendice. Antes los fragmentos iban primero y sepultaban el juicio contextual:
+    # medido con el modelo de prod, 3 de 45 recomendaciones arrancaban con el fragmento
+    # de la app en sesiones donde la app no era el tema.
     msgs = [_agent("tu usuario es juan123 tu contraseña es abc456")]
     out = refine_recomendacion("consejo del LLM", motivo="soporte_cuenta", target_messages=msgs)
-    assert out.startswith(_FRAG_PASSWORD)
-    assert out.endswith("consejo del LLM")
+    assert out.startswith("consejo del LLM")
+    assert out.endswith(_FRAG_PASSWORD)
 
 
 # --- app mencionada ----------------------------------------------------------
@@ -33,7 +37,7 @@ def test_app_mencionada_incluye_fragmento():
     msgs = [_client("¿tienen app?")]
     out = refine_recomendacion("consejo del LLM", motivo="info", target_messages=msgs)
     assert _FRAG_APP in out
-    assert out.endswith("consejo del LLM")
+    assert out.startswith("consejo del LLM")
 
 
 # --- enlace de registro: FRAGMENTO RETIRADO ----------------------------------
@@ -75,7 +79,10 @@ def test_recomendacion_vacia_con_senal_no_deja_espacios_colgantes():
 
 # --- orden y combinacion -----------------------------------------------------
 
-def test_fragmentos_lideran_sobre_la_reco_del_llm():
+def test_la_reco_del_MODELO_lidera_sobre_los_fragmentos():
+    # El nombre viejo de este test era `test_fragmentos_lideran_sobre_la_reco_del_llm`:
+    # codificaba la regla que el 2026-08-07 se demostro equivocada. Lo determinista aporta
+    # el dato que el modelo omite, no le gana al juicio del modelo sobre la conversacion.
     msgs = [_agent("tu usuario es juan123 tu contraseña es abc456. descarga la app")]
     out = refine_recomendacion("consejo del LLM", motivo="soporte_cuenta", target_messages=msgs)
-    assert out.index(_FRAG_PASSWORD) < out.index(_FRAG_APP) < out.index("consejo del LLM")
+    assert out.index("consejo del LLM") < out.index(_FRAG_PASSWORD) < out.index(_FRAG_APP)

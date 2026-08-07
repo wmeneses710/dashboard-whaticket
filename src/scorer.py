@@ -15,6 +15,7 @@ from src.prompts import build_motivo_prompt, build_motivo_schema
 from src.recommendations import refine_recomendacion
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
+    cliente_abandono_tras_pedido,
     operator_confirmation,
     operator_maltrato,
     operator_pushed,
@@ -111,6 +112,7 @@ def score_by_motivo(
     deposit_hint: bool = False,
     verifier=None,
     recommender=None,
+    cierre_at=None,
 ) -> ScoreResult:
     """Pase v2: el LLM clasifica el MOTIVO (de la tabla) y califica en 2 capas.
 
@@ -118,7 +120,11 @@ def score_by_motivo(
     la rubrica del rating_label (la escala es unica, asi que cualquier motivo valida
     igual). `deposit_hint` inyecta la senal determinista de comprobante en el prompt.
     """
-    system, user = build_motivo_prompt(target_messages, thread_context, deposit_hint=deposit_hint)
+    # El abandono del cliente se calcula ANTES del prompt: es un hecho verificable que el
+    # modelo necesita para no reprochar lo que dependia de una respuesta que nunca llego.
+    abandono = cliente_abandono_tras_pedido(target_messages)
+    system, user = build_motivo_prompt(target_messages, thread_context,
+                                       deposit_hint=deposit_hint, abandono_hint=abandono)
     schema = build_motivo_schema()
     raw = llm.chat_json(system, user, schema)
     _validate(raw, schema)
@@ -139,6 +145,19 @@ def score_by_motivo(
     elif deposit_hint and motivo == "problema" and operator_confirmation(target_messages):
         motivo = "deposito"
 
+    # ALTA CERRADA -> el motivo es `registro`, pise lo que dijo el LLM. Decision del negocio
+    # del 2026-08-07. MEDIDO: de 163 altas consumadas (cliente paso datos + operador devolvio
+    # usuario y clave), solo 103 quedaban como `registro`; **40 caian en `promo`**, 12 en
+    # soporte_cuenta y 2 en deposito. Esas 40 se calificaban con la rubrica de promo — que
+    # mide flyer y empuje — cuando el hecho de la sesion fue una CUENTA CREADA, y ademas
+    # quedaban fuera de todo el trabajo hecho sobre `registro`.
+    # Mismo criterio que ya regia para el deposito dentro de registro: el alta es el hecho
+    # consumado y la promo fue el gancho.
+    from src.registro import se_creo_la_cuenta
+
+    if se_creo_la_cuenta(target_messages):
+        motivo = "registro"
+
     # DEPOSITO TRANSACCIONAL: la nota la manda la rubrica determinista (src/deposito.py).
     # El LLM ya hizo su trabajo irremplazable — decir que motivo es — y a partir de ahi
     # los tres hechos que definen la nota son verificables: el reloj del comprobante, si
@@ -154,13 +173,13 @@ def score_by_motivo(
     if motivo == "deposito":
         from src.deposito import score_deposito
 
-        determinista = score_deposito(target_messages)
+        determinista = score_deposito(target_messages, cierre_at)
         if determinista is not None:
             return determinista
     elif motivo == "retiro":
         from src.retiro import score_retiro
 
-        determinista = score_retiro(target_messages)
+        determinista = score_retiro(target_messages, cierre_at)
         if determinista is not None:
             return determinista
     elif motivo == "registro":
@@ -178,13 +197,13 @@ def score_by_motivo(
     elif motivo == "soporte_cuenta":
         from src.soporte import score_soporte
 
-        determinista = score_soporte(target_messages)
+        determinista = score_soporte(target_messages, cierre_at)
         if determinista is not None:
             return determinista
     elif motivo == "info":
         from src.info import score_info
 
-        determinista = score_info(target_messages)
+        determinista = score_info(target_messages, cierre_at)
         if determinista is not None:
             return determinista
 
@@ -286,7 +305,25 @@ def score_by_motivo(
     # "claridad dudosa" en las tres, y 'dudoso' es NEUTRAL por diseño: ni baja ni bloquea el
     # uplift. Este techo es la mitad que faltaba, apoyado en las señales duras que ya se
     # calcularon arriba (`resolved` / `pushed`).
+    # CORRECCION del 2026-08-07: el techo NO aplica si el cliente ABANDONO tras un pedido.
+    # Tal como lo escribi a la mañana era ciego a POR QUE no se cerro el alta: capeaba igual
+    # al operador que se zafo y al que ofrecio crear la cuenta y se quedo esperando una
+    # respuesta que nunca llego. El segundo hizo lo que podia; lo mejorable va en la
+    # recomendacion, no en la nota. El caso lo trajo el negocio con un chat concreto.
+    # PIEZA 4 - NUNCA PIDIO LOS DATOS. El cliente pidio registrarse, siguio escribiendo, y
+    # el operador nunca pidio los datos ni ofrecio crear la cuenta. Medido el 2026-08-07:
+    # pasa en el 38,1% de los pedidos explicitos, y con el cliente presente en 510 casos
+    # (52,5% de esos). Sin pedido el alta cierra 12,8% contra ~40% cuando se pide. Es lo
+    # unico que el cliente pidio y no se hizo, con el cliente ahi -> techo en aceptable.
+    # OJO: esto NO es la hipotesis de la verbosidad, que se midio y se descarto (ver
+    # src/registro.py). Va ANTES del techo generico porque es la señal mas fuerte.
     if motivo == "registro":
+        from src.registro import nunca_pidio_los_datos
+
+        if nunca_pidio_los_datos(target_messages) and label in (
+                "buena", "excelente", "aceptable"):
+            label, override = "aceptable", True
+    if motivo == "registro" and not abandono:
         if not (resolved or pushed):
             # Ni link/invitacion concreta ni entrega: el piso de la rubrica -"guia el alta
             # de la cuenta paso a paso"- no esta corroborado por NINGUNA señal dura, el
@@ -298,6 +335,19 @@ def score_by_motivo(
             # Guio de verdad (hay empuje o entrega) pero el alta no se cerro -> "se hizo
             # bien" (4), que es lo que efectivamente paso, no el mejor escenario.
             label, override = "buena", True
+    # PIEZA 5 - UN 5 NO CONVIVE CON UN ERROR DETECTADO. Si el modelo listo algo que falto, la
+    # sesion no fue el MEJOR ESCENARIO, que es lo que significa la nota maxima en la escala v4.
+    # MEDIDO el 2026-08-07 sobre 769 sesiones con 5 estrellas: las 612 deterministas salen
+    # limpias por construccion, pero de las 157 del camino LLM **33 (21%) listaban errores al
+    # lado del 5** ("no se aclaro por que los giros aun no se activaban").
+    # Se elige BAJAR LA NOTA y no borrar el texto: el error listado suele ser real, y taparlo
+    # para salvar el 5 esconderia informacion util. Es la decision inversa a la del guard de
+    # `aciertos`, donde el texto SI se descarta — ahi el problema era presentar un reproche
+    # como logro; aca el problema es una nota que el propio texto desmiente.
+    errores_reportados = [e for e in (raw.get("dimensions") or {}).get("errores") or []
+                          if isinstance(e, str) and e.strip()]
+    if label == "excelente" and errores_reportados:
+        label, override = "buena", True
     stars = label_to_stars(motivo, label)
     rationale = raw.get("rating_rationale", "")
     if override:
@@ -347,6 +397,11 @@ def score_by_motivo(
     dims_out["aciertos"] = aciertos
     dims_out["claridad"] = claridad_eff
     dims_out["cliente_reinsistio"] = cliente_reinsistio
+    # Se persiste para que el FRONT pueda decir "el cliente no contesto mas" en vez de
+    # dejar al que mira adivinando por que el tramite quedo abierto. Va en `dimensions`
+    # (jsonb) a proposito: no necesita migracion de schema.
+    dims_out["cliente_abandono"] = abandono
+    dims_out["friccion"] = friccion
 
     return ScoreResult(
         rubric=motivo,

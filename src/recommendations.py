@@ -31,14 +31,20 @@ _FRAG_APP = (
 
 
 def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: list[dict]) -> str:
-    """Antepone fragmentos deterministas de alto valor a la recomendacion del LLM.
+    """AGREGA fragmentos deterministas de alto valor al final de la recomendacion del LLM.
 
     Calcula senales deterministas sobre `target_messages` (credenciales entregadas
-    por el operador, enlace de registro enviado, mencion de la app) y arma una lista
-    de fragmentos de coaching PRIORITARIOS que el LLM suele omitir. Si hay
-    fragmentos, LIDERAN el texto final y la `recomendacion` del LLM (si no esta
-    vacia) queda al final. Si no hay fragmentos, se devuelve `recomendacion` tal
-    cual, sin tocarla.
+    por el operador, mencion de la app) y arma una lista de fragmentos de coaching que
+    el LLM suele omitir. Si no hay fragmentos, se devuelve `recomendacion` tal cual.
+
+    EL ORDEN SE INVIRTIO el 2026-08-07. Antes los fragmentos LIDERABAN y el consejo del
+    modelo quedaba atras. Medido con el modelo de prod sobre 45 sesiones: 3 (6,7%)
+    arrancaban con "No hay app disponible por ahora..." en sesiones de `problema` y
+    `registro`, donde la app no era el tema — en una de registro el consejo util ("guia al
+    cliente paso a paso para crear la cuenta") quedaba DETRAS de un anuncio que nadie
+    pidio. Es la misma familia del `_FRAG_REGISTER_LINK` retirado (ver arriba): un
+    fragmento generico ganandole al juicio contextual del modelo. Ahora el modelo lidera y
+    el fragmento es un apendice.
 
     Es puramente aditivo/textual: no modifica la nota, la etiqueta ni ningun otro
     hecho del scoring.
@@ -55,7 +61,5 @@ def refine_recomendacion(recomendacion: str, *, motivo: str, target_messages: li
     if not fragmentos:
         return recomendacion
 
-    combinado = " ".join(fragmentos)
-    if recomendacion:
-        combinado = f"{combinado} {recomendacion}"
-    return combinado
+    apendice = " ".join(fragmentos)
+    return f"{recomendacion} {apendice}" if recomendacion else apendice

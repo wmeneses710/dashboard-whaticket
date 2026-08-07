@@ -288,3 +288,54 @@ def test_el_plural_mira_el_numero_QUE_SE_MUESTRA():
     assert formato_espera(62) == "1 minuto"
     assert formato_espera(3700) == "1 hora"
     assert formato_espera(4000) == "1,1 horas"
+
+
+# --- un ACIERTO no puede contener un reproche -----------------------------------
+# Medido el 2026-08-07 con el modelo de prod sobre 45 sesiones: **20 (44,4%)** mostraban
+# la critica DENTRO del panel de aciertos. La causa: derive_aciertos usa como evidencia la
+# nota de dimension del LLM TEXTUAL, y el modelo la escribe balanceada ("hizo X, pero no
+# hizo Y"). El codigo decide bien QUE aciertos hay; el texto que le pega arriba los
+# desmiente. Y el 68,9% de las sesiones no producia ningun `errores[]`, asi que la critica
+# no desaparecia: se mudaba al unico campo que el front muestra como positivo.
+#
+# El arreglo de fondo es el contrato del prompt (que la nota diga solo lo que se hizo).
+# Este guard es la RED, no el mecanismo: si el modelo desobedece, preferimos la frase por
+# defecto antes que presentar un reproche como logro.
+
+def test_un_detalle_con_pero_no_se_muestra_como_acierto():
+    aciertos = derive_aciertos(
+        atendio_motivo=True, hizo_accion_extra=False, cortesia_destacada=False,
+        claridad="claro",
+        dimensions={"resolucion": "El operador ofreció crear la cuenta, pero no "
+                                  "solicitó los datos necesarios"},
+    )
+    res = next(a for a in aciertos if a["clave"] == "resolucion")
+    assert "pero" not in res["detalle"].lower()
+    assert res["detalle"] == "atendio el motivo del cliente"
+
+
+def test_los_detalles_LIMPIOS_se_conservan():
+    # No es censura de palabras: si la nota describe lo hecho, se usa tal cual.
+    aciertos = derive_aciertos(
+        atendio_motivo=True, hizo_accion_extra=False, cortesia_destacada=False,
+        claridad="claro",
+        dimensions={"resolucion": "Creó la cuenta y entregó usuario y clave en el chat"},
+    )
+    res = next(a for a in aciertos if a["clave"] == "resolucion")
+    assert res["detalle"] == "Creó la cuenta y entregó usuario y clave en el chat"
+
+
+@pytest.mark.parametrize("detalle", [
+    "Derivó el caso, aunque no ofreció una solución concreta",
+    "Explicó el proceso, sin embargo no guio paso a paso",
+    "Confirmó el registro pero no completó el proceso",
+    "Respondió rápido, faltó cerrar el trámite",
+    "Atendió el motivo, no obstante no dio seguimiento",
+])
+def test_todas_las_marcas_de_contradiccion(detalle):
+    aciertos = derive_aciertos(
+        atendio_motivo=True, hizo_accion_extra=False, cortesia_destacada=False,
+        claridad="claro", dimensions={"resolucion": detalle},
+    )
+    res = next(a for a in aciertos if a["clave"] == "resolucion")
+    assert res["detalle"] == "atendio el motivo del cliente", detalle

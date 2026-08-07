@@ -5,6 +5,8 @@ el agente SI atendio el motivo (confirmo una transaccion o mando el comprobante)
 para que el scorer no lo hunda por debajo del piso. Mensajes = dicts con
 from_me, is_note, body, media_type, sent_from.
 """
+from datetime import datetime, timedelta, timezone
+
 from src.signals import (
     operator_acreditacion,
     operator_asked_anything_else,
@@ -29,12 +31,22 @@ _AD_TEMPLATE = (
     "promociones. No te pierdas la promo, aprovechala. Anímate y me avisas.")
 
 
-def _agent(body="", media_type=None):
-    return {"from_me": True, "is_note": False, "body": body, "media_type": media_type}
+_BASE = datetime(2026, 3, 10, 20, 0, tzinfo=timezone.utc)
 
 
-def _client(body="", media_type=None):
-    return {"from_me": False, "is_note": False, "body": body, "media_type": media_type}
+def _agent(body="", media_type=None, at=None):
+    m = {"from_me": True, "is_note": False, "body": body, "media_type": media_type}
+    if at is not None:
+        m["created_at"] = _BASE + timedelta(seconds=at)
+    return m
+
+
+def _client(body="", media_type=None, at=None):
+    """`at` = segundos desde una base fija. Necesario desde que la friccion exige relojes."""
+    m = {"from_me": False, "is_note": False, "body": body, "media_type": media_type}
+    if at is not None:
+        m["created_at"] = _BASE + timedelta(seconds=at)
+    return m
 
 
 def _bot(body=""):
@@ -303,15 +315,27 @@ def test_plantilla_de_anuncio_NO_es_uplift_concreto():
 # --- client_reasked (fricción determinista) -------------------------------
 
 def test_reasked_corrida_larga_sin_respuesta():
-    # el cliente manda 5 seguidos sin ninguna respuesta del negocio -> fricción
-    msgs = [_client("hola"), _client("necesito ayuda"), _client("me sale error"),
-            _client("hola?"), _client("?")]
+    # El cliente manda 5 seguidos sin respuesta del negocio -> fricción, PERO desde el
+    # 2026-08-07 tambien hace falta SILENCIO REAL (>=5 min): medido, el 50,6% de esta rama
+    # eran 4+ mensajes en menos de un minuto, donde nadie pudo haber contestado.
+    msgs = [_client("hola", at=0), _client("necesito ayuda", at=60),
+            _client("me sale error", at=200), _client("hola?", at=320),
+            _client("?", at=400)]
     assert client_reasked(msgs) is True
 
 
+def test_reasked_corrida_larga_pero_INMEDIATA_no_es_friccion():
+    # Misma corrida en 40 segundos: es como escribe la gente, no insistencia.
+    msgs = [_client("hola", at=0), _client("necesito ayuda", at=8),
+            _client("me sale error", at=20), _client("hola?", at=31),
+            _client("?", at=40)]
+    assert client_reasked(msgs) is False
+
+
 def test_reasked_pings_de_desesperacion_en_corrida():
-    # corrida corta pero con pings claros ("ayuda", "?") sin respuesta -> fricción
-    msgs = [_client("hice un deposito"), _client("ayuda"), _client("?")]
+    # corrida corta pero con pings claros ("ayuda", "?") DESPUES de esperar -> fricción
+    msgs = [_client("hice un deposito", at=0), _client("ayuda", at=400),
+            _client("?", at=600)]
     assert client_reasked(msgs) is True
 
 

@@ -42,6 +42,10 @@ from src.signals import (
     operator_pushed,
     tiene_reloj,
 )
+# La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
+# deficientes eran clientes que escribieron de madrugada y operadores que contestaron
+# ni bien abrio el turno. La noche no es una demora del operador.
+from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/promo-v1"
 
@@ -98,7 +102,7 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     respuesta = next(
         (m for m in reales
          if _is_operator(m) and m["created_at"] >= primero_cliente["created_at"]), None)
-    espera = (respuesta["created_at"] - primero_cliente["created_at"]
+    espera = (espera_efectiva(primero_cliente["created_at"], respuesta["created_at"])
               if respuesta else None)
     material = _material_del_operador(reales)
     empuje = operator_pushed(reales)

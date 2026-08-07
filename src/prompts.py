@@ -112,7 +112,14 @@ CLAVE deposito vs retiro: si el COMPROBANTE lo manda el CLIENTE (una captura de 
 RECARGA/deposito. En un RETIRO el cliente manda DATOS (agencia, monto, cuenta) y el
 COMPROBANTE lo manda el OPERADOR. Cliente adjunta comprobante -> deposito, NO retiro.
 - contrasena / cambio de cuenta o nombre / verificacion de identidad -> soporte_cuenta
-- quiere crear/activar una cuenta nueva -> registro
+- ACTIVAR o ACCEDER a una cuenta que YA EXISTE ("como activo mi cuenta", "como accedo", \
+"como entro") -> soporte_cuenta, NO registro: la cuenta ya esta creada, el cliente necesita \
+ayuda para entrar. (Decision del negocio, 2026-08-07.)
+- quiere crear una cuenta NUEVA -> registro
+CLAVE registro: si en la sesion SE CREO LA CUENTA (el cliente paso sus datos y el operador \
+devolvio usuario y clave) el motivo es `registro`, sin importar que haya pasado antes o \
+despues — aunque la conversacion arrancara por una promo o terminara en una recarga. El alta \
+es el hecho consumado; la promo fue el gancho. (Decision del negocio, 2026-08-07.)
 - algo no funciona / no se le acredito / reclamo -> problema
 
 PASO 2 - HECHOS. NO elijas una nota: responde estos HECHOS (los 4 primeros true/false; \
@@ -147,7 +154,8 @@ REGLA GENERAL: NO recomiendes algo que el operador YA HIZO en el chat (no sugier
 enlace si ya mando uno, ni invitar a depositar/registrarse si ya lo hizo); reconoce lo hecho \
 y apunta al SIGUIENTE paso real.
 REGLAS POR MOTIVO:
-- registro: si el operador creo la cuenta (mando usuario/clave en el chat), recuerda que el \
+- registro: el alta la hace el OPERADOR, dentro del chat: pide los datos (correo, celular, \
+nombre de usuario) y devuelve usuario y clave. Ese es el proceso completo. Si el operador creo la cuenta (mando usuario/clave en el chat), recuerda que el \
 cliente debe cambiar la contrasena en su primer ingreso. Si se piden datos sensibles \
 (cedula/datos), aclara para que son y que estan protegidos. Aclara que el beneficio se activa \
 con el primer deposito (puede depender del monto, salvo promo) y se verifica en la pagina.
@@ -194,6 +202,58 @@ _MOTIVO_HINT = (
     "promo, soporte) y el comprobante sea secundario."
 )
 
+_ABANDONO_HINT = (
+    "\n\nHINT DETERMINISTA: el operador PIDIO u OFRECIO algo concreto (crear la cuenta, "
+    "los datos, una confirmacion) y el CLIENTE NO VOLVIO A ESCRIBIR. El tramite quedo "
+    "abierto por el CLIENTE, no por el operador. NO cuentes como error del operador lo que "
+    "dependia de esa respuesta que nunca llego (p. ej. 'no creo la cuenta', 'no completo el "
+    "registro'): si ofrecio hacerlo, atendio el motivo. Lo mejorable va en la "
+    "RECOMENDACION, no en `errores`: por ejemplo si no explico COMO sigue el tramite, si no "
+    "aclaro que datos necesita y para que, o si arranco pidiendo datos personales sin "
+    "generar confianza primero."
+)
+
+# CONTRATO DE CADA CAMPO. Lo agrego el 2026-08-07 despues de medir con el modelo de prod
+# sobre 45 sesiones: el 44,4% mostraba la critica DENTRO del panel de aciertos y el 44,4%
+# tenia una nota de 4-5 con un rationale que la desmentia. La causa no era el modelo
+# portandose mal: le pediamos una evaluacion BALANCEADA por dimension ("hizo X pero no Y") y
+# despues el codigo la partia en positivos y negativos, asi que los positivos heredaban el
+# reproche. Ademas el 68,9% no producia ningun `errores[]`, o sea que la critica no tenia
+# donde ir y se mudaba al campo que el front pinta como logro.
+# La salida no es post-procesar la prosa, es pedir la separacion EN ORIGEN.
+_CAMPOS_CONTRATO = (
+    "\n\nCOMO ESCRIBIR CADA CAMPO (es un contrato, no un estilo):\n"
+    "- dimensions.resolucion / .iniciativa / .cortesia: describen SOLO LO QUE EL OPERADOR "
+    "HIZO en ese eje. PROHIBIDO usar 'pero', 'aunque', 'sin embargo', 'falto' o 'no "
+    "completo/confirmo/guio' en estos tres campos: son la evidencia de lo que se hizo BIEN "
+    "y se muestran al operador como sus logros. Si en un eje no hizo nada destacable, "
+    "describilo en una frase corta y neutra, sin reprochar.\n"
+    "- dimensions.errores: SOLO lo que el operador pudo haber hecho distinto Y dependia de "
+    "el. Si algo quedo sin cerrar porque el CLIENTE no respondio, NO va aca. Puede quedar "
+    "vacio: una sesion bien atendida no necesita errores inventados.\n"
+    "- recomendacion: aca va TODO lo mejorable, incluido lo que quedo pendiente del cliente "
+    "y los matices de venta (ir al punto, explicar como sigue el tramite, generar confianza "
+    "antes de pedir datos personales). Es el campo de coaching: usalo.\n"
+    # RESTRICCION DE SALIDA, no un hecho para reportar. La version anterior de esta regla
+    # vivia en REGLAS POR MOTIVO y decia "EN ESTE NEGOCIO NO EXISTE UN LINK DE REGISTRO";
+    # el modelo la leyo como material de coaching y la recito como reproche al operador:
+    # "no se menciono que no existe un enlace de registro" (14 de 280 filas de `registro`
+    # medidas el 2026-08-07), y hasta cito la regla misma ("lo cual no se permite segun las
+    # reglas del negocio"). Una instruccion interna filtrandose a la salida es peor que el
+    # problema que venia a arreglar. Va aca, como limite de lo que se escribe.
+    "- NUNCA escribas 'link' ni 'enlace' en `errores` ni en `recomendacion` cuando el motivo "
+    "sea registro: el alta se hace en el chat y un link no viene al caso. Y tampoco escribas "
+    "que falta aclararle al cliente que no existe un link: eso no es un consejo, es ruido. "
+    "Si al operador le falto algo en un registro, es pedir los datos o explicar como sigue.\n"
+    "- rating_rationale: que paso en esta sesion, en 2-4 frases, y por que la atencion "
+    "merece esa valoracion. MISMA PROHIBICION que las dimensiones: sin 'pero', 'aunque', "
+    "'sin embargo', 'falto' ni 'no completo/confirmo/guio'. Este texto se muestra JUNTO a la "
+    "estrella, asi que un 'pero' lo convierte en una acusacion al lado de una nota alta. "
+    "Los peros van en `recomendacion`, que es el campo hecho para eso. Y tiene que ser "
+    "COHERENTE con los HECHOS booleanos que reportaste: si dijiste que atendio el motivo, "
+    "el rationale no puede decir que no lo atendio."
+)
+
 _MOTIVO_JSON_SHAPE = (
     "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, con esta "
     "forma EXACTA (los 4 HECHOS son booleanos; NO incluyas rating_label, lo calcula el sistema):\n"
@@ -210,6 +270,7 @@ _MOTIVO_JSON_SHAPE = (
     '"recomendacion": "<1 consejo accionable, o \\"\\" si excelente>", '
     '"atencion": "<empujo|pasivo|no_respondio>", '
     '"deposit_observed": <true|false>}'
+    + _CAMPOS_CONTRATO
 )
 
 
@@ -225,12 +286,24 @@ def _motivo_tabla_block() -> str:
 
 
 def build_motivo_prompt(
-    target_messages: list[dict], thread_context: str, *, deposit_hint: bool = False
+    target_messages: list[dict], thread_context: str, *, deposit_hint: bool = False,
+    abandono_hint: bool = False,
 ) -> tuple[str, str]:
-    """Prompt v2: el LLM elige el MOTIVO de la tabla y califica en 2 capas. (system, user)."""
+    """Prompt v2: el LLM elige el MOTIVO de la tabla y califica en 2 capas. (system, user).
+
+    Los HINTS son hechos DETERMINISTAS que el modelo no puede verificar leyendo el texto
+    (quien mando el comprobante, si el cliente volvio a escribir). No mueven la nota por
+    codigo: se le dan al modelo para que juzgue con la informacion completa. Es la
+    correccion de rumbo del 2026-08-07: lo determinista aporta hechos, el modelo juzga.
+    """
+    hints = ""
+    if deposit_hint:
+        hints += _MOTIVO_HINT
+    if abandono_hint:
+        hints += _ABANDONO_HINT
     system = _MOTIVO_SYSTEM.format(
         tabla=_motivo_tabla_block(),
-        hint=_MOTIVO_HINT if deposit_hint else "",
+        hint=hints,
         ejemplos=formatear_fewshot(),
         json_shape=_MOTIVO_JSON_SHAPE,
     )

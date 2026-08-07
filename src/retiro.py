@@ -37,9 +37,13 @@ from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
     is_real_media,
-    operator_asked_anything_else,
+    operator_asked_and_waited,
     tiene_reloj,
 )
+# La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
+# deficientes eran clientes que escribieron de madrugada y operadores que contestaron
+# ni bien abrio el turno. La noche no es una demora del operador.
+from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/retiro-v1"
 
@@ -98,7 +102,7 @@ def es_transaccion(messages: list[dict]) -> bool:
     return _pedido_del_cliente(messages) is not None
 
 
-def calificar_retiro(messages: list[dict]) -> Retiro | None:
+def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     """Nota determinista de la sesion. None si no es una transaccion de retiro."""
     if not es_transaccion(messages):
         return None
@@ -111,9 +115,9 @@ def calificar_retiro(messages: list[dict]) -> Retiro | None:
     comprobante = next(
         (m for m in posteriores
          if _is_operator(m) and is_real_media(m.get("media_type"))), None)
-    espera = respuesta["created_at"] - pedido["created_at"] if respuesta else None
-    entrega = comprobante["created_at"] - pedido["created_at"] if comprobante else None
-    algo_mas = operator_asked_anything_else(reales)
+    espera = espera_efectiva(pedido["created_at"], respuesta["created_at"]) if respuesta else None
+    entrega = espera_efectiva(pedido["created_at"], comprobante["created_at"]) if comprobante else None
+    algo_mas = operator_asked_and_waited(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:
         return formato_espera(None if td is None else td.total_seconds())
@@ -154,13 +158,13 @@ def calificar_retiro(messages: list[dict]) -> Retiro | None:
         espera, entrega, False)
 
 
-def score_retiro(messages: list[dict]) -> ScoreResult | None:
+def score_retiro(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
     None cuando no es una transaccion: una consulta sobre retiros se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca correspondio.
     """
-    r = calificar_retiro(messages)
+    r = calificar_retiro(messages, cierre_at)
     if r is None:
         return None
     return ScoreResult(

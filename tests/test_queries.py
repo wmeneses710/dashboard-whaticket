@@ -17,6 +17,10 @@ from src.queries import (
     _build_quality_evolution,
     _build_quality_motivo,
     _conversion_where,
+    _DEP_PCT_SQL,
+    _DETAIL_SQL,
+    _LOAD_SQL,
+    _SIN_APAGADOS_CHARTS,
     SIN_COLA_LABEL,
     ambiente_composition,
     deposit_pct_by_operator,
@@ -947,3 +951,97 @@ def test_pendientes_sin_colas_del_ambiente_es_cero_sin_consultar():
     cur = _CursorSecuencia([("q1", "Agente 👨👩")])
     assert pending_sessions_count(cur, "sistemas", ambiente="jugador") == 0
     assert len(cur.executed) == 1
+
+
+# --- el operador "sin identificar" de los cuadros --------------------------------
+# Medido el 2026-08-07: en `sistemas` hay 29 operadores en `users` (729.683 mensajes) y
+# 38 que NO estan en `users` (502.766 mensajes, el 40,8%). Los cuadros resolvian el
+# nombre SOLO con u.name, sin fallback, asi que esas 38 personas se fusionaban en UNA
+# fila llamada "Operador sin identificar": un operador ficticio gigante en la carga y un
+# promedio sobre 38 personas en el % de deposito.
+# El camino de scores y el modal ya tenian el fallback (COALESCE(u.name, cs.user_name)),
+# pero los cuadros leen conversations/messages, donde esa columna no existe -> hay que
+# reconstruir la firma '*Nombre:*' en SQL, igual que src/operators.build_operator_map.
+# Medido: 34 de los 38 son rescatables por firma; 4 quedan anonimos de verdad.
+
+def test_los_cuadros_resuelven_el_nombre_por_FIRMA_antes_de_rendirse():
+    for sql in (_LOAD_SQL, _DEP_PCT_SQL):
+        # la firma se reconstruye en la query
+        assert "regexp_match" in sql, "no reconstruye la firma"
+        # y entra en el coalesce ANTES del fallback
+        pos_sig = sql.index("sig.name")
+        pos_fallback = sql.index("'Operador sin identificar'")
+        assert pos_sig < pos_fallback, "la firma tiene que ganarle al fallback"
+
+
+def test_los_cuadros_juntan_la_firma_por_user_id():
+    for sql in (_LOAD_SQL, _DEP_PCT_SQL):
+        assert "op_sig" in sql
+        assert "sig.user_id = co.user_id" in sql
+
+
+def test_el_fallback_sigue_existiendo_para_los_verdaderamente_anonimos():
+    # 4 de los 38 no firman NUNCA: no se los puede nombrar y tienen que seguir visibles.
+    for sql in (_LOAD_SQL, _DEP_PCT_SQL):
+        assert "'Operador sin identificar'" in sql
+
+
+def test_la_baja_logica_de_los_cuadros_usa_el_MISMO_nombre_resuelto():
+    # Este era el agujero de verdad: el modal apaga por el nombre REAL (que si resuelve
+    # por firma), pero los cuadros comparaban contra 'Operador sin identificar'. Para
+    # esos 38 operadores la baja logica NO funcionaba en los cuadros.
+    assert "sig.name" in _SIN_APAGADOS_CHARTS
+
+
+def test_la_lista_trae_el_abandono_del_cliente():
+    # Medido el 2026-08-07: el abandono ocurre en el 24,7% de las sesiones. Sin traerlo a la
+    # LISTA hay que abrir sesion por sesion para saber por que un tramite quedo abierto, y
+    # es justo el dato que explica que la nota NO sea culpa del operador.
+    # Booleano derivado del jsonb: no necesita migracion ni engorda el payload.
+    assert "cliente_abandono" in _TICKETS_CONVS_SQL
+    assert "AS cliente_abandono" in _TICKETS_CONVS_SQL
+
+
+def test_el_transcript_lleva_la_hora_de_cada_mensaje():
+    # Sin la hora no se puede ver de un vistazo si alguien se demoro: el chat es donde se
+    # entiende la demora, y hasta ahora el modal mostraba los mensajes sin reloj.
+    from src.queries import _transcript
+    from datetime import datetime, timezone
+    t = datetime(2026, 8, 7, 20, 30, tzinfo=timezone.utc)
+    out = _transcript([{"from_me": False, "is_note": False, "body": "hola",
+                        "created_at": t, "media_type": "chat"}])
+    assert out[0]["at"] == t.isoformat()
+
+
+def test_el_transcript_tolera_mensajes_sin_hora():
+    # El path por-conversacion de scripts/ no siempre trae created_at: no puede explotar.
+    from src.queries import _transcript
+    out = _transcript([{"from_me": True, "is_note": False, "body": "listo"}])
+    assert out[0]["at"] is None
+
+
+def test_las_opciones_de_los_desplegables_respetan_el_ambiente():
+    # AUDITADO el 2026-08-07: `filter_options` ofrecia los 7 motivos incluso en `agente`,
+    # donde las sesiones se califican con agilidad y el motivo es NULL. Elegir "Depósito"
+    # ahi devolvia CERO filas sin ninguna explicacion: el desplegable prometia algo que el
+    # ambiente no puede dar.
+    cur = _FakeCursor([], description=[])
+    filter_options(cur, "sistemas", ambiente="agente")
+    for query, params in cur.executed:
+        assert "cs.segment = ANY(%(amb_segments)s)" in query, query[:90]
+        assert params["amb_segments"] == ["agente"]
+
+
+def test_en_todos_las_opciones_no_se_recortan():
+    cur = _FakeCursor([], description=[])
+    filter_options(cur, "sistemas")
+    for query, params in cur.executed:
+        assert "amb_segments" not in (params or {})
+
+
+def test_el_detalle_trae_el_ORIGEN_de_la_conversacion():
+    # "Otros" junta 4 segmentos y esta dominado por la cola sin asignar (96,1%). Sin ver de
+    # donde viene cada conversacion no se puede distinguir marketing de la cola vacia — que
+    # es justo lo que hay que triajar.
+    assert "cs.queue_name" in _DETAIL_SQL
+    assert "cs.segment" in _DETAIL_SQL
