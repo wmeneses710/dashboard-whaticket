@@ -266,6 +266,38 @@ def score_by_motivo(
         # angosto (opcional, 2da pasada del LLM) confirme uplift genuino -> lo recupera.
         if not (verifier and verifier(target_messages, motivo)):
             label, override = "aceptable", True
+    # PIEZA 3 - TECHO DE `registro` EN EL FALL-THROUGH. Llegar hasta aca con motivo
+    # 'registro' PRUEBA que score_registro devolvio None (ver arriba), o sea que la sesion
+    # NO fue una transaccion: el alta no se cerro. Y el mejor escenario de la rubrica de
+    # registro es, textual, "cierra el alta y encamina el primer deposito" (src/rubrics.py)
+    # -> 'excelente' es INALCANZABLE en este camino por construccion. Sin este techo el
+    # fall-through podia entregar una etiqueta que su propia rubrica define como imposible.
+    #
+    # MEDIDO el 2026-08-07 sobre la copia de prod: 3 de las 6 filas de `registro` salieron
+    # con 5 estrellas y un rationale que las desmentia ("no guio paso a paso ni proporciono
+    # el link de registro"); el cliente pregunto como activar su cuenta y se quedo sin
+    # activarla. Un `deposito` que respondio en 1 min pero no confirmo la acreditacion
+    # sacaba 2: el ranking quedaba invertido justo donde mas importa.
+    #
+    # POR QUE PASABA: la PIEZA 1 es ASIMETRICA. `_FUNNEL_FLOOR` corre solo `if not atendio`,
+    # asi que sabe rescatar un falso NEGATIVO del modelo pero no atrapar un falso POSITIVO.
+    # `atendio_el_motivo` es el hecho que define el piso de toda la escala y en el
+    # fall-through lo auto-reporta el LLM, sin nada que lo corrobore. Encima el modelo dijo
+    # "claridad dudosa" en las tres, y 'dudoso' es NEUTRAL por diseño: ni baja ni bloquea el
+    # uplift. Este techo es la mitad que faltaba, apoyado en las señales duras que ya se
+    # calcularon arriba (`resolved` / `pushed`).
+    if motivo == "registro":
+        if not (resolved or pushed):
+            # Ni link/invitacion concreta ni entrega: el piso de la rubrica -"guia el alta
+            # de la cuenta paso a paso"- no esta corroborado por NINGUNA señal dura, el
+            # 'atendio' es solo palabra del modelo. Techo en aceptable (falto algo), no
+            # castigo: bajarlo mas seria inventar en la direccion contraria.
+            if label in ("buena", "excelente"):
+                label, override = "aceptable", True
+        elif label == "excelente":
+            # Guio de verdad (hay empuje o entrega) pero el alta no se cerro -> "se hizo
+            # bien" (4), que es lo que efectivamente paso, no el mejor escenario.
+            label, override = "buena", True
     stars = label_to_stars(motivo, label)
     rationale = raw.get("rating_rationale", "")
     if override:

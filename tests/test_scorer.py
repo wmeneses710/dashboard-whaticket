@@ -115,11 +115,73 @@ def test_cap_uplift_sigue_vivo_en_promo():
 def test_cap_uplift_NO_aplica_fuera_de_promo():
     # Mismo caso exacto, cambiando solo el motivo: sin empuje comercial, un deposito
     # bien atendido conserva su nota.
-    for motivo in ("deposito", "retiro", "registro", "soporte_cuenta", "info", "problema"):
+    # `registro` NO entra en este loop: tiene su propio techo en el fall-through (PIEZA 3),
+    # porque con mensajes NEUTROS no hay ninguna señal de que el alta se haya guiado.
+    for motivo in ("deposito", "retiro", "soporte_cuenta", "info", "problema"):
         r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
                             llm=FakeLLM(_motivo_resp(motivo=motivo, hizo_accion_extra=True,
                                                      cortesia_destacada=True)))
         assert r.rating_label == "excelente" and r.stars == 5, motivo
+
+
+# --- PIEZA 3: techo de `registro` en el fall-through -----------------------
+# Llegar al pase con LLM con motivo 'registro' PRUEBA que score_registro devolvio None,
+# o sea que la sesion no fue una transaccion: el alta NO se cerro. Y el mejor escenario
+# de la rubrica de registro es, textual, "cierra el alta y encamina el primer deposito"
+# -> 'excelente' es inalcanzable en este camino POR CONSTRUCCION.
+# Hallado el 2026-08-07 en la copia de prod: 3 de las 6 filas de registro salieron con 5
+# estrellas y un rationale que las desmentia ("no guio paso a paso ni proporciono el link
+# de registro"). El cliente pregunto como activar su cuenta y se quedo sin activarla.
+
+def test_registro_sin_transaccion_no_llega_a_excelente():
+    # Con empuje (mando el link): guio, pero el alta no se cerro -> "se hizo bien", 4.
+    r = score_by_motivo(target_messages=PUSH, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="registro", hizo_accion_extra=True,
+                                                 cortesia_destacada=True)))
+    assert r.rating_label == "buena" and r.stars == 4
+    assert r.floor_applied is True
+
+
+def test_registro_sin_transaccion_ni_empuje_topa_en_aceptable():
+    # Reproduce la sesion 90a5a53a de prod: puro template ("animate y me avisas"), sin
+    # link, sin datos, sin alta. El 'atendio' es solo palabra del modelo -> techo en 3.
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="registro", hizo_accion_extra=True,
+                                                 cortesia_destacada=True)))
+    assert r.rating_label == "aceptable" and r.stars == 3
+    assert r.floor_applied is True
+
+
+def test_registro_TRANSACCIONAL_no_lo_toca_el_techo():
+    # El techo vive SOLO en el fall-through. Un alta cerrada (datos + credenciales +
+    # deposito) sigue saliendo por src/registro.py, con su 5 intacto.
+    _ts = lambda m: __import__("datetime").datetime(  # noqa: E731
+        2026, 3, 10, 20, 0, tzinfo=__import__("datetime").timezone.utc
+    ) + __import__("datetime").timedelta(minutes=m)
+    tx = [
+        {"created_at": _ts(0), "from_me": True, "is_note": False, "sent_from": "OPERATOR",
+         "media_type": "chat", "body": "Ayudame con los datos para tu registro Nombre de usuario: Correo:"},
+        {"created_at": _ts(1), "from_me": False, "is_note": False, "media_type": "chat",
+         "body": "Nancy Toaquiza toaquizanancy68@gmail.com 0986987466"},
+        {"created_at": _ts(3), "from_me": True, "is_note": False, "sent_from": "OPERATOR",
+         "media_type": "chat", "body": "Estas son tus credenciales Usuario: nancy593 Clave: 12345"},
+        {"created_at": _ts(10), "from_me": False, "is_note": False, "media_type": "chat",
+         "body": "listo, ahi va mi recarga"},
+        {"created_at": _ts(10), "from_me": False, "is_note": False, "media_type": "image",
+         "body": ""},
+    ]
+    r = score_by_motivo(target_messages=tx, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="registro")))
+    assert r.rating_label == "excelente" and r.stars == 5
+    assert r.llm_model == "determinista/registro-v1"
+
+
+def test_registro_sin_transaccion_no_INVENTA_notas_peores():
+    # El techo solo BAJA lo que estaba por encima; un 'deficiente' del modelo no se toca
+    # (nada de castigar dos veces la misma sesion).
+    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
+                        llm=FakeLLM(_motivo_resp(motivo="registro", atendio_el_motivo=False)))
+    assert r.rating_label == "deficiente" and r.stars == 2
 
 
 # --- deposito: la nota la manda la rubrica DETERMINISTA -------------------
