@@ -71,8 +71,19 @@ _PASO_RE = re.compile(
 # ("no puedo verificar tu cuenta" lleva 'verific'), asi que sin el guard acreditarian como
 # instruccion justo lo contrario. La lista de arriba NO se toca: sus formas son imperativas y
 # meterla bajo el guard le sacaria pasos legitimos del tipo "si no podes entrar, escribinos".
+# `comunic` suelto SALIO: matcheaba la plantilla de cierre ("Gracias por comunicarte con
+# nosotros"), que esta en casi toda sesion y no es una instruccion. Caso `7d562266`: el
+# operador dijo "ya fue atendido por la otra linea" -- no hizo nada -- y la plantilla le dio
+# 4 estrellas. Queda solo la forma IMPERATIVA, que si es un paso ("comunicate con atencion al
+# cliente al 099"). El truco es el mismo que separa `enviame` de `enviarme` en signals.py: el
+# imperativo `comunicate` no lleva la 'r' del infinitivo `comunicarte`.
+# `cre[oa]`/`crear` ENTRO: ofrecer crear una cuenta es una salida concreta y ningun regex la
+# reconocia. Caso `a35b8f53`: el operador diagnostico ("tu cuenta es esta luisbrito, pero es
+# de otra agente") y ofrecio "te hago una cuenta con mi agencia", y el coaching le decia al
+# cliente que no se llevo ningun paso -- contradiciendo el transcript.
 _PASO_AMPLIADO_RE = re.compile(
-    r"verific|valid[aá]|confirm[aá]|sub[aei]|subir|cambi[aá]|comunic",
+    r"verific|valid[aá]|confirm[aá]|sub[aei]|subir|cambi[aá]|comunic[aá]te|comun[ií]quese|"
+    r"(te |le )?(hago|creo|crear|creando|cre[eé]) (una |la |tu )?cuenta",
     re.IGNORECASE)
 # Escalar TAMBIEN es intentar: es el techo de lo que el operador puede hacer solo.
 _ESCALO_RE = re.compile(

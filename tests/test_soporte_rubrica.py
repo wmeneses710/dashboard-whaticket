@@ -168,3 +168,33 @@ def test_un_verbo_NEGADO_no_es_un_paso():
                     "todavia no confirmo nada"):
         r = calificar_soporte([_cli(0), _op(1, no_paso)])
         assert r.stars == 2, f"{no_paso} -> {r.stars}★ {r.rationale}"
+
+
+def test_la_PLANTILLA_de_cierre_no_es_un_paso():
+    # FALSO POSITIVO del vocabulario ampliado, hallado el mismo dia. El root `comunic`
+    # matchea el boilerplate "Gracias por comunicarte con nosotros", que esta en casi toda
+    # sesion y no es una instruccion. Caso `7d562266-d4fd-4b58-9062-216a7c79c67c`: el
+    # operador dice "Amigo ya fue atendido por la otra linea" -- no hizo nada -- y cerro con
+    # la plantilla; la sesion saco 4 estrellas por "hizo algo concreto".
+    # OJO: "Gracias por comunicarte con el DEPARTAMENTO de soporte" NO entra en este test.
+    # Esa frase igual da 4 estrellas, pero por otro patron y preexistente: `_ESCALO_RE` tiene
+    # el token `departamento`, asi que la plantilla se lee como si el caso se hubiera escalado.
+    # Es un falso positivo distinto, no verificado sobre datos, y arreglarlo a ciegas se
+    # llevaria escalados legitimos ("pase tu caso al departamento"). Queda anotado, sin tocar.
+    for plantilla in ("Amigo ya fue atendido por la otra linea. Gracias por comunicarte con nosotros!",
+                      "cuando quieras puedas comunicarte con nosotros"):
+        r = calificar_soporte([_cli(0), _op(1, plantilla)])
+        assert r.stars == 2, f"{plantilla} -> {r.stars}★ {r.rationale}"
+
+
+def test_ofrecer_CREAR_una_cuenta_si_es_un_paso():
+    # FALSO NEGATIVO: el operador diagnostico y ofrecio una salida concreta, y ningun regex
+    # la reconocia. Caso `a35b8f53-781c-45b8-b1fc-28b7e77539ab`: "atencion al cliente me dice
+    # que tu cuenta es esta luisbrito... pero es de otra agente, si deseas te hago una cuenta
+    # con mi agencia" -> hubo_intento=False, 2 estrellas, y el coaching decia "El cliente no
+    # se llevo ningun paso a seguir", que contradice el transcript.
+    for oferta in ("si deseas te hago una cuenta con mi agencia",
+                   "te creo una cuenta nueva y la usas",
+                   "podemos crear una cuenta para que la pruebes"):
+        r = calificar_soporte([_cli(0), _op(1, oferta)])
+        assert r.stars >= 4, f"{oferta} -> {r.stars}★ {r.rationale}"
