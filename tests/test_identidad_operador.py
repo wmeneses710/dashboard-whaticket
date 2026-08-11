@@ -16,19 +16,28 @@ Dos arreglos, los dos verificados sobre los datos:
   2. LA NORMALIZACION TIENE QUE SACAR TILDES. Sin eso "Anahi" y "Anahí" son claves
      distintas: Anahi tiene 3 user_id con 25.290 mensajes y se contaban como 2 con 9.963.
 """
-from src.operators import build_operator_map, clave_persona, nombre_de_firma
+from src.operators import (
+    build_operator_map,
+    clave_persona,
+    es_nombre_de_persona,
+    nombre_de_firma,
+)
 
 
 class _Cur:
-    def __init__(self, rows):
-        self._rows = rows
+    """Cursor minimo. `build_operator_map` hace DOS consultas (firmas y catalogo), asi que
+    recibe una lista de result-sets y devuelve uno por cada execute()."""
+
+    def __init__(self, *result_sets):
+        self._sets = list(result_sets) or [[]]
         self.executed = []
 
     def execute(self, q, p=None):
         self.executed.append((q, p))
+        self._actual = self._sets.pop(0) if self._sets else []
 
     def fetchall(self):
-        return self._rows
+        return self._actual
 
 
 # --- los dos formatos de firma ---------------------------------------------------
@@ -85,13 +94,100 @@ def test_personas_distintas_NO_se_mezclan():
 # --- el mapa, con los dos formatos -----------------------------------------------
 
 def test_el_mapa_toma_el_nombre_mas_frecuente():
-    cur = _Cur([("u1", "Mel", 10), ("u1", "Melany", 3)])
+    cur = _Cur([("u1", "Mel", 10), ("u1", "Melany", 3)], [])
     assert build_operator_map(cur)["u1"] == "Mel"
 
 
 def test_el_mapa_unifica_las_variantes_con_tilde():
     # Dos user_id de la MISMA persona escritos distinto -> mismo nombre para los dos, asi
     # el prender/apagar y las estadisticas la tratan como una sola.
-    cur = _Cur([("u1", "Anahí", 100), ("u2", "Anahi", 20)])
+    cur = _Cur([("u1", "Anahí", 100), ("u2", "Anahi", 20)], [])
     m = build_operator_map(cur)
     assert m["u1"] == m["u2"], m
+
+
+# --- UNA FRASE NO ES UNA FIRMA (regresion de 084bf60) ----------------------------
+# El formato 2 (`Nombre:\n`) se agrego para rescatar 3 operadores sin nombre, pero tambien
+# empezo a leer encabezados de PLANTILLA como si fueran firmas: son <=3 palabras y el ':'
+# cierra la linea, o sea cumplen los tres guardas que el comentario declaraba "angostos".
+# Medido el 2026-08-11 sobre la copia de prod: 4 user_id resolvian a 3 operadores FANTASMA
+# y arrastraban 7.425 sesiones mal atribuidas, con el nombre real disponible en `users`.
+
+def test_una_frase_de_plantilla_NO_es_un_nombre():
+    # Los tres fantasmas reales, con su plantilla:
+    #   "Monto a retirar:\nbanco:\nnumero de cuenta:..."  (formulario de retiro)
+    #   "Te llevas:\n• Freebet de $5...\n• 10 giros..."    (lista de promo)
+    #   "Te doy:\n$5 de Freebet.\n10 giros gratis."        (idem)
+    for frase in ("Monto a retirar", "Te doy", "Te llevas", "Te llevarias",
+                  "Nombre de usuario", "Numero de celular", "Formulario de retiro",
+                  "Condiciones del Bono", "Con estos requisitos", "Ingrese con esta",
+                  "La nueva cuenta", "Le coloque", "envíame por favor",
+                  "Claro Te llevas", "Sii Te llevas"):
+        assert es_nombre_de_persona(frase) is False, frase
+        assert nombre_de_firma(f"{frase}:\nlo que sea") is None, frase
+
+
+def test_los_nombres_de_persona_reales_siguen_pasando():
+    # Verificado contra TODAS las firmas y todo el catalogo `users`: la regla no caza un
+    # solo nombre de persona. No hay ningun "Maria de los Angeles" en estos datos.
+    for nombre in ("Maria Jose", "Melanie", "Annel Flores", "Santiago Angulo",
+                   "MODOSORTI", "Anahí", "Majo", "Mel", "Ana", "Mario", "Genessis",
+                   "Andree Rodriguez", "Josue Escudero"):
+        assert es_nombre_de_persona(nombre) is True, nombre
+        assert nombre_de_firma(f"*{nombre}:* hola") == nombre, nombre
+
+
+def test_el_mapa_descarta_la_firma_basura_y_usa_el_catalogo():
+    # El caso de Gloria Villacis: la firma dominante de ese user_id era "Monto a retirar"
+    # (20 msgs del formulario) porque el operador manda desde WEB sin prefijo de firma.
+    # `users` tiene el nombre correcto -> se usa ese en vez de dejarlo sin nombre.
+    cur = _Cur([("u1", "Monto a retirar", 20)],
+               [("u1", "Andree Rodriguez")])
+    assert build_operator_map(cur)["u1"] == "Andree Rodriguez"
+
+
+def test_dos_operadores_distintos_dejan_de_colapsar_en_un_fantasma():
+    # "Te doy" ganaba en DOS user_id de personas distintas (Annel Flores y Genessis) y
+    # `clave_persona` los unificaba en un solo operador inexistente.
+    cur = _Cur([("u1", "Te doy", 36), ("u2", "Te doy", 1)],
+               [("u1", "Annel Flores"), ("u2", "Genessis")])
+    m = build_operator_map(cur)
+    assert m["u1"] == "Annel Flores" and m["u2"] == "Genessis", m
+
+
+def test_el_huerfano_sin_catalogo_conserva_su_firma():
+    # La razon de ser de las firmas: el CRM BORRA usuarios y `/users` no los devuelve.
+    # 37 user_id estan solo en las firmas -> si no hay catalogo, la firma manda.
+    cur = _Cur([("u1", "Santiago Angulo", 39)], [])
+    assert build_operator_map(cur)["u1"] == "Santiago Angulo"
+
+
+def test_el_catalogo_define_la_GRAFIA_cuando_es_el_mismo_nombre():
+    # Caso real: la firma dice 'onlysorti' y `users` dice 'OnlySorti'. `clave_persona` ya
+    # los trata como la misma persona, asi que lo unico en juego es como se ESCRIBE — y ahi
+    # manda el catalogo, que es el sistema de registro. Solo aplica cuando el nombre es el
+    # MISMO salvo mayusculas/tildes: nunca cambia un nombre por otro.
+    cur = _Cur([("u1", "onlysorti", 500)], [("u1", "OnlySorti")])
+    assert build_operator_map(cur)["u1"] == "OnlySorti"
+
+
+def test_dos_grafias_en_el_catalogo_se_desempatan_determinista():
+    # Caso real: la MISMA marca existe una vez por cuenta, con distinta grafia —
+    # 'onlysorti' en `sistemas` y 'OnlySorti' en `datos`. Sin regla explicita ganaba la
+    # ultima fila que devolvia la BD, o sea el nombre del dashboard cambiaba de corrida en
+    # corrida. Gana la forma con mayusculas, que es la que se muestra.
+    assert build_operator_map(
+        _Cur([], [("u1", "onlysorti"), ("u2", "OnlySorti")]))["u1"] == "OnlySorti"
+    # y al reves, para probar que NO depende del orden de las filas
+    assert build_operator_map(
+        _Cur([], [("u1", "OnlySorti"), ("u2", "onlysorti")]))["u1"] == "OnlySorti"
+
+
+def test_una_firma_de_persona_le_GANA_al_catalogo():
+    # LIMITE DELIBERADO del arreglo. "Maria Jose" (56.373 msgs firmados) vs `users` que
+    # dice "Majo": es la misma persona con dos grafias, no un fantasma. Igual "Melanie"
+    # (16.160) contra "Romina", que puede ser un seudonimo comercial: imponer el catalogo
+    # ahi le atribuiria el trabajo a otra persona. El catalogo entra solo cuando la firma
+    # NO es un nombre de persona; las grafias legitimas se deciden con el negocio.
+    cur = _Cur([("u1", "Maria Jose", 56373)], [("u1", "Majo")])
+    assert build_operator_map(cur)["u1"] == "Maria Jose"

@@ -39,6 +39,32 @@ _PG_NAME_RE = r"^\*([^:*]{2,40}):\*"
 _PG_NAME_PLAIN_RE = r"^([A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+([ .][A-Za-zÁÉÍÓÚÜÑáéíóúüñ]+){0,2}):(\n|$)"
 
 
+# UNA FRASE NO ES UNA FIRMA. El formato 2 rescata operadores, pero tambien matchea los
+# ENCABEZADOS DE PLANTILLA, que cumplen sus tres guardas (<=3 palabras, solo letras, y el
+# ':' cerrando la linea): "Monto a retirar:\nbanco:\nnumero de cuenta:" (formulario de
+# retiro) o "Te llevas:\n• Freebet de $5..." (lista de promo). Y como muchos operadores
+# mandan desde WEB SIN prefijo de firma, la plantilla le GANA la votacion al nombre real.
+#
+# El discriminador es la PALABRA DE FUNCION: ningun nombre de persona la lleva. Verificado
+# el 2026-08-11 contra TODAS las firmas y todo el catalogo `users`: la regla caza 21
+# candidatos, 20 son plantilla y NINGUNO es un nombre de persona — en estos datos no existe
+# un solo "Maria de los Angeles". El unico borde es el rol "Gerente de Cuentas", que esta en
+# `users` y por eso lo devuelve igual el catalogo.
+_NO_ES_NOMBRE_RE = re.compile(
+    r"(^|[^a-záéíóúüñ])"
+    r"(a|de|del|en|por|para|con|que|y|o|el|la|los|las|un|una|te|me|le|lo|se|tu|mi|su)"
+    r"([^a-záéíóúüñ]|$)",
+    re.IGNORECASE)
+
+
+def es_nombre_de_persona(nombre: str | None) -> bool:
+    """El candidato a firma parece el nombre de una PERSONA, no un texto de plantilla."""
+    texto = (nombre or "").strip()
+    if not texto:
+        return False
+    return not _NO_ES_NOMBRE_RE.search(texto)
+
+
 def nombre_de_firma(body: str | None) -> str | None:
     """Nombre firmado en el mensaje, probando los DOS formatos. None si no hay firma."""
     texto = (body or "").strip()
@@ -47,7 +73,8 @@ def nombre_de_firma(body: str | None) -> str | None:
     for patron in (_NAME_RE, _NAME_PLAIN_RE):
         m = patron.match(texto)
         if m:
-            return m.group(1).strip()
+            nombre = m.group(1).strip()
+            return nombre if es_nombre_de_persona(nombre) else None
     return None
 
 
@@ -93,6 +120,11 @@ def build_operator_map(cur, account: str | None = None) -> dict[str, str]:
     TODOS la misma grafia — la mas frecuente entre ellos. Asi una persona con la cuenta
     recreada deja de aparecer como dos operadores, y apagarla en la configuracion la apaga
     entera.
+
+    Y descarta las firmas que NO son un nombre de persona (ver `es_nombre_de_persona`),
+    cayendo al catalogo `users` cuando queda sin ninguna. Sin eso, 4 user_id resolvian a 3
+    operadores FANTASMA ("Monto a retirar", "Te doy", "Te llevas") con 7.425 sesiones mal
+    atribuidas — y "Te doy" ademas COLAPSABA dos personas distintas en una.
     """
     where_acc = "AND account = %s" if account else ""
     cur.execute(
@@ -106,7 +138,10 @@ def build_operator_map(cur, account: str | None = None) -> dict[str, str]:
              GROUP BY user_id, name""",
         (account,) if account else None,
     )
-    filas = [(str(u), n, int(c)) for u, n, c in cur.fetchall() if n]
+    # El filtro va en Python y no en la SQL a proposito: `es_nombre_de_persona` es la
+    # FUENTE UNICA de la regla y la comparte con `nombre_de_firma`.
+    filas = [(str(u), n, int(c)) for u, n, c in cur.fetchall()
+             if n and es_nombre_de_persona(n)]
 
     # 1) la grafia dominante de cada user_id
     mejor: dict[str, tuple[str, int]] = {}
@@ -114,10 +149,42 @@ def build_operator_map(cur, account: str | None = None) -> dict[str, str]:
         if user_id not in mejor or n > mejor[user_id][1]:
             mejor[user_id] = (nombre, n)
 
-    # 2) la grafia CANONICA de cada persona (la mas usada entre todos sus user_id)
+    # 2) CATALOGO: `users` tiene el nombre real de los operadores VIVOS. Entra SOLO donde la
+    #    firma no dejo un nombre de persona, para no pisar una grafia legitima: "Maria Jose"
+    #    (56.373 mensajes firmados) contra el "Majo" del catalogo es la misma persona, y
+    #    "Melanie" (16.160) contra "Romina" puede ser un seudonimo comercial — imponer el
+    #    catalogo ahi le atribuiria el trabajo a otra persona. Esas grafias se deciden con el
+    #    negocio, no aca. Peso 0 en la votacion: desempata, no manda.
+    cur.execute(
+        "SELECT id, name FROM users WHERE name IS NOT NULL AND btrim(name) <> ''"
+        + (" AND account = %s" if account else ""),
+        (account,) if account else None,
+    )
+    # OJO: la misma persona/marca puede estar UNA VEZ POR CUENTA y con distinta grafia
+    # ('onlysorti' en sistemas, 'OnlySorti' en datos). Sin una regla explicita ganaba la
+    # ultima fila que devolvia la BD y el nombre del dashboard cambiaba entre corridas ->
+    # se desempata determinista por la forma con mayusculas, que es la que se muestra.
+    grafias: dict[str, set[str]] = {}
+    for uid, nombre in cur.fetchall():
+        if not nombre:
+            continue
+        nombre = nombre.strip()
+        grafias.setdefault(clave_persona(nombre), set()).add(nombre)
+        if str(uid) not in mejor:
+            mejor[str(uid)] = (nombre, 0)
+    del_catalogo = {
+        k: max(sorted(v), key=lambda s: sum(c.isupper() for c in s))
+        for k, v in grafias.items()
+    }
+
+    # 3) la grafia CANONICA de cada persona (la mas usada entre todos sus user_id)
     votos: dict[str, Counter] = {}
     for user_id, (nombre, n) in mejor.items():
         votos.setdefault(clave_persona(nombre), Counter())[nombre] += n
-    canonico = {k: c.most_common(1)[0][0] for k, c in votos.items()}
+    # Si el catalogo tiene ESE MISMO nombre, su grafia manda: `users` es el sistema de
+    # registro y la firma llega en minusculas ('onlysorti' vs 'OnlySorti'). La clave es la
+    # misma persona por construccion, asi que esto NUNCA cambia un nombre por otro — solo
+    # mayusculas y tildes. Las grafias que SI son otro nombre (Majo/Maria Jose) no entran.
+    canonico = {k: del_catalogo.get(k) or c.most_common(1)[0][0] for k, c in votos.items()}
 
     return {uid: canonico[clave_persona(nombre)] for uid, (nombre, _) in mejor.items()}

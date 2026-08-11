@@ -38,17 +38,20 @@ def test_none_si_operador_desconocido():
 
 
 class _FakeCursor:
-    """Cursor minimo: guarda las filas y las devuelve en fetchall."""
+    """Cursor minimo. `build_operator_map` consulta las firmas y despues el catalogo
+    `users`, asi que recibe un result-set por consulta."""
 
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, *result_sets):
+        self._sets = list(result_sets) or [[]]
+        self._actual = []
 
     def execute(self, query, params=None):
         self._query = query
         self._params = params
+        self._actual = self._sets.pop(0) if self._sets else []
 
     def fetchall(self):
-        return self._rows
+        return self._actual
 
 
 def test_build_operator_map_toma_el_nombre_mas_frecuente_por_operador():
@@ -58,12 +61,12 @@ def test_build_operator_map_toma_el_nombre_mas_frecuente_por_operador():
         ("op-A", "Anna", 1),   # typo menos frecuente -> descartado
         ("op-B", "Beto", 3),
     ]
-    m = build_operator_map(_FakeCursor(rows))
+    m = build_operator_map(_FakeCursor(rows, []))
     assert m == {"op-A": "Ana", "op-B": "Beto"}
 
 
 def test_build_operator_map_scopea_por_cuenta():
     from src.operators import build_operator_map
-    cur = _FakeCursor([])
+    cur = _FakeCursor([], [])
     build_operator_map(cur, account="datos")
     assert "datos" in (cur._params or ())
