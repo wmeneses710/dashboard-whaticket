@@ -115,3 +115,43 @@ def test_abono_a_deuda_es_contexto_de_recarga():
 def test_receipt_image_cuenta_solo_imagenes_del_cliente():
     msgs = [_cli_img(), _cli_img(), _age_txt("hola"), _cli_txt("gracias")]
     assert receipt_image_count(msgs) == 2
+
+
+# --- vocabulario REAL del cliente (auditoria del 2026-08-11) -------------------
+
+def test_vocabulario_de_recarga_que_usa_el_cliente_de_verdad():
+    # El cliente de este negocio no dice "recargar": dice "cargar", "recargueme" o
+    # "acreditando". Medido sobre la copia de prod: el patron viejo (`recarg`, sin
+    # acentos y sin la forma corta) no matcheaba ninguna de las tres, y 2.664 sesiones
+    # CON comprobante del cliente quedaban fuera del gate por eso.
+    for kw in ("Cargar como agente", "Hola cargar como agente", "Carga",
+               "Hola recárgueme a la cuenta de agente",
+               "Buenas tardes, ayúdeme acreditando"):
+        assert has_recharge_context([_cli_txt(kw)]) is True, kw
+
+
+def test_la_forma_corta_exige_frontera_y_terminacion_control_fp():
+    # `carg` suelto matcheaba "descargar"/"encargado"/"a cargo": 1.095 mensajes del
+    # cliente en la copia. Bajar la app, el encargado o quien esta a cargo no son
+    # recargas. La frontera izquierda mas la terminacion [au] los descartan.
+    for no in ("no puedo descargar la app", "el encargado me dijo que espere",
+               "quien esta a cargo de esto"):
+        assert has_recharge_context([_cli_txt(no)]) is False, no
+
+
+def test_saldo_solo_NO_es_contexto_de_recarga():
+    # DELIBERADAMENTE fuera del patron: "acreditame el saldo" es una recarga, pero
+    # "cuanto tengo de saldo" es una consulta de `info`. Sumaba solo 571 sesiones y no
+    # justifica el falso positivo. Si el negocio lo quiere, se decide aparte.
+    assert has_recharge_context([_cli_txt("cuanto tengo de saldo?")]) is False
+
+
+def test_el_pitch_del_operador_sigue_sin_contar_con_el_patron_nuevo():
+    # Guard de no-regresion del criterio del 2026-08-06: el patron se amplio, pero
+    # `has_recharge_context` sigue leyendo SOLO al cliente. La plantilla de venta dice
+    # "primera carga" y ahora SI matchearia el patron -> el filtro de emisor es lo unico
+    # que evita volver a inflar el gate un 41,4%.
+    assert has_recharge_context(
+        [_age_txt("con tu primera carga comienza a disfrutar")]) is False
+    assert has_recharge_context(
+        [_age_txt("te acredito la recarga en breve")]) is False

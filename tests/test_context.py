@@ -59,6 +59,7 @@ class _CursorDeUnaFila:
             "m.created_at": datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc),
             "m.from_me": False, "m.is_note": False, "m.body": "hola",
             "m.sent_from": None, "m.user_id": None, "m.media_type": None,
+            "m.ack": 3,
         }
         # Reconstruye la fila en el orden en que aparecen en el SELECT.
         select = self.query.split("FROM")[0]
@@ -79,6 +80,17 @@ def test_fetch_session_messages_devuelve_created_at():
     assert filas, "deberia devolver al menos una fila"
     assert "created_at" in filas[0], \
         "src/agilidad.py lo necesita; sin esto revienta con KeyError en produccion"
+
+
+def test_fetch_session_messages_devuelve_ack():
+    # MISMA LECCION que created_at, un año despues: `cliente_abandono_tras_pedido` usa
+    # `ack` para saber si el cliente LEYO el pedido. Si el SELECT no lo trae, la señal se
+    # degrada a True en silencio y el techo de `registro` sigue saltandose — sin reventar
+    # ni un test unitario, porque los fixtures fabrican el dict a mano.
+    from src.context import fetch_session_messages
+    filas = fetch_session_messages(_CursorDeUnaFila(), "sess1")
+    assert "ack" in filas[0], \
+        "src/signals.cliente_abandono_tras_pedido lo necesita para no inventar abandonos"
 
 
 def test_la_forma_real_alcanza_para_la_rubrica_de_agilidad():

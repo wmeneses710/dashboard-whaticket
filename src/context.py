@@ -46,9 +46,14 @@ def fetch_session_messages(cur, session_id) -> list[dict]:
     # necesita en CADA mensaje. Sin el reventaba con KeyError recien contra la BD — 46 de
     # 60 sesiones de agente en la primera tanda. El contrato lo fija
     # tests/test_context.py::test_la_forma_real_alcanza_para_la_rubrica_de_agilidad.
+    # `ack` (estado de entrega de WhatsApp) tambien viaja en el dict: lo necesita
+    # `src/signals.cliente_abandono_tras_pedido` para no llamar "abandono" a un pedido que
+    # el cliente nunca leyo. Es la MISMA leccion que created_at — si no viene, la señal se
+    # degrada en silencio y ningun test unitario lo ve, porque los fixtures fabrican el
+    # dict a mano. El contrato lo fija tests/test_context.py.
     cur.execute(
         "SELECT m.created_at, m.from_me, m.is_note, m.body, m.sent_from, m.user_id, "
-        "m.media_type "
+        "m.media_type, m.ack "
         "FROM messages m "
         "JOIN conversation_session_map map ON map.conversation_id = m.conversation_id "
         "WHERE map.session_id=%s ORDER BY m.created_at, m.id",
@@ -56,7 +61,7 @@ def fetch_session_messages(cur, session_id) -> list[dict]:
     )
     return [
         {"created_at": r[0], "from_me": r[1], "is_note": r[2], "body": r[3],
-         "sent_from": r[4], "user_id": r[5], "media_type": r[6]}
+         "sent_from": r[4], "user_id": r[5], "media_type": r[6], "ack": r[7]}
         for r in cur.fetchall()
     ]
 

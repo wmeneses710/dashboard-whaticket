@@ -19,6 +19,7 @@ import re
 import unicodedata
 from datetime import timedelta
 
+from src.deposits import RECHARGE_PATTERN
 from src.metrics import _is_bot
 
 # Confirmacion transaccional del operador. Tokens reales del dataset (plantillas y
@@ -65,6 +66,15 @@ _LISTO_RE = re.compile(r"^\s*listo\b", re.IGNORECASE)
 # La negacion invalida la frase entera.
 _NEGACION_RE = re.compile(
     r"\b(no|aun no|a[uú]n no|todav[ií]a no|nunca)\b", re.IGNORECASE)
+# La PROMESA A FUTURO tampoco es una acreditacion: es el ACUSE. Espeja el cuidado que ya
+# se tuvo con 'reflej' (la forma consumada si, el futuro no), que quedo a medias porque
+# "En breve tendras tu saldo disponible" -la plantilla de acuse de MAYOR volumen del
+# dataset- si matcheaba _ACREDITA_SALDO_RE por el "saldo ... disponible". Medido el
+# 2026-08-11: 103 sesiones de `deposito` prometen y nunca confirman, y cobraban 3,89
+# estrellas cuando su nota es 2 ("nunca le confirmo que la plata habia entrado").
+_FUTURO_RE = re.compile(
+    r"\b(en breve|en un momento|en unos minutos|ya mismo|enseguida|en seguida)\b",
+    re.IGNORECASE)
 
 # ACUSE: el operador avisa que esta en eso. NO es que llego.
 ACUSE_PATTERN = (
@@ -91,7 +101,7 @@ def operator_acreditacion(messages: list[dict]) -> bool:
         if not _is_operator(m):
             continue
         for frase in _frases(m.get("body") or ""):
-            if _NEGACION_RE.search(frase):
+            if _NEGACION_RE.search(frase) or _FUTURO_RE.search(frase):
                 continue
             if _ACREDITA_FUERTE_RE.search(_strip_accents(frase)):
                 return True
@@ -133,6 +143,56 @@ def operator_acuse(messages: list[dict]) -> bool:
         for m in messages
         if _is_operator(m)
     )
+
+
+# El DOMINIO de la recarga tiene una sola fuente: src.deposits.RECHARGE_PATTERN, el mismo
+# que usan el gate en Python y la agregacion en SQL. Aca se reusa para exigir que el acuse
+# hable de una RECARGA y no de cualquier cosa.
+_RECARGA_DOMINIO_RE = re.compile(RECHARGE_PATTERN, re.IGNORECASE)
+# El operador PIDE el comprobante en vez de reconocerlo recibido -> la imagen que llego
+# no era el comprobante. Solo formas IMPERATIVAS/de pedido: el acuse real "gracias por
+# enviarme tu comprobante" NO cae aca, porque el infinitivo 'enviarme' no matchea el
+# imperativo 'enviame'.
+_PIDE_COMPROBANTE_RE = re.compile(
+    r"(env[ií]ame|env[ií]eme|m[aá]ndame|m[aá]ndeme|adj[uú]nta|adj[uú]nte|"
+    r"necesito que|hace falta que)",
+    re.IGNORECASE)
+
+
+def operator_acuso_comprobante(messages: list[dict], desde=None) -> bool:
+    """El OPERADOR reconocio un comprobante de recarga RECIBIDO (si `desde`, posterior a el).
+
+    Corrobora QUE LA IMAGEN ERA UN COMPROBANTE, no que el operador lo hizo bien. Es la
+    unica corroboracion posible cuando el cliente manda la imagen y NO ESCRIBE NADA, que
+    es el caso modal: en la copia de prod el caption de 33.914 comprobantes es vacio y el
+    de otros 11.270 lo pone la app del banco. Sin esto, 5.521 depositos con comprobante
+    (99,96% de los que caian al LLM) quedaban fuera de su rubrica determinista.
+
+    Exige las DOS cosas en el MISMO mensaje:
+      - dominio de recarga, que descarta un acuse generico ("permitame un momento")
+        despues de cualquier foto;
+      - acuse o acreditacion, que descarta el pitch de venta ("con tu primera carga...")
+        donde el operador habla del dominio sin reconocer nada recibido.
+    Y descarta el PEDIDO del comprobante, que cumple las dos pero prueba lo contrario.
+
+    Vale el ACUSE ("en breve") y no solo la acreditacion, A PROPOSITO: si se exigiera que
+    la plata llego, solo los depositos BIEN atendidos entrarian a la rubrica y los mal
+    atendidos seguirian yendose al pase con LLM, que los califica mas alto. La señal es
+    del ARTEFACTO, no de la CALIDAD.
+    """
+    for m in messages:
+        if not _is_operator(m):
+            continue
+        if desde is not None:
+            creado = m.get("created_at")
+            if creado is None or creado <= desde:
+                continue
+        texto = _strip_accents(m.get("body") or "")
+        if not _RECARGA_DOMINIO_RE.search(texto) or _PIDE_COMPROBANTE_RE.search(texto):
+            continue
+        if _ACUSE_RE.search(texto) or operator_acreditacion([m]):
+            return True
+    return False
 
 
 # CORTESIA / ACUSE / SALUDO: el bloque no pide nada. Se evalua sobre el texto COMPLETO
@@ -565,8 +625,25 @@ _PEDIDO_PENDIENTE_PATTERN = (
 _PEDIDO_PENDIENTE_RE = re.compile(_PEDIDO_PENDIENTE_PATTERN, re.IGNORECASE)
 
 
+# `ack` = estado de entrega de WhatsApp, y viene en `messages` al 100% (3.303.952 filas):
+#   <0 fallo · 0 pendiente · 1 enviado · 2 entregado · 3 LEIDO · 4 escuchado
+_ACK_LEIDO = 3
+
+
+def _cliente_lo_leyo(m: dict) -> bool:
+    """El cliente LEYO este mensaje del operador (objeto, no inferencia).
+
+    `ack` ausente -> True: los transcripts que no lo traen (el path por conversacion, o un
+    fixture armado a mano) no deben PERDER la señal por una columna que no vino; se degrada
+    al comportamiento anterior. El contrato de que la consulta real lo trae lo fija
+    tests/test_context.py::test_fetch_session_messages_devuelve_ack.
+    """
+    ack = m.get("ack")
+    return True if ack is None else ack >= _ACK_LEIDO
+
+
 def cliente_abandono_tras_pedido(messages: list[dict]) -> bool:
-    """El operador pidio/ofrecio algo concreto y el cliente NO volvio a escribir.
+    """El operador pidio/ofrecio algo concreto, el cliente LO LEYO y NO volvio a escribir.
 
     Se mira solo el TRAMO FINAL: los mensajes del negocio posteriores al ultimo mensaje
     del cliente. Un pedido que el cliente SI contesto no quedo pendiente, aunque despues
@@ -576,6 +653,17 @@ def cliente_abandono_tras_pedido(messages: list[dict]) -> bool:
       - la formula de cierre "¿algo mas?" (es cortesia, no un tramite abierto)
       - una confirmacion de transaccion ('ing', 'acreditado'): cierra, no pide
       - sin mensajes del cliente (eso es prospeccion saliente: `no_customer_reply`)
+      - **un pedido que el cliente NUNCA LEYO** (ver abajo)
+
+    EL PEDIDO TIENE QUE HABER LLEGADO A LA VISTA DEL CLIENTE. Esta señal existe para NO
+    castigar al operador por alguien que se fue, y en `score_by_motivo` levanta el techo de
+    `registro`. Pero "irse" es una DECISION del cliente, y no hay decision si nunca vio el
+    pedido: ahi el mensaje del operador quedo sin validar, y lo conservador es que el techo
+    SI aplique en vez de habilitar la nota maxima.
+    Medido el 2026-08-11 sobre las 560 sesiones donde el techo se escapaba: 232 (41,4%) el
+    cliente LO LEYO y se fue, 284 (50,7%) le llego y no lo abrio nunca, 44 (7,9%) ni se
+    entrego. La logica vieja les daba la misma nota a las tres (4,04 contra 4,20): no
+    distinguia al operador que perdio a un cliente presente del que le escribio al vacio.
     """
     reales = [m for m in messages if not m.get("is_note")]
     if not any(m.get("from_me") for m in reales):
@@ -587,6 +675,8 @@ def cliente_abandono_tras_pedido(messages: list[dict]) -> bool:
     for m in tramo:
         body = (m.get("body") or "").strip()
         if not body or _ANYTHING_ELSE_RE.search(body):
+            continue
+        if not _cliente_lo_leyo(m):
             continue
         if _PEDIDO_PENDIENTE_RE.search(body):
             return True

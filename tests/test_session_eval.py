@@ -132,27 +132,28 @@ class _FakeCursor:
 
 def test_fetch_session_messages_shape_y_query():
     # rows en el shape del SELECT (created_at, from_me, is_note, body, sent_from,
-    # user_id, media_type), provenientes de DOS conversaciones distintas de la misma
+    # user_id, media_type, ack), provenientes de DOS conversaciones distintas de la misma
     # sesion (merge). `created_at` se agrego porque la rubrica de agilidad lo necesita
-    # en cada mensaje (ver tests/test_context.py, contrato de forma).
+    # en cada mensaje, y `ack` porque `cliente_abandono_tras_pedido` necesita saber si el
+    # cliente LEYO el pedido (ver tests/test_context.py, contrato de forma).
     from datetime import datetime, timezone
     t0 = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
     rows = [
-        (t0, False, False, "hola de c1", None, None, None),
-        (t0, True, False, "respuesta", None, "op1", None),
-        (t0, False, False, "sigo en c2", None, None, "image"),
+        (t0, False, False, "hola de c1", None, None, None, 0),
+        (t0, True, False, "respuesta", None, "op1", None, 3),
+        (t0, False, False, "sigo en c2", None, None, "image", 0),
     ]
     cur = _FakeCursor(rows=rows)
     out = context.fetch_session_messages(cur, "sess-1")
 
-    # shape: mismos keys que context.fetch_messages
+    # shape: mismos keys que context.fetch_messages, mas `ack`
     assert out == [
         {"created_at": t0, "from_me": False, "is_note": False, "body": "hola de c1",
-         "sent_from": None, "user_id": None, "media_type": None},
+         "sent_from": None, "user_id": None, "media_type": None, "ack": 0},
         {"created_at": t0, "from_me": True, "is_note": False, "body": "respuesta",
-         "sent_from": None, "user_id": "op1", "media_type": None},
+         "sent_from": None, "user_id": "op1", "media_type": None, "ack": 3},
         {"created_at": t0, "from_me": False, "is_note": False, "body": "sigo en c2",
-         "sent_from": None, "user_id": None, "media_type": "image"},
+         "sent_from": None, "user_id": None, "media_type": "image", "ack": 0},
     ]
 
     query, params = cur.executed[0]

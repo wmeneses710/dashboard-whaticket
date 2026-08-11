@@ -42,6 +42,7 @@ from src.signals import (
     _is_operator,
     is_real_media,
     operator_acreditacion,
+    operator_acuso_comprobante,
     operator_asked_and_waited,
     tiene_reloj,
 )
@@ -92,15 +93,30 @@ def _comprobante_del_cliente(messages: list[dict]):
 def es_transaccion(messages: list[dict]) -> bool:
     """La sesion es un deposito HECHO, no una consulta sobre depositos.
 
-    Exige las dos cosas: que el CLIENTE haya dado el contexto de recarga y que haya
-    mandado el comprobante. Medido sobre 3.539 sesiones con contexto de recarga
-    (1 por persona): solo el 35,4% son transacciones; el 64,6% restante pregunta sin
-    depositar y el 99,7% de esas no tiene nada que acreditar. Calificar una consulta
-    con la vara transaccional castiga al operador por algo que nunca ocurrio.
+    El COMPROBANTE del cliente es condicion necesaria: sin el no hay nada que acreditar.
+    Medido sobre 3.539 sesiones con contexto de recarga (1 por persona): solo el 35,4%
+    son transacciones; el 64,6% restante pregunta sin depositar y el 99,7% de esas no
+    tiene nada que acreditar. Calificar una consulta con la vara transaccional castiga
+    al operador por algo que nunca ocurrio.
+
+    La RAZON de recarga puede venir por dos puertas, porque el cliente muchas veces no
+    escribe nada (auditoria del 2026-08-11: el caption de 33.914 comprobantes es vacio y
+    el de otros 11.270 lo pone la app del banco):
+      1. la escribe el CLIENTE -> has_recharge_context (el criterio historico);
+      2. no escribe nada y la corrobora el OPERADOR acusando el comprobante recibido
+         -> operator_acuso_comprobante, exigido POSTERIOR al comprobante.
+    Sin la puerta 2, 5.521 depositos con comprobante (99,96% de los que caian al pase con
+    LLM) se calificaban sin reloj y sin chequear la acreditacion, donde ademas no hay
+    techo: sacaban 5 estrellas el 68,2% de las veces contra el 3,6% de las transacciones
+    medidas por esta rubrica.
     """
     if not tiene_reloj(messages):
         return False
-    return has_recharge_context(messages) and _comprobante_del_cliente(messages) is not None
+    comprobante = _comprobante_del_cliente(messages)
+    if comprobante is None:
+        return False
+    return (has_recharge_context(messages)
+            or operator_acuso_comprobante(messages, desde=comprobante["created_at"]))
 
 
 def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:

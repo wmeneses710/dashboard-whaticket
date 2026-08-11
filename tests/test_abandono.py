@@ -1,9 +1,18 @@
-"""Tests de la señal de abandono tras pedido."""
+"""Tests de la señal de abandono tras pedido.
+
+`ack` es el estado de entrega de WhatsApp y viene en `messages` al 100%:
+    <0 fallo · 0 pendiente · 1 enviado · 2 entregado · 3 LEIDO · 4 escuchado
+Medido el 2026-08-11 sobre los mensajes del operador: 72,4% leidos (ack=3), **25,8%
+entregados y NUNCA leidos** (ack=2), 1,2% solo enviados, 0,2% fallidos.
+"""
 from src.signals import cliente_abandono_tras_pedido
 
 
-def _op(body):
-    return {"from_me": True, "is_note": False, "body": body, "sent_from": "OPERATOR"}
+def _op(body, ack=None):
+    m = {"from_me": True, "is_note": False, "body": body, "sent_from": "OPERATOR"}
+    if ack is not None:
+        m["ack"] = ack
+    return m
 
 
 def _cli(body, media="chat"):
@@ -68,4 +77,58 @@ def test_sin_mensajes_del_operador_no_aplica():
 def test_la_cortesia_de_cierre_con_signo_no_alcanza():
     # "¿algo mas?" es una formula de cierre, no un pedido pendiente.
     msgs = [_cli("gracias"), _op("¿necesitas algo mas?")]
+    assert cliente_abandono_tras_pedido(msgs) is False
+
+
+# --- NO SE PUEDE ABANDONAR LO QUE NUNCA SE LEYO (objeto `ack`) --------------------
+# La señal existe para NO castigar al operador por un cliente que se fue. Pero "irse" es
+# una DECISION del cliente, y no hay decision si el pedido nunca le llego a la vista: ahi
+# el mensaje del operador simplemente quedo sin validar, y lo conservador es que el techo
+# de la rubrica SI aplique en vez de habilitar la nota maxima.
+
+def test_un_pedido_que_el_cliente_NUNCA_LEYO_no_es_abandono():
+    # El caso real que lo destapo (session 950868b7, Gloria Villacis, 10-ago): el cliente
+    # pidio registrarse por el formulario de Facebook, el operador contesto a los 30s y
+    # cerro 41 min despues. Ese mensaje tiene ack=2: le llego y NO lo abrio nunca.
+    msgs = [_cli("Quiero registrarme y recibir mi Bono de $5 de Freebet"),
+            _op("Buenas noches mi amiga, te animas a realizar el registro?", ack=2)]
+    assert cliente_abandono_tras_pedido(msgs) is False
+
+
+def test_un_pedido_que_ni_se_entrego_no_es_abandono():
+    for ack in (1, 0, -2, -10):
+        msgs = [_cli("quiero una cuenta"),
+                _op("pasame tu nombre y correo para crearla", ack=ack)]
+        assert cliente_abandono_tras_pedido(msgs) is False, ack
+
+
+def test_un_pedido_LEIDO_y_sin_respuesta_SI_es_abandono():
+    # Aca la premisa se cumple entera: el cliente lo vio y no volvio. El operador hizo
+    # lo que podia y no se lo capea. (ack=4 es un audio escuchado, tambien cuenta.)
+    for ack in (3, 4):
+        msgs = [_cli("quiero una cuenta"),
+                _op("pasame tu nombre y correo para crearla", ack=ack)]
+        assert cliente_abandono_tras_pedido(msgs) is True, ack
+
+
+def test_sin_ack_se_conserva_el_comportamiento_anterior():
+    # Los transcripts que no traen `ack` (path por conversacion, fixtures a mano) no
+    # pueden PERDER la señal por una columna ausente: se degrada al comportamiento viejo.
+    msgs = [_cli("quiero una cuenta"), _op("pasame tu nombre y correo para crearla")]
+    assert cliente_abandono_tras_pedido(msgs) is True
+
+
+def test_alcanza_con_que_UNO_de_los_pedidos_pendientes_se_haya_leido():
+    # El tramo final suele tener varios mensajes seguidos del operador. Si el cliente
+    # leyo alguno con un pedido, abandono el pedido.
+    msgs = [_cli("hola"),
+            _op("¿Te creo un usuario para que juegues?", ack=3),
+            _op("pasame tu correo asi lo dejo listo", ack=2)]
+    assert cliente_abandono_tras_pedido(msgs) is True
+
+
+def test_varios_pedidos_pero_ninguno_leido_no_es_abandono():
+    msgs = [_cli("hola"),
+            _op("¿Te creo un usuario para que juegues?", ack=2),
+            _op("pasame tu correo asi lo dejo listo", ack=2)]
     assert cliente_abandono_tras_pedido(msgs) is False

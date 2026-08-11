@@ -23,7 +23,22 @@ import re
 # le acrediten saldo) es una recarga de altisimo volumen que el patron viejo no veia
 # -> el gate no disparaba y esas sesiones caian mal clasificadas como 'problema'
 # (auditoria). Cubre tambien el subconteo de deposit_count. Se reusa en SQL (src.queries).
-RECHARGE_PATTERN = r"recarg|comprobante|dep[oó]sit|transferenc|abono"
+#
+# VOCABULARIO REAL DEL CLIENTE (auditoria del 2026-08-11): el cliente de este negocio no
+# dice "recargar". Dice "cargar" ("Cargar como agente"), "recargueme" (con acento, que
+# `recarg` no matcheaba) o "acreditando" ("ayudeme acreditando"). Medido sobre la copia
+# de prod: 2.664 sesiones CON comprobante del cliente quedaban fuera del gate solo por
+# esas tres formas.
+#   - `c[aá]rg[au]` con FRONTERA IZQUIERDA y terminacion acotada: `carg` suelto matcheaba
+#     "descargar"/"encargado"/"a cargo" en 1.095 mensajes del cliente (bajar la app no es
+#     una recarga). Con la frontera y el [au] quedan 26.
+#   - `saldo` queda DELIBERADAMENTE afuera: "acreditame el saldo" es una recarga pero
+#     "cuanto tengo de saldo" es una consulta de `info`. Sumaba solo 571 sesiones y no
+#     justifica el falso positivo.
+RECHARGE_PATTERN = (
+    r"rec[aá]rg|comprobante|dep[oó]sit|transferenc|abono|acredit|"
+    r"(^|[^a-záéíóúüñ])c[aá]rg[au]"
+)
 _RECHARGE_RE = re.compile(RECHARGE_PATTERN, re.IGNORECASE)
 
 
