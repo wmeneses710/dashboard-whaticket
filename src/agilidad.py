@@ -130,8 +130,26 @@ def es_pedido(bloque: list[dict]) -> bool:
     return not es_cortesia(texto)
 
 
+# UN HUECO GRANDE ADENTRO DEL BLOQUE NO ES UNA RAFAGA. `turnos_de_agilidad` es asimetrico a
+# proposito -- el reloj arranca en el PRIMER mensaje del bloque y la respuesta se busca
+# despues del ULTIMO -- asi que sin este corte cualquier silencio del CLIENTE adentro del
+# bloque se le cobraba al OPERADOR.
+# CASO REAL `ec562888-6d8f-4b25-bf92-6e1b61cf4d0f`: el agente dice "Gracias" 21:40 y recien
+# 23:25 manda el formulario de retiro. Sin operador en medio eran UN bloque -> 6.336 segundos
+# (1,76 h) de espera y la sesion en 2 estrellas, cuando el pedido real se contesto en segundos.
+# EL UMBRAL SALE DE LOS DATOS: sobre 3.102 huecos intra-bloque del segmento agente, el 96,2%
+# es de 5 minutos o menos (p95 = 215s) y hay 46 de mas de una hora. 15 minutos es 3x el p95,
+# asi que corta solo lo que evidentemente no es tipeo seguido -- 68 de 3.102 (2,2%) -- y en la
+# duda favorece al operador.
+GAP_BLOQUE = timedelta(minutes=15)
+
+
 def bloques_del_cliente(messages: list[dict]) -> list[list[dict]]:
     """Parte el transcript en BLOQUES de mensajes consecutivos del agente.
+
+    Corta en DOS situaciones: cuando habla el operador (el bloque quedo contestado) y
+    cuando el agente se calla mas de `GAP_BLOQUE` (ver su nota: eso ya no es una rafaga,
+    son dos pedidos distintos y cada uno tiene su propio reloj).
 
     Ignora notas internas: una nota del operador no interrumpe el bloque del agente ni
     cuenta como respuesta.
@@ -144,6 +162,9 @@ def bloques_del_cliente(messages: list[dict]) -> list[list[dict]]:
                 bloques.append(actual)
                 actual = []
         else:
+            if actual and m["created_at"] - actual[-1]["created_at"] > GAP_BLOQUE:
+                bloques.append(actual)
+                actual = []
             actual.append(m)
     if actual:
         bloques.append(actual)

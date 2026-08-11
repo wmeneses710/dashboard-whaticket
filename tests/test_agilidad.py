@@ -400,3 +400,55 @@ def test_el_saludo_AUTOMATICO_del_widget_web_no_es_pedido():
 def test_el_widget_con_un_pedido_pegado_SI_es_pedido():
     # El guard es para el opener SOLO. Si la persona escribio algo mas, es un pedido.
     assert es_pedido([_cli(0, "Hola, estoy escribiendo desde sorti.ec, necesito una recarga")]) is True
+
+
+# --- UN HUECO GRANDE DENTRO DEL BLOQUE NO ES UNA RAFAGA ---------------------------
+# `bloques_del_cliente` cortaba SOLO cuando hablaba el operador, sin limite de tiempo. Y
+# `turnos_de_agilidad` es asimetrico a proposito: el reloj arranca en el PRIMER mensaje del
+# bloque y la respuesta se busca despues del ULTIMO. Combinados, cualquier silencio del
+# cliente adentro del bloque se le cobraba al operador.
+#
+# CASO REAL `ec562888-6d8f-4b25-bf92-6e1b61cf4d0f` (Italo Santibañez, 10-ago): el cliente dice
+# "Gracias" 21:40 y recien 23:25 manda el formulario de retiro. Sin operador en medio, las dos
+# cosas eran UN bloque: reloj desde el "Gracias", respuesta despues del formulario -> 6.336
+# segundos = 1,76 h, y la sesion cayo a 2 estrellas. El operador contesto el pedido real en
+# segundos; lo que se le cobro fue lo que el cliente tardo en pedir.
+#
+# EL UMBRAL SALE DE LOS DATOS, no de la intuicion: sobre 3.102 huecos intra-bloque del
+# segmento agente, el 96,2% es de 5 minutos o menos (p95 = 215s) y hay 46 de mas de una hora.
+# 15 minutos es 3x el p95, asi que corta solo lo que evidentemente no es tipeo seguido: 68
+# huecos de 3.102 (2,2%). La duda favorece al operador.
+
+def test_una_rafaga_sigue_siendo_UN_bloque():
+    msgs = [_cli(0, "hola"), _cli(0.5, "necesito una recarga"), _cli(1, "de 50"),
+            _op(2, "dale, ya te la cargo")]
+    assert len(bloques_del_cliente(msgs)) == 1
+
+
+def test_un_hueco_de_mas_de_15_minutos_ABRE_un_bloque_nuevo():
+    msgs = [_cli(0, "Gracias"), _cli(20, "Me ayudas con una recarga"),
+            _op(21, "dale")]
+    bloques = bloques_del_cliente(msgs)
+    assert len(bloques) == 2, bloques
+    assert bloques[0][0]["body"] == "Gracias"
+
+
+def test_el_umbral_es_15_minutos():
+    # 14 minutos sigue siendo la misma rafaga; 16 ya no.
+    assert len(bloques_del_cliente([_cli(0, "hola"), _cli(14, "una recarga")])) == 1
+    assert len(bloques_del_cliente([_cli(0, "hola"), _cli(16, "una recarga")])) == 2
+
+
+def test_el_caso_de_italo_el_gracias_ya_no_ancla_el_reloj():
+    # "Gracias" a los 0 min, el pedido real 105 min despues, y el operador contesta en 1 min.
+    msgs = [_cli(0, "Gracias"),
+            _cli(105, "*Nombre de Agencia* SELLAN *Monto:* $120,00"),
+            _op(106, "listo, procesado")]
+    turnos = turnos_de_agilidad(msgs)
+    pedidos = [t for t in turnos if t.es_pedido]
+    assert len(pedidos) == 1, f"el 'Gracias' no tiene que contar como pedido: {turnos}"
+    assert pedidos[0].espera is not None
+    assert pedidos[0].espera.total_seconds() <= 120, \
+        f"la espera tiene que ser del pedido real, no del 'Gracias': {pedidos[0].espera}"
+    r = calificar_agilidad(msgs)
+    assert r.stars == 5, f"{r.stars}★ {r.rationale}"
