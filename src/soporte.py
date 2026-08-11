@@ -11,8 +11,13 @@ POR QUE LA MEDIANA Y NO EL PEOR TURNO. El peor turno mide CANTIDAD DE TURNOS, no
 lentitud: medido el 2026-08-05, `retiro` con 2,0 turnos daba 63,5% de "peor <=2 min" y
 `soporte_cuenta` con 4,5 turnos daba 36,6%, mientras la mediana se mantenia estable
 (71-85%) en los seis motivos. Soporte es el motivo con mas ida y vuelta, asi que el
-peor turno lo estaria castigando por conversar. (Es el mismo defecto que quedo
-anotado para revisar en la rubrica de AGENTE.)
+peor turno lo estaria castigando por conversar.
+
+EN AGENTE SE REVISO Y SE DEJO EL PEOR (2026-08-11). No es una inconsistencia: alla el 59,5%
+de las sesiones tiene un solo turno, y al arreglar el corte de bloques por gap la brecha
+entre las dos varas se partio al medio. El defecto era el bloque, no la vara. Aca sigue
+valiendo la mediana porque soporte es el motivo con mas ida y vuelta (4,5 turnos contra
+2,0 de retiro).
 
 ESCALA:
     5  mediana <=2 min + hizo algo concreto + se aseguro de que no faltara nada

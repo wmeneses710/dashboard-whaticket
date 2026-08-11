@@ -212,8 +212,16 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
     """Nota determinista de agilidad de una sesion de agente. PURA, sin LLM ni BD.
 
     Manda el PEOR pedido, no el promedio: el negocio pidio que sea rapido SIEMPRE, y son
-    operaciones de rutina. (Con la mediana en vez del peor, la distribucion medida daba
-    78,3% de excelentes en vez de 60,8%.)
+    operaciones de rutina.
+
+    REVISADO Y CONFIRMADO el 2026-08-11. Quedaba anotado como pendiente (ver el docstring de
+    src/soporte.py, que migro a mediana por este mismo motivo) que el peor turno castiga por
+    conversar. Se midio con los bloques YA corregidos por gap, sobre 1.199 sesiones:
+    el 59,5% tiene UN solo turno -- ahi las dos varas son identicas -- y la brecha de
+    excelentes se partio al medio, de 17,5 puntos (60,8% contra 78,3%) a 9,0 (70,7% contra
+    79,7%). O sea que el problema no era la vara sino los BLOQUES mal cortados, que el peor
+    turno amplificaba. Con la causa arreglada, las 164 esperas que la mediana perdonaria son
+    reales. SE DEJA EL PEOR. El guard esta en tests/test_agilidad.py.
 
     Un pedido ABANDONADO baja a 'mala' (1), pero solo si el operador no confirmo nada en
     la sesion: si ya habia confirmado, el comprobante extra no exige respuesta y no es

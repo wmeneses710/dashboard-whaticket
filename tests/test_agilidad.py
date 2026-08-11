@@ -452,3 +452,42 @@ def test_el_caso_de_italo_el_gracias_ya_no_ancla_el_reloj():
         f"la espera tiene que ser del pedido real, no del 'Gracias': {pedidos[0].espera}"
     r = calificar_agilidad(msgs)
     assert r.stars == 5, f"{r.stars}★ {r.rationale}"
+
+
+# --- LA VARA ES EL PEOR TURNO, Y SE DECIDIO CON DATOS (2026-08-11) -----------------
+# Quedaba anotado desde el 2026-08-05 en el docstring de src/soporte.py que el peor turno
+# "estaria castigando por conversar" y que habia que revisarlo en la rubrica de AGENTE, como
+# se hizo alla migrando a la mediana. Se midio con los bloques YA corregidos por gap, sobre
+# 1.199 sesiones de agente, y la conclusion fue DEJAR EL PEOR:
+#
+#   turnos por sesion:  1 -> 714 (59,5%)   2 -> 256   3 -> 97   4 -> 43   5 -> 27   6+ -> 62
+#
+#                    5★      4★     3★     2★
+#       peor       70,7%   20,2%   7,5%   1,6%
+#       mediana    79,7%   17,4%   2,5%   0,3%
+#
+#   1. El 59,5% tiene UN solo turno: ahi las dos varas son identicas por definicion.
+#   2. La brecha se partio al medio. Cuando se anoto el pendiente, la mediana daba 78,3% de
+#      excelentes contra 60,8% del peor -- 17,5 puntos. Hoy es 70,7% contra 79,7%: 9,0.
+#   3. Y se cerro por la razon correcta: el problema no era la vara, eran los BLOQUES mal
+#      cortados, que el peor turno amplificaba. Arreglada la causa (ver GAP_BLOQUE), las 164
+#      esperas que la mediana perdonaria son reales, y el negocio pidio "rapido SIEMPRE"
+#      porque son operaciones de caja.
+# ESTE TEST EXISTE PARA QUE NO SE CAMBIE LA VARA SIN REHACER ESA MEDICION.
+
+def test_la_nota_la_manda_el_PEOR_turno_no_la_mediana():
+    # Tres pedidos: 1 min, 1 min y 20 min. La mediana es 1 min (5★); el peor es 20 (2★).
+    msgs = [_cli(0, "una recarga de 50"), _op(1, "listo"),
+            _cli(10, "otra de 30"), _op(11, "listo"),
+            _cli(20, "y otra de 80"), _op(40, "listo")]
+    r = calificar_agilidad(msgs)
+    assert r.stars == 2, f"si esto da 5, alguien cambio a mediana: {r.stars}★ {r.rationale}"
+    assert r.peor_espera is not None and r.peor_espera.total_seconds() == 20 * 60
+
+
+def test_con_un_solo_turno_las_dos_varas_coinciden():
+    # El 59,5% de las sesiones cae aca, y es la razon principal por la que el cambio de vara
+    # movia menos de lo que parecia.
+    msgs = [_cli(0, "una recarga de 50"), _op(3, "listo")]
+    r = calificar_agilidad(msgs)
+    assert r.turnos_pedido == 1 and r.stars == 4, f"{r.stars}★ {r.rationale}"
