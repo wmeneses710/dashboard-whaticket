@@ -128,7 +128,14 @@ def test_score_promo_devuelve_un_ScoreResult_usable():
     assert r.recomendacion == ""
 
 
-def test_la_recomendacion_del_4_pide_MATERIAL():
+def test_la_recomendacion_del_4_pide_ALGO_CONCRETO():
+    # El consejo tiene que nombrar QUE mandar en el idioma del equipo. Decia "falta el
+    # material ... el flyer o el enlace" y atencion al cliente no entendia a que se referia
+    # (2026-08-11): no usan ninguno de esos dos artefactos. Ver
+    # tests/test_vocabulario_retroalimentacion.py.
     msgs = [_cli(0), _op(1, EXPLICA)]
     r = score_promo(msgs)
-    assert r.stars == 4 and "material" in r.recomendacion.lower()
+    assert r.stars == 4
+    consejo = r.recomendacion.lower()
+    assert "flyer" not in consejo
+    assert any(p in consejo for p in ("imagen", "video")), consejo

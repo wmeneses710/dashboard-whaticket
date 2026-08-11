@@ -76,8 +76,11 @@ al SIGUIENTE nivel en este motivo — usa la accion extra esperada del motivo (e
 Debe ser ESPECIFICO a lo que paso, no generico. Si ya fue excelente, devuelve "".
 
 USA ESPANOL NEUTRO Y PROFESIONAL. Imperativo o segunda persona con "tu" ("confirma",
-"invita", "envia el enlace"). PROHIBIDO el voseo y los regionalismos: nada de "para",
+"invita", "pide los datos"). PROHIBIDO el voseo y los regionalismos: nada de "para",
 "mira", "dale", "animate", "bro", "che". Ejemplo neutro: "Invita al cliente a...".
+NUNCA hables de un "enlace de registro" ni de un "flyer": en este negocio el registro lo
+hace el OPERADOR pidiendo los datos, no existe un link que mandar, y el equipo no reconoce
+esos artefactos. Si el consejo es mandar algo, decilo por lo que es: una imagen o un video.
 {ejemplos}
 Responde SOLO con JSON: {{"recomendacion": "<consejo o cadena vacia>"}}"""
 
@@ -86,10 +89,10 @@ Responde SOLO con JSON: {{"recomendacion": "<consejo o cadena vacia>"}}"""
 _RECOM_EXAMPLES: dict[str, list[str]] = {
     "deposito": ["Confirmaste la recarga; la proxima, menciona el bono que puede alcanzar con su siguiente deposito."],
     "retiro": ["Procesaste el retiro; invita al cliente a volver a jugar o a recargar para retenerlo."],
-    "registro": ["Explicaste el registro; envia el enlace directo y guia el primer deposito para cerrar el alta."],
+    "registro": ["Explicaste el registro; pide los datos y crea la cuenta para cerrar el alta."],
     "soporte_cuenta": ["Resolviste el tramite; confirma que quedo solucionado y anticipa el proximo paso."],
     "info": ["Respondiste la consulta; aprovecha para invitar a un deposito o registro concreto."],
-    "promo": ["Explicaste la promocion; envia el enlace de registro e invita a realizar el primer deposito para activarla."],
+    "promo": ["Explicaste la promocion; mandale una imagen de la promo e invitalo a recargar para activarla."],
     "problema": ["Atendiste el reclamo; haz seguimiento y confirma la solucion para prevenir que se repita."],
 }
 

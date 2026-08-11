@@ -71,15 +71,23 @@ _COACHING = {
     2: "El cliente preguntó por la promo y la respuesta tardó más de 15 minutos. Una "
        "consulta así se enfría rápido.",
     3: "Respondiste, pero fuera de los 2 minutos. En promo la ventana es corta.",
-    4: "Falta el material. Explicar la promo solo de palabra convierte menos que no "
-       "decir nada; con el flyer o el enlace a la vista, bastante más. Mandalo junto "
-       "con la invitación.",
+    4: "Explicaste la promo solo con texto. Mandale algo concreto junto con la "
+       "invitación —una imagen, un video o un enlace—: es lo que más mueve que la "
+       "aproveche.",
 }
 _COACHING_1 = "El cliente preguntó por la promo y nadie le respondió."
 
 
 def _material_del_operador(messages: list[dict]) -> bool:
-    """El operador mando algo CONCRETO: un flyer/imagen o un enlace."""
+    """El operador le mando algo CONCRETO ademas del texto: un adjunto o un enlace.
+
+    SOLO SE AFIRMA LA FORMA, NUNCA EL CONTENIDO. De un adjunto conocemos el `media_type` y
+    de una URL el dominio; no hay manera de saber si esa imagen es material de la promo o
+    una foto cualquiera. Por eso ni este nombre ni los textos que lee el operador dicen
+    "flyer": el equipo de atencion no entendia su propia retroalimentacion porque nombraba
+    un artefacto que no usa (criterio del negocio, 2026-08-11). Lo que se afirma es lo
+    unico verificable — que el cliente se llevo algo mas que la explicacion.
+    """
     for m in messages:
         if not _is_operator(m):
             continue
@@ -125,17 +133,17 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     # verbal solo no distingue nada (68,2% lo hace) y el material si (11,8%).
     if material and espera <= RAZONABLE:
         return Promo(5, "excelente",
-                     f"Respondió en {_mins(espera)} y mandó material concreto — el "
-                     "flyer o el enlace —, que es lo que hace que la promo convierta.",
+                     f"Respondió en {_mins(espera)} y no se lo explicó solo con texto: "
+                     "le mandó algo concreto, que es lo que hace que la promo convierta.",
                      espera, True, empuje)
     if espera > AGIL:
         return Promo(3, "aceptable",
-                     f"Respondió en {_mins(espera)} y solo de palabra. Se apunta a "
-                     "contestar en 2 minutos, o a mandar el material.",
+                     f"Respondió en {_mins(espera)} y solo con texto. Se apunta a "
+                     "contestar en 2 minutos, o a mandarle algo concreto.",
                      espera, material, empuje)
     return Promo(4, "buena",
-                 f"Respondió en {_mins(espera)}, pero explicó la promo solo de "
-                 "palabra: faltó mandar el flyer o el enlace.",
+                 f"Respondió en {_mins(espera)}, pero le explicó la promo solo con "
+                 "texto: no le mandó nada que se pueda llevar.",
                  espera, material, empuje)
 
 
