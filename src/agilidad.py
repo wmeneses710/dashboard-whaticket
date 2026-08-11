@@ -263,7 +263,7 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
             sin_respuesta=len(abandonados),
             rationale=f"{plural(len(abandonados), 'pedido')} del agente "
                       f"{'quedó' if len(abandonados) == 1 else 'quedaron'} sin respuesta, "
-                      "y en toda la conversación el operador tampoco confirmó la operación "
+                      "y en esa interacción el operador tampoco confirmó la operación "
                       "ni envió el comprobante.",
         )
     if peor is None:

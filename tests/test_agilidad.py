@@ -520,3 +520,17 @@ def test_dentro_de_la_MISMA_interaccion_la_confirmacion_sigue_perdonando():
             _cierre_nota(3)]
     r = calificar_agilidad(msgs)
     assert r.sin_respuesta == 0, f"sin_respuesta={r.sin_respuesta} · {r.rationale}"
+
+
+def test_el_rationale_del_1_no_habla_de_TODA_la_conversacion():
+    # El texto decia "y en toda la conversacion el operador tampoco confirmo", pero desde el
+    # ventaneo la logica mira SOLO la interaccion del pedido. Es el mismo tipo de desfase
+    # texto/logica que ya se corrigio en el coaching de deposito, retiro y soporte: si la
+    # rubrica sabe en que ventana miro, el texto tiene que decir esa.
+    msgs = [_cli(0, "una recarga de 50"), _op(1, "acreditado"), _cierre_nota(2),
+            _cli(120, "", media="image"), _cierre_nota(200)]
+    r = calificar_agilidad(msgs)
+    assert r.stars == 1
+    bajo = r.rationale.lower()
+    assert "toda la conversación" not in bajo and "toda la conversacion" not in bajo
+    assert "interacc" in bajo or "esa" in bajo, r.rationale
