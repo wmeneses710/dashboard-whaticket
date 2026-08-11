@@ -22,12 +22,24 @@ from src.metrics import (
 from src.scorer import ScoreResult
 from src.segments import segment_for_queue
 
-# 2026.08-rubricas-v4: la escala v4 (hacer bien el trabajo YA vale 4; el cap de uplift
-# sobrevive solo en `promo`) + SIETE rubricas deterministas por motivo — agilidad
-# (agente), deposito, retiro, registro, promo, soporte_cuenta, info — mas el skip
-# `sin_motivo`. Cambia la nota del 63,2% de las sesiones de jugador, asi que las filas
-# viejas no son comparables: el bump es obligatorio.
-SCORING_VERSION = "2026.08-rubricas-v4"
+# 2026.08-rubricas-v5 (2026-08-11). El bump es OBLIGATORIO cada vez que cambia como se
+# calcula la nota: sin el, las filas viejas y las nuevas quedan indistinguibles y no hay
+# forma de comparar ni de volver atras. Lo que cambio contra v4:
+#   - el GATE del comprobante deja de ser ciego al comprobante sin texto del cliente
+#     (2 puertas: vocabulario real + acuse del operador) -> 23% de las que caian al pase
+#     con LLM pasan a la rubrica determinista;
+#   - "en breve tendras tu saldo disponible" ya NO cuenta como acreditacion;
+#   - el ABANDONO exige que el cliente haya LEIDO el pedido (`messages.ack`): el 42,1% de
+#     los abandonos que se reportaban eran inventados;
+#   - PIEZA 6: devolverle la pelota al cliente que ya pidio registrarse es 'deficiente';
+#   - el coaching apunta a la RAMA que produjo la nota, no a la estrella;
+#   - `_PASO_RE` de soporte ve el vocabulario real del operador (+34,7% del bucket de 2);
+#   - un emoji suelto y el saludo del widget web ya no se leen como pedido;
+#   - se RETIRO el cap de uplift de `promo` (la PIEZA 2) y todo su cableado.
+# Medido sobre 1.020 sesiones con el modelo de produccion: el promedio va de 4,03 a 3,97,
+# pero el 93,8% de las notas NO se mueve — el movimiento se concentra en `deposito` (-0,35),
+# `registro` (-0,14) y `soporte_cuenta` (+0,14).
+SCORING_VERSION = "2026.08-rubricas-v5"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
