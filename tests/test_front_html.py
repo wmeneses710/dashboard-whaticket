@@ -119,3 +119,33 @@ def test_el_recorte_completa_hileras_de_6():
     cap = int(m.group(1))
     for columnas in (2, 3, 4, 6):
         assert cap % columnas == 0, f"OPS_CAP={cap} deja huecos con {columnas} columnas"
+
+
+# --- LOS CHIPS DE HECHOS TIENEN QUE LEERSE EN LAS DOS DIRECCIONES -----------------
+# El mismo hecho se pinta con ✓ cuando se cumple y con ✗ cuando no. Con UNA sola frase
+# escrita como logro, el ✗ queda como acertijo: "✗ le mandó algo concreto" no dice ni qué es
+# ni qué habia que hacer. Lo trajo el negocio el 2026-08-11: "yo lo sé, vos lo sabés, pero
+# alguien que use este dashboard no tiene idea".
+
+def test_cada_hecho_tiene_las_dos_caras_y_un_tip():
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const HECHO_LABEL = {")
+    bloque = html[i:html.index("\n};", i)]
+    claves = re.findall(r"^  (\w+): \{", bloque, re.M)
+    assert len(claves) >= 7, f"se encontraron pocos hechos: {claves}"
+    for clave in claves:
+        entrada = re.search(rf"  {clave}: \{{(.*?)\}},", bloque, re.S).group(1)
+        for cara in ("si", "no", "tip"):
+            assert re.search(rf'\b{cara}: "[^"]{{10,}}"|\b{cara}: \'[^\']{{10,}}\'', entrada), \
+                f"el hecho {clave!r} no tiene un {cara!r} con texto"
+
+
+def test_la_cara_negativa_no_es_una_negacion_del_logro():
+    # La regla: `no` describe LO QUE PASÓ. Un "no hizo X" reintroduce el acertijo, porque
+    # obliga al lector a saber qué era X.
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const HECHO_LABEL = {")
+    bloque = html[i:html.index("\n};", i)]
+    for clave, texto in re.findall(r"^  (\w+): \{[^}]*?\bno: \"([^\"]+)\"", bloque, re.M | re.S):
+        assert not texto.lower().startswith(("no ", "no le", "sin ")), \
+            f"el hecho {clave!r} arranca negando en vez de contar: {texto!r}"

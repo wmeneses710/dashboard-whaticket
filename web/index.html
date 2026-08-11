@@ -821,8 +821,8 @@
             </div>
 
             <div class="hechos" v-if="dimHechos(modal.detail.dimensions,true).length || dimHechos(modal.detail.dimensions,false).length">
-              <span class="chip ok-chip" v-for="h in dimHechos(modal.detail.dimensions,true)" :key="'si'+h.lbl" :title="h.tip">✓ {{ h.lbl }}</span>
-              <span class="chip falta-chip" v-for="h in dimHechos(modal.detail.dimensions,false)" :key="'no'+h.lbl" :title="h.tip">✗ {{ h.lbl }}</span>
+              <span class="chip ok-chip" v-for="h in dimHechos(modal.detail.dimensions,true)" :key="'si'+h.si" :title="h.tip">✓ {{ h.si }}</span>
+              <span class="chip falta-chip" v-for="h in dimHechos(modal.detail.dimensions,false)" :key="'no'+h.no" :title="h.tip">✗ {{ h.no }}</span>
             </div>
 
             <div class="dims">
@@ -986,27 +986,40 @@ const CONTEO_LABEL = {
 };
 // En positivo lo que se hizo, en negativo lo que falto. El `tip` aclara que se
 // considera cumplido, para que nadie tenga que adivinar por que le falta un tilde.
+// CADA HECHO TIENE DOS CARAS, no una sola negada. El chip se pinta con ✓ cuando el hecho se
+// cumple y con ✗ cuando no, así que una sola frase escrita como LOGRO se vuelve un acertijo
+// al negarla: "✗ le mandó algo concreto" no dice ni qué es "algo concreto" ni qué había que
+// hacer. Lo trajo el negocio el 2026-08-11 sobre este chip y sobre "✗ lo invitó a dar el
+// paso": "yo lo sé, vos lo sabés, pero alguien que use este dashboard no tiene idea".
+// REGLA: `no` describe LO QUE PASÓ, no la ausencia del logro. Nunca "no hizo X".
 const HECHO_LABEL = {
   acredito: {
-    lbl: "le confirmó al cliente que la plata entró",
+    si: "le confirmó al cliente que la plata entró",
+    no: "nunca le confirmó que la plata entró",
     tip: 'Un "en breve" no alcanza: tiene que decir que el saldo ya está disponible.' },
   entrego_credenciales: {
-    lbl: "le entregó usuario y clave",
+    si: "le entregó usuario y clave",
+    no: "el alta quedó a medias: no llegó a entregarle usuario y clave",
     tip: "El operador creó la cuenta y le pasó los datos de acceso al cliente." },
   convirtio_a_deposito: {
-    lbl: "el cliente recargó en la misma conversación",
+    si: "el cliente recargó en la misma conversación",
+    no: "el cliente quedó registrado pero no llegó a recargar",
     tip: "Es el mejor final posible de un registro: la persona pasó de interesada a jugadora sin irse del chat." },
   mando_material: {
-    lbl: "le mandó algo concreto, no solo texto",
-    tip: "Una imagen, un video o un enlace. No miramos qué contiene: solo que el cliente se llevó algo además de la explicación." },
+    si: "le mandó una imagen, un video o un enlace",
+    no: "se lo explicó solo con texto: no le mandó nada que se pueda llevar",
+    tip: "No miramos qué contiene el adjunto, solo que el cliente se llevó algo además de la explicación." },
   empujo: {
-    lbl: "lo invitó a dar el paso",
-    tip: "Una invitación concreta a registrarse o recargar, no solo mencionar que existe una promo." },
+    si: "lo invitó a registrarse o a recargar",
+    no: "le explicó la promo pero no lo invitó a registrarse ni a recargar",
+    tip: "Una invitación concreta a dar el paso, no solo mencionar que existe una promo." },
   hubo_intento: {
-    lbl: "le dio una salida concreta",
-    tip: "Un paso a seguir o el caso escalado al área. El desbloqueo suele resolverse fuera del chat, así que lo que se mira es el intento." },
+    si: "le dio un paso a seguir o escaló el caso",
+    no: "el cliente se fue sin un paso a seguir ni la certeza de que se escaló",
+    tip: "El desbloqueo suele resolverse fuera del chat, así que lo que se mira es el intento, no el resultado." },
   pregunto_algo_mas: {
-    lbl: "se aseguró de que no le faltara nada",
+    si: "antes de cerrar se aseguró de que no le faltara nada",
+    no: "cerró sin preguntarle si le faltaba algo",
     tip: "Preguntar si necesita algo más antes de cerrar. No es lo mismo que despedirse con la plantilla." },
 };
 const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
