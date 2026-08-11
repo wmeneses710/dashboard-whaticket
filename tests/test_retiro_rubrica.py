@@ -166,3 +166,34 @@ def test_la_recomendacion_dice_QUE_falto():
     msgs = [_cli(0, FORMULARIO), _op(1, ACUSE)]
     r = score_retiro(msgs)
     assert r.stars == 2 and "comprobante" in r.recomendacion.lower()
+
+
+# --- LA EVIDENCIA SE BUSCA EN LA INTERACCION DEL PEDIDO ---------------------------
+# Mismo arreglo que en deposito: la frontera es la nota de cierre del operador (ver
+# src/interacciones.py). En las 5.624 conversaciones con varios cierres -- el 3,51%, donde
+# viven el 41,7% de los mensajes -- el comprobante de entrega de un retiro acreditaba el
+# pedido de OTRO. Caso `e5607f47-0387-46ac-a754-b1f90bb8a28b`: mezcla retiros y depositos del
+# 5 al 8-ago y la nota (4★) usaba solo el primer pedido con evidencia de los siguientes.
+
+def _cierre_nota(minutos, quien="Mel"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación"}
+
+
+def test_el_comprobante_de_OTRA_interaccion_no_entrega_este_retiro():
+    msgs = [_cli(0, "Monto a retirar: 70"), _op(1, "Tu retiro está en proceso"),
+            _cierre_nota(5),
+            _cli(2880, "Monto a retirar: 30"), _op(2881, "listo, acá tienes", media="image"),
+            _cierre_nota(2882)]
+    r = calificar_retiro(msgs)
+    assert r is not None
+    assert r.entrega is None, "la entrega del 2do retiro no puede cerrar el 1er pedido"
+    assert r.stars == 2, f"{r.stars}★ {r.rationale}"
+
+
+def test_sin_cierres_la_ventana_sigue_siendo_toda_la_sesion():
+    # No-regresion del 96,3% de las conversaciones.
+    msgs = [_cli(0, "Monto a retirar: 70"), _op(1, "dale"),
+            _op(2, "acá tienes", media="image")]
+    r = calificar_retiro(msgs)
+    assert r is not None and r.entrega is not None

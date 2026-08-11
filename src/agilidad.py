@@ -42,6 +42,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from src.interacciones import interaccion_de
 from src.rubrics import formato_espera, plural
 from src.scorer import ScoreResult
 from src.signals import (
@@ -239,8 +240,20 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
     # con la imagen del comprobante y sin una sola palabra contaba como abandono y se
     # llevaba el 1 estrella (caso real 5177aa96). `operator_sent_media` ya existe para
     # exactamente esto y filtra bots y notas.
-    ya_confirmo = operator_confirmation(messages) or operator_sent_media(messages)
-    abandonados = [t for t in pedidos if t.respuesta_at is None] if not ya_confirmo else []
+    # EL PERDON SE ACOTA A LA INTERACCION DEL PEDIDO, no a la sesion entera. Antes bastaba
+    # que el operador hubiera confirmado CUALQUIER cosa en la sesion para perdonar TODOS los
+    # pedidos sin respuesta, aunque fueran transacciones distintas. Caso `b97defc2` (4★):
+    # tres pedidos, el tercero -- una imagen nueva -- sin ninguna respuesta, y
+    # `sin_respuesta=0` porque los dos anteriores si se habian confirmado.
+    # El confound 3 sigue vigente DENTRO de la interaccion: si ya confirmo, el comprobante
+    # extra de la MISMA transaccion no exige otra respuesta.
+    def _perdonado(t) -> bool:
+        ancla = next((m for m in messages
+                      if not m.get("is_note") and m["created_at"] == t.pedido_at), None)
+        v = interaccion_de(messages, ancla) if ancla is not None else messages
+        return operator_confirmation(v) or operator_sent_media(v)
+
+    abandonados = [t for t in pedidos if t.respuesta_at is None and not _perdonado(t)]
     esperas = [t.espera for t in pedidos if t.espera is not None]
     peor = max(esperas) if esperas else None
 

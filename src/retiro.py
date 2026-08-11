@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 
+from src.interacciones import interaccion_de
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
@@ -115,7 +116,14 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     if not es_transaccion(messages):
         return None
     pedido = _pedido_del_cliente(messages)
-    reales = sorted((m for m in messages if not m.get("is_note")),
+    # LA EVIDENCIA SE BUSCA EN LA INTERACCION DEL PEDIDO (ver src/interacciones.py): la
+    # frontera la pone el objeto, la nota de cierre del operador. Sin esto, en las 5.624
+    # conversaciones con varios cierres -- el 3,51%, donde vive el 41,7% de los mensajes --
+    # el comprobante de entrega de un retiro cerraba el pedido de OTRO. Caso `e5607f47`:
+    # mezcla retiros y depositos del 5 al 8-ago y la nota usaba el primer pedido con la
+    # evidencia de los siguientes.
+    ventana = interaccion_de(messages, pedido)
+    reales = sorted((m for m in ventana if not m.get("is_note")),
                     key=lambda m: m["created_at"])
     posteriores = [m for m in reales if m["created_at"] > pedido["created_at"]]
     respuesta = next((m for m in posteriores if _is_operator(m)), None)

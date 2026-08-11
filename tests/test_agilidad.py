@@ -491,3 +491,32 @@ def test_con_un_solo_turno_las_dos_varas_coinciden():
     msgs = [_cli(0, "una recarga de 50"), _op(3, "listo")]
     r = calificar_agilidad(msgs)
     assert r.turnos_pedido == 1 and r.stars == 4, f"{r.stars}★ {r.rationale}"
+
+
+# --- EL PERDON DE `ya_confirmo` ERA GLOBAL POR SESION -----------------------------
+# Si el operador confirmaba CUALQUIER cosa en la sesion, se perdonaban TODOS los pedidos sin
+# respuesta posteriores, aunque fueran transacciones distintas. Caso
+# `b97defc2-762f-4172-ad78-38455dcbe138` (4★): tres pedidos, el tercero -- una imagen nueva --
+# sin ninguna respuesta, y `sin_respuesta=0` porque los dos anteriores si se habian
+# confirmado. Ahora el perdon se acota a la INTERACCION del pedido (ver src/interacciones.py).
+
+def _cierre_nota(minutos, quien="Mario", base=BASE):
+    return {"created_at": base + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación"}
+
+
+def test_una_confirmacion_previa_no_perdona_el_abandono_de_OTRA_interaccion():
+    msgs = [_cli(0, "una recarga de 50"), _op(1, "acreditado"), _cierre_nota(2),
+            _cli(120, "", media="image"), _cierre_nota(200)]
+    r = calificar_agilidad(msgs)
+    assert r.sin_respuesta == 1, f"sin_respuesta={r.sin_respuesta} · {r.rationale}"
+    assert r.stars == 1, f"{r.stars}★ {r.rationale}"
+
+
+def test_dentro_de_la_MISMA_interaccion_la_confirmacion_sigue_perdonando():
+    # Confound 3, que sigue vigente: si ya confirmo, el comprobante extra de la MISMA
+    # transaccion no exige otra respuesta.
+    msgs = [_cli(0, "una recarga"), _op(1, "acreditado"), _cli(2, "", media="image"),
+            _cierre_nota(3)]
+    r = calificar_agilidad(msgs)
+    assert r.sin_respuesta == 0, f"sin_respuesta={r.sin_respuesta} · {r.rationale}"
