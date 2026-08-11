@@ -229,6 +229,33 @@ def inactive_names(cur, account: str) -> set[str]:
 
 
 
+# Actividad de TODOS los operadores de las DOS cuentas. Espeja `_ADMIN_ROWS` (mismo nombre
+# resuelto, misma ventana, mismo criterio de `recientes`) pero sin scopear por cuenta y sin
+# el estado guardado: lo consume el bootstrap del archivo, que necesita las dos.
+# ESTABA SIN DEFINIR: `activity_rows` lo usaba y tiraba NameError, o sea que
+# scripts/dump_operadores.py -- el que genera config/operadores.json -- estaba roto, y no lo
+# atrapaba nada porque ningun test llamaba a la funcion.
+_ACTIVITY = """
+WITH ancla AS (
+  SELECT account, max(conversation_created_at) AS ultimo
+    FROM conversation_scores GROUP BY account
+)
+SELECT cs.account,
+       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS operador,
+       count(*) AS sesiones,
+       count(*) FILTER (
+         WHERE cs.conversation_created_at >= a.ultimo - make_interval(days => %(dias)s)
+           AND cs.eval_status = 'evaluated'
+       ) AS recientes,
+       max(cs.conversation_created_at)::date AS ultima_actividad
+  FROM conversation_scores cs
+  JOIN ancla a ON a.account = cs.account
+  LEFT JOIN users u ON u.id = cs.user_id AND u.account = cs.account
+ GROUP BY 1, 2
+ ORDER BY 1, 4 DESC, 3 DESC
+"""
+
+
 def activity_rows(cur, dias: int = 30) -> list[tuple]:
     """[(cuenta, operador, sesiones, recientes, ultima_actividad)] para todos los
     operadores de las dos cuentas. Lo consume el bootstrap del archivo y el modal."""
@@ -245,8 +272,19 @@ WITH ancla AS (
 )
 SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS operador,
        count(*) AS sesiones,
+       -- `recientes` cuenta SOLO las EVALUADAS. Es el numero contra el que el modal pre-marca
+       -- activos, y de eso depende quien aparece en los cuadros -- que muestran evaluadas.
+       -- Contando tambien las `skipped` (casi una decima parte de la tabla) el numero prometia
+       -- un aporte que no existe: medido el 2026-08-11 sobre la copia, de 29 operadores con
+       -- actividad 24 cruzaban el umbral de 100 con el numero viejo y 22 con este, o sea que 2
+       -- entraban SOLO por sesiones que nunca se calificaron.
+       -- `sesiones` queda SIN filtrar a proposito: es el volumen historico de la persona, no
+       -- una medida de aporte, y la columna del modal se llama asi.
+       -- OJO: nada de signos de porcentaje sueltos en estos comentarios -- psycopg los lee
+       -- como placeholder y revienta con "incomplete placeholder". Ver el guard en los tests.
        count(*) FILTER (
          WHERE cs.conversation_created_at >= a.ultimo - make_interval(days => %(dias)s)
+           AND cs.eval_status = 'evaluated'
        ) AS recientes,
        max(cs.conversation_created_at)::date AS ultima_actividad,
        coalesce(bool_and(os.activo), true) AS activo

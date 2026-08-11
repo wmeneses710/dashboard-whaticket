@@ -779,21 +779,33 @@ def test_ningun_sql_tiene_un_porcentaje_suelto():
     con "incomplete placeholder", y el cursor falso de estos tests NO lo detecta porque
     no parsea nada. Paso de verdad: un comentario que decia "el 81,8% cierra en menos de
     un minuto" tiro abajo el detalle del chat contra la BD real.
+
+    AMPLIADO el 2026-08-11 a TODO src/: antes solo miraba las constantes `*_SQL` de
+    src.queries, y volvi a meter el mismo bug en `src/operators_status._ADMIN_ROWS` -- que no
+    termina en _SQL y vive en otro modulo. Un comentario con "9,6%" rompio el modal de
+    operadores contra la BD real, con la suite entera en verde. Ahora se barre cualquier
+    constante de cualquier modulo que parezca SQL.
     """
+    import importlib
+    import pathlib
     import re
-    import src.queries as q
 
     sospechosos = []
-    for nombre in dir(q):
-        if not nombre.endswith("_SQL"):
-            continue
-        sql = getattr(q, nombre)
-        if not isinstance(sql, str):
-            continue
-        # Se sacan los placeholders validos y los '%%' escapados; lo que quede no va.
-        limpio = re.sub(r"%\([a-zA-Z_]+\)s", "", sql).replace("%%", "")
-        if "%" in limpio:
-            sospechosos.append(nombre)
+    raiz = pathlib.Path(__file__).resolve().parents[1] / "src"
+    for archivo in sorted(raiz.glob("*.py")):
+        mod = importlib.import_module(f"src.{archivo.stem}")
+        for nombre in dir(mod):
+            valor = getattr(mod, nombre)
+            if not isinstance(valor, str) or "%" not in valor:
+                continue
+            if not re.search(r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE)\b", valor, re.I):
+                continue
+            # Se sacan los placeholders VALIDOS -- nombrados `%(x)s` y posicionales `%s`, que
+            # usan los executemany de sessions/operators_status -- y los '%%' escapados.
+            # Lo que quede es un '%' de texto y revienta en runtime.
+            limpio = re.sub(r"%\([a-zA-Z_]+\)s|%s", "", valor).replace("%%", "")
+            if "%" in limpio:
+                sospechosos.append(f"src.{archivo.stem}.{nombre}")
     assert not sospechosos, f"'%' suelto en: {sospechosos}"
 
 

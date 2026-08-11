@@ -197,3 +197,47 @@ def test_suggest_from_activity_no_mira_el_volumen_historico():
     out = dict(((c, o), a) for c, o, a in
                suggest_from_activity([("sistemas", "MariCruz", 999999, 18)], umbral=100))
     assert out[("sistemas", "MariCruz")] is False
+
+
+# --- EL NUMERO QUE DECIDE QUIEN ESTA ACTIVO (2026-08-11) --------------------------
+# El modal usa `recientes` contra un umbral para pre-marcar activos, y de eso depende quien
+# aparece en los cuadros. Contaba TODAS las filas de conversation_scores, incluidas las
+# `skipped`, que no aportan a ningun cuadro. Medido sobre la copia: de 29 operadores con
+# actividad, 24 cruzaban el umbral de 100 con el numero viejo y 22 con el filtrado — 2
+# cruzaban SOLO por sesiones skipped, y el 5,9% del numero mostrado eran skipped.
+
+class _CurSQL:
+    """Cursor falso que solo guarda la consulta y devuelve una fila."""
+
+    def __init__(self, filas=((("sistemas", "Ana", 10, 5, None)),)):
+        self.query = ""
+        self._filas = list(filas)
+        self.description = [type("C", (), {"name": n})
+                            for n in ("cuenta", "operador", "sesiones", "recientes", "ultima")]
+
+    def execute(self, q, p=None):
+        self.query = q
+
+    def fetchall(self):
+        return self._filas
+
+
+def test_recientes_solo_cuenta_sesiones_EVALUADAS():
+    import src.operators_status as m
+    for nombre in ("_ADMIN_ROWS", "_ACTIVITY"):
+        sql = getattr(m, nombre)
+        # el filtro de la ventana y el de eval_status tienen que estar en el MISMO count
+        i = sql.index("AS recientes")
+        ventana = sql[:i]
+        assert "eval_status" in ventana.rsplit("count(*) FILTER", 1)[-1], \
+            f"{nombre}: `recientes` sigue contando las skipped"
+
+
+def test_activity_rows_no_revienta():
+    # BUG LATENTE: `_ACTIVITY` se usaba en activity_rows() y no estaba definido en el modulo,
+    # asi que la funcion tiraba NameError. La usa scripts/dump_operadores.py, o sea que el
+    # script que genera config/operadores.json estaba roto y ningun test lo llamaba.
+    from src.operators_status import activity_rows
+    cur = _CurSQL()
+    filas = activity_rows(cur, dias=30)
+    assert filas and "conversation_scores" in cur.query
