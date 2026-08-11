@@ -231,7 +231,10 @@ _QUIERE_REGISTRARSE_RE = re.compile(
 # negocio — NO existe un link de registro (ver src/prompts.py y src/recommendations.py).
 _AL_PUNTO_RE = re.compile(
     r"te creo (un |tu |la )?(usuario|cuenta)|creo tu (usuario|cuenta)|"
-    r"te (ayudo a )?registr|te registro|te abro (la|tu) cuenta|"
+    # "te ayudo A registrarte" y "te ayudo CON EL registro" son la MISMA oferta. El patron
+    # solo tenia la primera, asi que la PIEZA 6 castigaba con 2 estrellas al operador que se
+    # ofrecio con la otra preposicion (caso `ec84aae1`, hallado el mismo dia que se escribio).
+    r"te (ayudo (a |con (el|tu|mi) )?)?registr|te abro (la|tu) cuenta|"
     r"quieres que te (ayude|cree|registre)|queres que te (ayude|cree|registre)|"
     r"me ayudas con (estos |los )?datos|pasame (tus |los )?datos|"
     r"(nombre de usuario|correo electr[oó]nico|numero de celular|n[uú]mero de celular)|"

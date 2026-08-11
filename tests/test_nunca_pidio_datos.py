@@ -207,3 +207,18 @@ def test_QUISIERA_registrarme_cuenta_igual_que_quiero():
                 _op(30, "Hola! trabajo para Sorti365, tenemos las mejores cuotas"),
                 _cli(60, "y como es")]
         assert nunca_pidio_los_datos(msgs) is True, frase
+
+
+def test_ofrecerse_a_ayudar_CON_el_registro_tambien_es_ir_al_punto():
+    # FALSO POSITIVO de la PIEZA 6 encontrado el mismo dia que se escribio. `_AL_PUNTO_RE`
+    # tenia `te (ayudo a )?registr`, asi que reconocia "te ayudo A REGISTRARTE" pero no
+    # "te ayudo CON EL registro" — la misma oferta con otra preposicion. Caso real
+    # `ec84aae1-3ba4-440e-b0b5-b81e245e7228`: el operador dice "Si te animas, yo mismo te
+    # ayudo con el registro" y quedaba en 2 estrellas por no haber ido al punto.
+    for oferta in ("Si te animas, yo mismo te ayudo con el registro",
+                   "te ayudo con tu registro",
+                   "te ayudo con el registro cuando quieras",
+                   "te ayudo a registrarte"):
+        msgs = [_cli(0, "quiero registrarme"), _op(30, oferta, ack=3)]
+        assert le_devolvio_la_pelota(msgs) is False, oferta
+        assert nunca_pidio_los_datos(msgs) is False, oferta
