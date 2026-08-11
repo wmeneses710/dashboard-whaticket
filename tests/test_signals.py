@@ -9,18 +9,14 @@ from datetime import datetime, timedelta, timezone
 
 from src.signals import (
     operator_acreditacion,
-    operator_asked_anything_else,
-    operator_acuse,
     operator_confirmation,
     operator_maltrato,
     operator_pushed,
     operator_resolved,
     operator_sent_credentials,
     operator_sent_media,
-    operator_sent_register_link,
     operator_strong_uplift,
     app_mentioned,
-    client_abandoned,
     client_asked_question,
     client_reasked,
 )
@@ -105,23 +101,6 @@ def test_media_type_no_real_no_cuenta():
     assert operator_sent_media([_agent(media_type="document")]) is True  # doc sí es media real
 
 
-# --- client_abandoned -----------------------------------------------------
-
-def test_cliente_abandono_si_ultimo_es_agente():
-    msgs = [_client("hola"), _agent("¿en qué te ayudo?")]
-    assert client_abandoned(msgs) is True
-
-
-def test_no_abandono_si_cliente_respondio_ultimo():
-    msgs = [_agent("¿en qué te ayudo?"), _client("gracias")]
-    assert client_abandoned(msgs) is False
-
-
-def test_abandono_ignora_notas_finales():
-    msgs = [_client("hola"), _agent("listo"), {"from_me": True, "is_note": True, "body": "*resuelto*"}]
-    assert client_abandoned(msgs) is True
-
-
 # --- ACUSE vs ACREDITACION ---------------------------------------------------
 # `operator_confirmation` mezcla las dos cosas: "en breve" (voy) y "acreditado"
 # (llego). Para la rubrica de deposito hacen falta separadas, porque el 2 estrellas
@@ -176,18 +155,6 @@ def test_el_acuse_NO_es_acreditacion():
         assert operator_acreditacion([_agent(texto)]) is False, texto
 
 
-def test_acuse_detecta_el_voy():
-    for texto in ("Estamos verificando tu comprobante. Tu recarga se reflejará en breve.",
-                  "🔜 Tu solicitud de recarga está siendo procesada",
-                  "Tu retiro está en proceso 🔄",
-                  "Permítame un momento"):
-        assert operator_acuse([_agent(texto)]) is True, texto
-
-
-def test_acuse_no_dispara_con_saludo():
-    assert operator_acuse([_agent("Buenos días, ¿en qué te ayudo?")]) is False
-
-
 def test_acreditacion_ignora_al_cliente_y_al_bot():
     assert operator_acreditacion([_client("ya está acreditado?")]) is False
     assert operator_acreditacion([_bot("Tu saldo ya está disponible")]) is False
@@ -196,33 +163,6 @@ def test_acreditacion_ignora_al_cliente_y_al_bot():
 def test_acreditacion_respeta_la_negacion():
     assert operator_acreditacion([_agent("todavía no está acreditado")]) is False
     assert operator_acreditacion([_agent("aún no se ha cargado tu saldo")]) is False
-
-
-# --- operator_asked_anything_else -------------------------------------------
-# El criterio NO es "mando la plantilla de despedida" sino "se aseguro de que el
-# cliente no necesitara algo mas": la plantilla es una despedida, la pregunta es un
-# ofrecimiento. Linea base medida el 2026-08-06: 13,0% de las sesiones. Y no es que
-# nadie lo haga — Mario 66% (59 de 89), Andree Rodriguez 0% (0 de 112).
-
-def test_pregunta_si_necesita_algo_mas():
-    for texto in ("Paul ¿Hay algo más en lo que te pueda ayudar? 🙂🍀",
-                  "¿Alguna otra duda?",
-                  "¿En qué más te puedo ayudar?",
-                  "¿Necesitas algo más antes de cerrar?",
-                  "¿Te quedó alguna inquietud?"):
-        assert operator_asked_anything_else([_agent(texto)]) is True, texto
-
-
-def test_la_despedida_NO_cuenta_como_preguntar():
-    # Las plantillas de cierre se despiden; no ofrecen nada.
-    for texto in ("Gracias por preferirnos! 🍀💚",
-                  "¡Fue un placer atenderte! 😊✨",
-                  "Un placer atenderte 😊."):
-        assert operator_asked_anything_else([_agent(texto)]) is False, texto
-
-
-def test_preguntar_algo_mas_ignora_al_cliente():
-    assert operator_asked_anything_else([_client("¿algo más que deba hacer?")]) is False
 
 
 # --- operator_resolved (confirmacion o media del agente) ---------------------
@@ -402,24 +342,6 @@ def test_credenciales_etiqueta_sin_valor_no_cuenta():
 def test_credenciales_pedir_con_dos_puntos_y_valor_no_cuenta():
     # aunque haya etiqueta:valor, el verbo de pedido lo excluye
     assert operator_sent_credentials([_agent("indícame tu usuario: elque tengas")]) is False
-
-
-# --- operator_sent_register_link (enlace de registro del agente) ------------
-
-def test_register_link_sorti_ec():
-    assert operator_sent_register_link([_agent("Regístrate acá sorti.ec/register?code=1")]) is True
-
-
-def test_register_link_url_generica_con_register():
-    assert operator_sent_register_link([_agent("Entra aquí https://otrodominio.com/register")]) is True
-
-
-def test_register_link_ignora_al_cliente():
-    assert operator_sent_register_link([_client("vi sorti.ec/register en otro lado")]) is False
-
-
-def test_sin_register_link_solo_texto():
-    assert operator_sent_register_link([_agent("Puedes registrarte cuando quieras")]) is False
 
 
 # --- app_mentioned (no hay app; sirve para recomendar la web) -------------

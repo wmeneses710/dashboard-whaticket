@@ -10,7 +10,6 @@ Mensajes = dicts con: from_me, is_note, body, media_type.
 from src.deposits import (
     deposit_candidate_count,
     has_recharge_context,
-    is_deposit_candidate,
     receipt_image_count,
 )
 
@@ -29,20 +28,17 @@ def _age_txt(body):
 
 def test_sin_mensajes_es_cero():
     assert deposit_candidate_count([]) == 0
-    assert is_deposit_candidate([]) is False
 
 
 def test_imagen_del_cliente_con_contexto_de_recarga_cuenta():
     msgs = [_cli_txt("hola quiero hacer una recarga"), _cli_img()]
     assert deposit_candidate_count(msgs) == 1
-    assert is_deposit_candidate(msgs) is True
 
 
 def test_imagen_del_cliente_sin_contexto_no_cuenta_control_fp():
     # Imagen sin ninguna razon de recarga: no es un comprobante -> 0 (evita FP).
     msgs = [_cli_txt("miren esta foto"), _cli_img()]
     assert deposit_candidate_count(msgs) == 0
-    assert is_deposit_candidate(msgs) is False
 
 
 def test_texto_de_recarga_sin_imagen_no_cuenta():

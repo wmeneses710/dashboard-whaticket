@@ -81,6 +81,3 @@ def deposit_candidate_count(messages: list[dict]) -> int:
         return 0
     return receipt_image_count(messages)
 
-
-def is_deposit_candidate(messages: list[dict]) -> bool:
-    return deposit_candidate_count(messages) > 0

@@ -127,24 +127,6 @@ ANYTHING_ELSE_PATTERN = (
 _ANYTHING_ELSE_RE = re.compile(ANYTHING_ELSE_PATTERN, re.IGNORECASE)
 
 
-def operator_asked_anything_else(messages: list[dict]) -> bool:
-    """True si el OPERADOR chequeo que el cliente no necesitara nada mas."""
-    return any(
-        _ANYTHING_ELSE_RE.search(_strip_accents(m.get("body") or ""))
-        for m in messages
-        if _is_operator(m)
-    )
-
-
-def operator_acuse(messages: list[dict]) -> bool:
-    """True si el OPERADOR avisa que esta procesando. Es el "voy", no el "llego"."""
-    return any(
-        _ACUSE_RE.search(_strip_accents(m.get("body") or ""))
-        for m in messages
-        if _is_operator(m)
-    )
-
-
 # El DOMINIO de la recarga tiene una sola fuente: src.deposits.RECHARGE_PATTERN, el mismo
 # que usan el gate en Python y la agregacion en SQL. Aca se reusa para exigir que el acuse
 # hable de una RECARGA y no de cualquier cosa.
@@ -341,18 +323,6 @@ def operator_sent_media(messages: list[dict]) -> bool:
         _is_operator(m) and is_real_media(m.get("media_type"))
         for m in messages
     )
-
-
-def client_abandoned(messages: list[dict]) -> bool:
-    """True si el ULTIMO mensaje real (sin notas) lo mando el operador.
-
-    Es decir, el cliente no volvio a responder tras la ultima intervencion del
-    operador: la falta de cierre es del cliente, no del operador (trampa #2).
-    """
-    real = [m for m in messages if not m.get("is_note")]
-    if not real:
-        return False
-    return bool(real[-1].get("from_me"))
 
 
 # ¿El cliente planteó una CONSULTA contestable? (signo de pregunta o palabra interrogativa).
@@ -565,19 +535,6 @@ def operator_sent_credentials(messages: list[dict]) -> bool:
         if _CREDENTIALS_RE.search(body) and not _ASK_CREDENTIALS_RE.search(body):
             return True
     return False
-
-
-# Enlace de registro (con codigo de afiliado) que el OPERADOR manda al cliente para
-# completar el alta. Distinto de operator_pushed/operator_strong_uplift (que son mas
-# amplios): esta senal es especifica del ENLACE de registro, para detectar cuando
-# el operador NO lo mando (y hay que recomendar que lo mande).
-REGISTER_LINK_PATTERN = r"(https?://\S*/register|sorti\.ec/register)"
-_REGISTER_LINK_RE = re.compile(REGISTER_LINK_PATTERN, re.IGNORECASE)
-
-
-def operator_sent_register_link(messages: list[dict]) -> bool:
-    """True si el OPERADOR mando un enlace de registro (sorti.ec/register o URL con /register)."""
-    return any(_REGISTER_LINK_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
 
 
 # Mencion de "app"/"aplicacion" por CUALQUIERA (cliente o operador): el negocio no

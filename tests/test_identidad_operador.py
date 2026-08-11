@@ -21,6 +21,7 @@ from src.operators import (
     clave_persona,
     es_nombre_de_persona,
     nombre_de_firma,
+    operator_name,
 )
 
 
@@ -191,3 +192,28 @@ def test_una_firma_de_persona_le_GANA_al_catalogo():
     # NO es un nombre de persona; las grafias legitimas se deciden con el negocio.
     cur = _Cur([("u1", "Maria Jose", 56373)], [("u1", "Majo")])
     assert build_operator_map(cur)["u1"] == "Maria Jose"
+
+
+# --- operator_name: la firma DENTRO de una sesion --------------------------------
+# Estos cuatro venian de tests/test_operators.py, que se elimino: sus otros 3 tests
+# duplicaban los de arriba y su docstring afirmaba "la tabla users viene vacia", que
+# dejo de ser cierto (48 usuarios, y `build_operator_map` ahora usa el catalogo).
+
+def test_operator_name_solo_mira_los_mensajes_de_ESE_operador():
+    msgs = [{"from_me": True, "is_note": False, "user_id": "op-B", "body": "*Otro:*\nhi"}]
+    assert operator_name(msgs, "op-A") is None
+
+
+def test_operator_name_sin_firma_es_none():
+    msgs = [{"from_me": True, "is_note": False, "user_id": "op-A", "body": "hola sin firma"}]
+    assert operator_name(msgs, "op-A") is None
+
+
+def test_operator_name_sin_operador_es_none():
+    assert operator_name([], None) is None
+
+
+def test_el_mapa_se_scopea_por_cuenta():
+    cur = _Cur([], [])
+    build_operator_map(cur, account="datos")
+    assert "datos" in (cur.executed[-1][1] or ())
