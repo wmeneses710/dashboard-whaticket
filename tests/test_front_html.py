@@ -15,6 +15,7 @@ La suite entera en verde y el tablero roto.
 da ningun sintoma hasta que el navegador lo monta. Este test lo convierte en un fallo.
 """
 import pathlib
+import re
 from html.parser import HTMLParser
 
 # Elementos sin cierre (HTML5). No van a la pila.
@@ -22,6 +23,8 @@ VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
         "meta", "param", "source", "track", "wbr"}
 # Dentro de estos el contenido no es markup (llaves de JS, CSS, etc.).
 CRUDO = {"script", "style"}
+
+HTML = pathlib.Path(__file__).resolve().parents[1] / "web" / "index.html"
 
 
 class _Balance(HTMLParser):
@@ -88,3 +91,31 @@ def test_no_quedan_etiquetas_sin_cerrar():
     p = _analizar()
     colgando = [f"<{t}> abierto en la linea {l}" for t, l in p.pila]
     assert not colgando, "etiquetas sin cerrar:\n  " + "\n  ".join(colgando)
+
+
+# --- EL RECORTE DE LAS TARJETAS POR OPERADOR --------------------------------------
+# Son dos decisiones del negocio (2026-08-11) que viven en dos constantes de JS, o sea que
+# nada las protege salvo esto. Un `expand` en true o un OPS_CAP en 8 no rompen ningun test
+# ni tiran ningun error: simplemente el tablero vuelve a verse mal.
+
+def test_las_tarjetas_por_operador_arrancan_PLEGADAS():
+    # Con 50 operadores, arrancar expandido convierte la tarjeta en un muro. El default es
+    # el recorte; ver todos queda a un click.
+    html = HTML.read_text(encoding="utf-8")
+    m = re.search(r"const expand = reactive\(\{([^}]*)\}\)", html)
+    assert m, "cambio la forma de `expand`, revisar este test"
+    for clave in ("qual", "convPasv", "qualMotivo"):
+        assert re.search(rf"\b{clave}\s*:\s*false", m.group(1)), \
+            f"expand.{clave} tiene que arrancar en false: {m.group(1).strip()}"
+
+
+def test_el_recorte_completa_hileras_de_6():
+    # La grilla es `auto-fill` con minmax(235px), asi que las columnas dependen del ancho: en
+    # pantalla grande entran 6. Con 8 la segunda hilera quedaba con 2 tarjetas y 4 huecos.
+    # El cap tiene que dividir a 6 (y de paso a 4, 3 y 2) para no dejar huecos.
+    html = HTML.read_text(encoding="utf-8")
+    m = re.search(r"const OPS_CAP = (\d+)", html)
+    assert m, "cambio el nombre de OPS_CAP, revisar este test"
+    cap = int(m.group(1))
+    for columnas in (2, 3, 4, 6):
+        assert cap % columnas == 0, f"OPS_CAP={cap} deja huecos con {columnas} columnas"

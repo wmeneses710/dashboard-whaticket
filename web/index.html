@@ -1145,8 +1145,12 @@ createApp({
     const ambienteLbl = computed(() =>
       (AMBIENTES.find(a => a.k === filters.ambiente) || {}).lbl || filters.ambiente);
     // Cuántos mini-gráficos se muestran cuando la tarjeta está PLEGADA.
-    const OPS_CAP = 8;
-    const expand = reactive({ qual:true, convPasv:true, qualMotivo:false });
+    // 12 y no 8: la grilla es `auto-fill` con minmax(235px), así que la cantidad de columnas
+    // depende del ancho. En pantalla grande entran 6 por hilera, y con 8 la segunda hilera
+    // quedaba con 2 tarjetas y 4 huecos. 12 completa la hilera con 6, 4, 3 y 2 columnas
+    // (todas las que divide), así que no deja huecos en ningún ancho plausible.
+    const OPS_CAP = 12;
+    const expand = reactive({ qual:false, convPasv:false, qualMotivo:false });
     let loadedCount = 0;
     const modal = reactive({ open:false, loading:false, detail:null, title:"" });
     const drill = reactive({ open:false, op:"", loading:false, rows:[] });
@@ -1481,10 +1485,12 @@ createApp({
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
     // El backend ya NO recorta: manda los operadores que haya (50 en sistemas), ordenados
     // por volumen. El recorte es del front, porque es el que sabe cuánto espacio hay.
-    // - qual / convPasv: UN mini por operador -> arrancan EXPANDIDOS (verlos todos no
-    //   estorba, solo agrega tarjetitas) y se pueden plegar a OPS_CAP.
-    // - qualMotivo: todos los operadores comparten un mini por motivo (una LÍNEA cada
-    //   uno) -> arranca plegado; expandirlo es legítimo pero se vuelve spaghetti.
+    // LOS TRES ARRANCAN PLEGADOS a OPS_CAP. Antes qual/convPasv arrancaban expandidos con el
+    // argumento de que "verlos todos no estorba, solo agrega tarjetitas"; el negocio lo
+    // corrigió el 2026-08-11: con 50 operadores la tarjeta se vuelve un muro y el default
+    // tiene que ser el recorte, con el botón para ver todos. Y qualMotivo ya arrancaba
+    // plegado por otra razón que sigue vigente: ahí todos los operadores comparten un mini
+    // por motivo (una LÍNEA cada uno), así que expandirlo se vuelve spaghetti.
     const qualShown = computed(() => expand.qual ? qualOps.value : qualOps.value.slice(0, OPS_CAP));
     const convPasvShown = computed(() => expand.convPasv ? convPasvOps.value : convPasvOps.value.slice(0, OPS_CAP));
     const qualMotivoShown = computed(() => qualMotivoOps.value.map(m => ({
