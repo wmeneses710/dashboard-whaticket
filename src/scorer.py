@@ -254,6 +254,21 @@ def score_by_motivo(
     # rarisimo; sin evidencia determinista, se descarta el maltrato -> no cae a 'mala'.
     if maltrato and not operator_maltrato(target_messages):
         maltrato, override = False, True
+    # PIEZA 6 - LA PELOTA DE VUELTA AL CLIENTE ES UNA FALLA DEL PISO, NO UN TECHO.
+    # Es el falso POSITIVO que la PIEZA 1 no puede atrapar por ser asimetrica (ver su nota):
+    # el LLM auto-reporta `atendio_el_motivo` y nadie lo corrobora. Aca SI hay señal dura —
+    # el cliente declaro que queria registrarse y el operador le devolvio la decision sin
+    # actuar (src/registro.le_devolvio_la_pelota) — asi que el piso "guia el alta paso a
+    # paso" NO se cumplio y la nota es 'deficiente'. Criterio del negocio del 2026-08-11
+    # sobre un chat concreto: "si el cliente ya dice que quiere registrarse, y el operador le
+    # pregunta, es una deficiencia".
+    # Va ANTES de label_from_facts a proposito: los techos (PIEZAS 2/3/4) solo bajan hasta
+    # 'aceptable', y esto no es "le falto algo", es que no hizo lo unico que habia que hacer.
+    if motivo == "registro":
+        from src.registro import le_devolvio_la_pelota
+
+        if le_devolvio_la_pelota(target_messages):
+            atendio, override = False, True
 
     label = label_from_facts(
         atendio_motivo=atendio, hizo_accion_extra=extra,

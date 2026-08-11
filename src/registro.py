@@ -37,7 +37,12 @@ from datetime import timedelta
 from src.deposits import deposit_candidate_count
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
-from src.signals import _is_operator, operator_sent_credentials, tiene_reloj
+from src.signals import (
+    _cliente_lo_leyo,
+    _is_operator,
+    operator_sent_credentials,
+    tiene_reloj,
+)
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
@@ -242,9 +247,11 @@ def nunca_pidio_los_datos(messages: list[dict]) -> bool:
     cerraron el alta igual, o sea que `_AL_PUNTO_RE` tiene falsos negativos. Sin ella se
     penalizaria un registro exitoso por estar redactado distinto.
 
-    Las sesiones donde el cliente se FUE quedan afuera a proposito: no se puede separar
-    "el operador no tuvo chance" de "se fue porque no le pidieron nada", y la duda
-    favorece al operador.
+    LA 2da SE APOYA EN `ack` (2026-08-11). Existia porque, con el cliente ido, no se podia
+    separar "el operador no tuvo chance" de "se fue porque no le pidieron nada", y la duda
+    favorecia al operador. El `ack` de WhatsApp rompe el empate: si el cliente LEYO los
+    mensajes del operador, el operador tuvo su chance y no la uso. Con el cliente ido Y sin
+    lectura, la duda sigue favoreciendolo. Son 117 sesiones mas de `registro`.
     """
     reales = [m for m in messages if not m.get("is_note")]
     idx = next((k for k, m in enumerate(reales)
@@ -253,15 +260,79 @@ def nunca_pidio_los_datos(messages: list[dict]) -> bool:
     if idx is None:
         return False                                    # 1
     posteriores = reales[idx + 1:]
-    if not any(_is_operator(m) for m in posteriores):
+    del_operador = [m for m in posteriores if _is_operator(m)]
+    if not del_operador:
         return False                                    # sin operador -> no_agent_reply
-    if not any(not m.get("from_me") for m in posteriores):
-        return False                                    # 2: el cliente se fue
+    # 2: habia con quien hablar — el cliente siguio escribiendo, o LEYO lo que le mandaron.
+    if not any(not m.get("from_me") for m in posteriores) \
+            and not any(_cliente_lo_leyo_de_verdad(m) for m in del_operador):
+        return False
     if any(_is_operator(m) and _AL_PUNTO_RE.search(m.get("body") or "")
            for m in reales[idx:]):
         return False                                    # 3: si fue al punto
     if operator_sent_credentials(reales) or es_transaccion(reales):
         return False                                    # 4: el alta se cerro igual
+    return True
+
+
+def _cliente_lo_leyo_de_verdad(m: dict) -> bool:
+    """Como `_cliente_lo_leyo`, pero un `ack` AUSENTE cuenta como NO leido.
+
+    La diferencia con la señal de abandono es deliberada y va en la direccion segura de
+    cada una. Alla el default es True para no PERDER un abandono cuando la columna no
+    viene; aca el default es False para no INVENTAR una penalizacion: sin evidencia de
+    lectura, el criterio viejo (la duda favorece al operador) queda intacto.
+    """
+    return m.get("ack") is not None and _cliente_lo_leyo(m)
+
+
+# --- DEVOLVERLE LA PELOTA AL CLIENTE QUE YA DECIDIO -------------------------------
+# Criterio del negocio (2026-08-11), a partir de un chat concreto: "si el cliente ya dice
+# que quiere registrarse, y el operador le pregunta, es una deficiencia". El piso de la
+# rubrica de `registro` es "guia el alta de la cuenta paso a paso" (src/rubrics.py):
+# repreguntarle la intencion que YA declaro no es guiar, es un paso atras.
+#
+# LA LINEA FINA: `_AL_PUNTO_RE` ya trata "¿quieres que te CREE la cuenta?" como ir al punto,
+# porque el operador se ofrece a ACTUAR — ese es el mecanismo de este negocio. Lo que se
+# penaliza es lo contrario: "¿te animas a registrarte?", donde la pelota vuelve al cliente
+# que ya la habia pateado. El lookahead `(?!que te)` es exactamente esa frontera.
+#
+# MEDIDO sobre la copia: 188 sesiones, nota media 3,43 y **82 de ellas con 4 o 5 estrellas**.
+_PELOTA_AL_CLIENTE_RE = re.compile(
+    r"te anim[aá]s?|"
+    r"(quieres|queres|deseas|te gustar[ií]a|te interesa)\s+(?!que\s+te\b)"
+    r"(registrarte|registrar|crear (una |tu )?cuenta|abrir (una |tu )?cuenta)",
+    re.IGNORECASE,
+)
+
+
+def le_devolvio_la_pelota(messages: list[dict]) -> bool:
+    """El cliente pidio registrarse y el operador le repregunto la intencion, sin actuar.
+
+    Las CUATRO condiciones, espejo de `nunca_pidio_los_datos` (y con los mismos guards):
+      1. el cliente pidio registrarse EXPLICITAMENTE — la intencion no esta en disputa,
+      2. algun mensaje POSTERIOR del operador le devuelve la decision al cliente,
+      3. el operador nunca fue al punto (ni pidio datos ni se ofrecio a crear la cuenta),
+      4. el alta NO se cerro.
+
+    A DIFERENCIA de `nunca_pidio_los_datos`, esto NO mira si el cliente estaba presente ni
+    si leyo: no juzga el resultado sino lo que el operador ESCRIBIO, que es observable haya
+    llegado o no. Por eso el caso de Gloria Villacis (ack=2, nunca lo leyo) cae igual.
+    """
+    reales = [m for m in messages if not m.get("is_note")]
+    idx = next((k for k, m in enumerate(reales)
+                if not m.get("from_me")
+                and _QUIERE_REGISTRARSE_RE.search(m.get("body") or "")), None)
+    if idx is None:
+        return False                                    # 1
+    if not any(_is_operator(m) and _PELOTA_AL_CLIENTE_RE.search(m.get("body") or "")
+               for m in reales[idx + 1:]):
+        return False                                    # 2
+    if any(_is_operator(m) and _AL_PUNTO_RE.search(m.get("body") or "")
+           for m in reales[idx:]):
+        return False                                    # 3
+    if operator_sent_credentials(reales) or es_transaccion(reales):
+        return False                                    # 4
     return True
 
 
