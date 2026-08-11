@@ -139,3 +139,32 @@ def test_la_recomendacion_del_4_pide_chequear_el_cierre():
     msgs = [_cli(0), _op(1, PASO)]
     r = score_soporte(msgs)
     assert r.stars == 4 and "algo más" in r.recomendacion.lower()
+
+
+# --- EL VOCABULARIO REAL DEL OPERADOR (auditoria del 2026-08-11) ------------------
+# `_PASO_RE` se armo mirando pocos ejemplos y quedo corto: no tenia verificar, validar,
+# confirmar, subir ni cambiar. Medido sobre las 1.234 sesiones de 2 estrellas marcadas
+# "sin intento", 627 (50,8%) tienen un mensaje del operador con alguno de esos verbos.
+# Caso `88793cdc`: el operador dice "suba la informacion directamente en la plataforma, si
+# desea yo le puedo guiar" y el rationale afirma "ni un paso a seguir".
+
+def test_los_verbos_de_instruccion_que_el_regex_no_veia():
+    for paso in ("suba la informacion directamente en la plataforma",
+                 "verifica tu cuenta con la cedula y te habilito",
+                 "valida el correo que te llego",
+                 "confirma los datos y lo reviso",
+                 "cambia la clave desde el perfil",
+                 "comunicate con atencion al cliente al 099"):
+        r = calificar_soporte([_cli(0), _op(1, paso)])
+        assert r.stars >= 4, f"{paso} -> {r.stars}★ {r.rationale}"
+
+
+def test_un_verbo_NEGADO_no_es_un_paso():
+    # El otro lado del filo: ampliar el vocabulario sin mirar la negacion acreditaria
+    # "no puedo verificar tu cuenta" como si fuera una instruccion. La rubrica ya usa
+    # este criterio en `operator_acreditacion` (la negacion invalida la frase).
+    for no_paso in ("no puedo verificar tu cuenta desde aca",
+                    "no se puede cambiar el usuario, lo siento",
+                    "todavia no confirmo nada"):
+        r = calificar_soporte([_cli(0), _op(1, no_paso)])
+        assert r.stars == 2, f"{no_paso} -> {r.stars}★ {r.rationale}"

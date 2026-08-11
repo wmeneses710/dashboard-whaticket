@@ -37,6 +37,8 @@ from statistics import median
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
+    _NEGACION_RE,
+    _frases,
     _is_operator,
     is_real_media,
     operator_asked_and_waited,
@@ -57,6 +59,20 @@ TOLERABLE = timedelta(minutes=5)
 _PASO_RE = re.compile(
     r"ingres[aá]|entr[aá]|prob[aá]|reinicia|borra|limpia|actualiza|descarga|"
     r"toca|hac[eé] click|abr[ií]|us[aá]|escrib[ií]|copia|peg[aá]|revis[aá]",
+    re.IGNORECASE)
+# VOCABULARIO QUE FALTABA. La lista de arriba se armo mirando pocos ejemplos y quedaba corta:
+# sin verificar, validar, confirmar, subir, cambiar ni comunicarse. Medido el 2026-08-11 sobre
+# las 1.234 sesiones de 2 estrellas marcadas "sin intento", **627 (50,8%)** tienen un mensaje
+# del operador con alguno de esos verbos — cota SUPERIOR, no todas son un paso. Caso
+# `88793cdc`: el operador dice "suba la informacion directamente en la plataforma, si desea yo
+# le puedo guiar" y el rationale afirma "ni un paso a seguir".
+#
+# VAN APARTE Y CON GUARD DE NEGACION porque sus raices tambien matchean el INFINITIVO
+# ("no puedo verificar tu cuenta" lleva 'verific'), asi que sin el guard acreditarian como
+# instruccion justo lo contrario. La lista de arriba NO se toca: sus formas son imperativas y
+# meterla bajo el guard le sacaria pasos legitimos del tipo "si no podes entrar, escribinos".
+_PASO_AMPLIADO_RE = re.compile(
+    r"verific|valid[aá]|confirm[aá]|sub[aei]|subir|cambi[aá]|comunic",
     re.IGNORECASE)
 # Escalar TAMBIEN es intentar: es el techo de lo que el operador puede hacer solo.
 _ESCALO_RE = re.compile(
@@ -82,15 +98,24 @@ class Soporte:
     pregunto_algo_mas: bool
 
 
+# EL CONSEJO APUNTA A LA RAMA, NO A LA ESTRELLA (misma razon que en src/deposito.py). Al 2
+# se llega porque no hubo intento, o porque cada ida y vuelta tardo demasiado. El texto
+# viejo unia las dos con un "o" —"la atencion fue lenta O no llego a nada concreto"— y era
+# ambiguo por construccion: el operador no podia saber cual de las dos fallo. El caso que lo
+# trajo (`0b321579`) tenia 3,4 min de mediana efectiva, o sea que la mitad del consejo era
+# literalmente falsa.
 _COACHING = {
-    2: "La atención fue lenta o no llegó a nada concreto. Aunque el desbloqueo dependa "
-       "de otra área, el cliente tiene que salir con un paso a seguir o con la certeza "
-       "de que su caso se escaló.",
     3: "Las respuestas tardaron más de 2 minutos. En soporte el cliente ya viene "
        "trabado: cada espera pesa doble.",
     4: "Antes de cerrar, preguntale si necesita algo más. Es el motivo donde más se "
        "nota, porque muchas veces el problema vuelve.",
 }
+_COACHING_2_SIN_INTENTO = (
+    "El cliente no se llevó ningún paso a seguir. Aunque el desbloqueo dependa de otra "
+    "área, decile qué sigue; y si no está en tus manos, avisale que escalaste el caso.")
+_COACHING_2_LENTO = (
+    "Hiciste algo por el caso, pero cada ida y vuelta tardó demasiado. En soporte el "
+    "cliente ya viene trabado: cada espera pesa doble.")
 _COACHING_1 = "El cliente reportó un problema con su cuenta y nadie le respondió."
 
 
@@ -124,6 +149,12 @@ def _hubo_intento(messages: list[dict]) -> bool:
         cuerpo = _norm(m.get("body"))
         if _PASO_RE.search(cuerpo) or _ESCALO_RE.search(cuerpo):
             return True
+        # Los verbos ampliados solo cuentan en una frase SIN negacion (ver su nota). Se
+        # corta por frase, no por mensaje: un "no puedo X" no invalida el paso que vino
+        # despues en la misma respuesta.
+        for frase in _frases(cuerpo):
+            if not _NEGACION_RE.search(frase) and _PASO_AMPLIADO_RE.search(frase):
+                return True
     return operator_sent_credentials(messages)
 
 
@@ -172,6 +203,17 @@ def calificar_soporte(messages: list[dict], cierre_at=None) -> Soporte | None:
                    med, True, False)
 
 
+def _coaching(s: Soporte) -> str:
+    """El consejo de la RAMA que produjo la nota (ver la nota de `_COACHING`)."""
+    if s.stars == 5:
+        return ""
+    if s.stars == 1:
+        return _COACHING_1
+    if s.stars == 2:
+        return _COACHING_2_SIN_INTENTO if not s.intento else _COACHING_2_LENTO
+    return _COACHING[s.stars]
+
+
 def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM."""
     s = calificar_soporte(messages, cierre_at)
@@ -195,8 +237,7 @@ def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:
         atencion=None,
         deposit_observed=None,
         floor_applied=False,
-        recomendacion="" if s.stars == 5 else (
-            _COACHING_1 if s.stars == 1 else _COACHING[s.stars]),
+        recomendacion=_coaching(s),
         claridad="claro",
         friccion=False,
         aciertos=[],

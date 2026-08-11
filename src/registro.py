@@ -212,10 +212,17 @@ def score_registro(messages: list[dict]) -> ScoreResult | None:
 # pero 4+ SUBE a 64,9%. Contar mensajes del operador correlaciona con cliente enganchado
 # (el operador esta respondiendo preguntas), asi que la causalidad se invierte. Lo que pesa
 # no es cuanto hablo antes de ir al punto: es que nunca fue.
+# 'quisiera' va junto a 'quiero': es la forma cortés y en estos datos es igual de comun.
+# Sin ella los DOS techos (`nunca_pidio_los_datos` y `le_devolvio_la_pelota`) quedaban
+# apagados por una letra. Caso `e7d9f25a`: el cliente escribe "Quisiera reGistrarme", el
+# modelo lista "No se guio el proceso de registro ni se creo la cuenta" y su rationale dice
+# "El operador no atendio el motivo principal del cliente, que era registrarse" — y la nota
+# salio 'buena'. De 6 sesiones con esa forma, 5 (83%) quedaron en 4 estrellas.
+_QUIERE = r"(quiero|quisiera|querr[ií]a|me gustar[ií]a)"
 _QUIERE_REGISTRARSE_RE = re.compile(
-    r"quiero registrarme|me quiero registrar|quiero crear (una |mi )?cuenta|"
-    r"quiero (abrir|tener) (una |mi )?cuenta|como me registro|como puedo registrarme|"
-    r"c[oó]mo (hago para )?(me )?registr|quiero una cuenta|necesito una cuenta|"
+    rf"{_QUIERE} registrarme|me {_QUIERE} registrar|{_QUIERE} crear (una |mi )?cuenta|"
+    rf"{_QUIERE} (abrir|tener) (una |mi )?cuenta|como me registro|como puedo registrarme|"
+    rf"c[oó]mo (hago para )?(me )?registr|{_QUIERE} una cuenta|necesito una cuenta|"
     r"reg[íi]strame|me registro",
     re.IGNORECASE,
 )

@@ -222,14 +222,37 @@ def _palabras_normalizadas(texto: str) -> list[str]:
     return [p for p in _NO_PALABRA_RE.sub(" ", plano).split() if p]
 
 
+# El opener que genera el WIDGET de la web, no la persona. Medido el 2026-08-11: 2.385
+# sesiones del segmento agente (4,5%) arrancan con esta frase y el 100% de ellas NO tiene
+# ningun media real en toda la sesion — nunca hay comprobante ni transaccion. Se median
+# igual como pedido de caja: en un caso, 7 segundos por encima del umbral bajaron la sesion
+# entera a 3 estrellas por una frase que no pide nada.
+_OPENER_WIDGET_RE = re.compile(
+    r"^\W*hola\W*(estoy escribiendo|te escribo|escribo)\s+desde\s+sorti\.?\s?ec\W*$",
+    re.IGNORECASE)
+
+
 def es_cortesia(texto: str) -> bool:
     """El texto es puro saludo/acuse/agradecimiento, sin pedir nada?
 
     Vacio NO es cortesia: es ausencia de texto, y quien decide en ese caso es
     `es_pedido` (un bloque vacio sin adjunto no pide nada).
+
+    PERO un texto que SI tiene contenido y al normalizar no deja NINGUNA palabra -puro
+    emoji o puntuacion- si es cortesia. Antes caia en el `bool(palabras)` y daba False,
+    al revés de la intencion: `es_pedido` lo tomaba como pedido real y la sesion sacaba
+    1 estrella por un cierre agradecido que nadie tenia que contestar (casos reales
+    `6315c196` cerrando con "🙌🏻" y `822f5cb4` con "🫱🏼‍🫲🏼").
     """
+    texto = (texto or "").strip()
+    if not texto:
+        return False
+    if _OPENER_WIDGET_RE.match(texto):
+        return True
     palabras = _palabras_normalizadas(texto)
-    return bool(palabras) and all(p in _CORTESIA_VOCAB for p in palabras)
+    if not palabras:
+        return True
+    return all(p in _CORTESIA_VOCAB for p in palabras)
 
 
 def client_sin_motivo(messages: list[dict]) -> bool:

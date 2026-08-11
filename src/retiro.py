@@ -72,13 +72,21 @@ class Retiro:
     pregunto_algo_mas: bool
 
 
+# EL CONSEJO APUNTA A LA RAMA, NO A LA ESTRELLA (misma razon que en src/deposito.py). Al 2
+# se llega porque no se envio el comprobante, o porque se envio tarde. Medido el 2026-08-11:
+# 112 de las 221 sesiones en 2 estrellas (50,7%) SI habian entregado el comprobante y
+# recibian igual el consejo de que "el retiro quedo sin comprobante".
 _COACHING = {
-    2: "El retiro quedó sin comprobante. Enviarlo siempre: es el respaldo de que la "
-       "plata salió, y es lo que sostiene la confianza del agente.",
     3: "Faltó velocidad. Se apunta a responder el pedido dentro de los 2 minutos y a "
        "tener el comprobante arriba en 15.",
     4: "Antes de cerrar, preguntale si necesita algo más.",
 }
+_COACHING_2_SIN_COMPROBANTE = (
+    "El retiro quedó sin comprobante. Enviarlo siempre: es el respaldo de que la plata "
+    "salió, y es lo que sostiene la confianza del agente.")
+_COACHING_2_TARDE = (
+    "Enviaste el comprobante, pero tarde. El agente necesita el respaldo cuanto antes: "
+    "se apunta a responder en 2 minutos y entregar dentro de los 15.")
 _COACHING_1 = ("El pedido de retiro quedó sin respuesta. Aunque no puedas procesarlo "
                "en el momento, avisale al agente que lo recibiste.")
 
@@ -158,6 +166,17 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
         espera, entrega, False)
 
 
+def _coaching(r: Retiro) -> str:
+    """El consejo de la RAMA que produjo la nota (ver la nota de `_COACHING`)."""
+    if r.stars == 5:
+        return ""
+    if r.stars == 1:
+        return _COACHING_1
+    if r.stars == 2:
+        return _COACHING_2_SIN_COMPROBANTE if r.entrega is None else _COACHING_2_TARDE
+    return _COACHING[r.stars]
+
+
 def score_retiro(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
@@ -186,8 +205,7 @@ def score_retiro(messages: list[dict], cierre_at=None) -> ScoreResult | None:
         atencion=None,
         deposit_observed=False,
         floor_applied=False,
-        recomendacion="" if r.stars == 5 else (
-            _COACHING_1 if r.stars == 1 else _COACHING[r.stars]),
+        recomendacion=_coaching(r),
         claridad="claro",
         friccion=False,
         aciertos=[],

@@ -70,13 +70,22 @@ class Deposito:
     pregunto_algo_mas: bool
 
 
+# EL CONSEJO APUNTA A LA RAMA, NO A LA ESTRELLA. Al 2 se llega por DOS caminos —nunca
+# confirmo la acreditacion, o la confirmo pero el acuse tardo— y un solo texto por estrella
+# le decia al operador que no hizo algo que SI habia hecho, con su propio rationale al lado
+# diciendo lo contrario. Medido el 2026-08-11: 370 de las 1.400 sesiones en 2 estrellas
+# (26,4%) ya tenian `acredito=true` y recibian igual el consejo de "confirmale siempre".
 _COACHING = {
-    2: "Confirmale siempre al cliente que la plata entró. Un \"en breve\" sin cierre lo "
-       "deja sin saber si su recarga se acreditó.",
     3: "Tardaste más de 2 minutos en avisar. Aunque no puedas acreditar en el momento, "
        "decile enseguida que ya recibiste el comprobante.",
     4: "Antes de cerrar, preguntale si necesita algo más.",
 }
+_COACHING_2_SIN_ACREDITAR = (
+    "Confirmale siempre al cliente que la plata entró. Un \"en breve\" sin cierre lo deja "
+    "sin saber si su recarga se acreditó.")
+_COACHING_2_TARDE = (
+    "Confirmaste la acreditación, pero el primer aviso tardó demasiado. Avisale enseguida "
+    "que recibiste el comprobante, aunque todavía no puedas acreditarlo.")
 _COACHING_1 = ("El comprobante quedó sin respuesta. En operaciones de caja conviene "
                "contestar siempre, aunque sea con una línea mientras se procesa.")
 
@@ -173,6 +182,17 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
         espera, True, False)
 
 
+def _coaching(d: Deposito) -> str:
+    """El consejo de la RAMA que produjo la nota (ver la nota de `_COACHING`)."""
+    if d.stars == 5:
+        return ""
+    if d.stars == 1:
+        return _COACHING_1
+    if d.stars == 2:
+        return _COACHING_2_SIN_ACREDITAR if not d.acredito else _COACHING_2_TARDE
+    return _COACHING[d.stars]
+
+
 def score_deposito(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
@@ -203,8 +223,7 @@ def score_deposito(messages: list[dict], cierre_at=None) -> ScoreResult | None:
         floor_applied=False,
         # La recomendacion es EXACTAMENTE el gap hacia el 5. En el mejor escenario
         # queda vacia: no hay nada que corregir.
-        recomendacion="" if d.stars == 5 else (
-            _COACHING_1 if d.stars == 1 else _COACHING[d.stars]),
+        recomendacion=_coaching(d),
         claridad="claro",
         friccion=False,
         aciertos=[],

@@ -193,3 +193,17 @@ def test_no_penaliza_si_el_alta_se_cerro_igual():
             _cli(60, "si, mi correo es ana@mail.com y mi cedula 1712345678"),
             _op(90, "listo, tu usuario es ana01 y tu clave 12345")]
     assert le_devolvio_la_pelota(msgs) is False
+
+
+def test_QUISIERA_registrarme_cuenta_igual_que_quiero():
+    # Una sola letra apagaba los dos techos. Caso `e7d9f25a`: el cliente escribe "Quisiera
+    # reGistrarme", el LLM lista tres errores ("No se guio el proceso de registro ni se creo
+    # la cuenta") y su propio rationale dice "El operador no atendio el motivo principal del
+    # cliente, que era registrarse" — y la nota salio 'buena' (4 estrellas), porque el guard
+    # nunca se disparo. De 6 sesiones con esa forma, 5 (83%) quedaron en 4 estrellas.
+    for frase in ("Quisiera reGistrarme", "quisiera registrarme por favor",
+                  "quisiera crear una cuenta", "quisiera abrir mi cuenta"):
+        msgs = [_cli(0, frase),
+                _op(30, "Hola! trabajo para Sorti365, tenemos las mejores cuotas"),
+                _cli(60, "y como es")]
+        assert nunca_pidio_los_datos(msgs) is True, frase

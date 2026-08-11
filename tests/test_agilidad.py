@@ -364,3 +364,39 @@ def test_score_agilidad_devuelve_None_si_no_hay_nada_que_medir():
     # Sin pedidos en horario no hay nota: el caller decide (no se inventa un 3).
     assert score_agilidad([_cli(0, "Gracias"), _op(1)]) is None
     assert score_agilidad([]) is None
+
+
+# --- LO QUE NO PIDE NADA Y SE LEIA COMO PEDIDO (auditoria del 2026-08-11) ---------
+
+def test_un_mensaje_de_PURO_EMOJI_no_es_pedido():
+    # BUG: `es_cortesia` normaliza sacando todo lo que no es palabra, asi que un mensaje
+    # de puro emoji deja la lista VACIA, y `bool([]) and all(...)` da False -> al revés de
+    # la intencion. `es_pedido` lo tomaba como pedido real y la sesion sacaba 1 estrella
+    # por un cierre agradecido que nadie tenia que contestar.
+    # Casos reales: 6315c196 cierra con "🙌🏻" y 822f5cb4 con "🫱🏼‍🫲🏼", ambos 1★ falso.
+    for emoji in ("🙌🏻", "🫱🏼‍🫲🏼", "👍", "🍀", "❤️", "...", "!!!"):
+        assert es_pedido([_cli(0, emoji)]) is False, emoji
+
+
+def test_el_texto_VACIO_sigue_sin_ser_pedido():
+    # No-regresion del criterio de `es_cortesia`: vacio no es cortesia, es ausencia de
+    # texto, y ahi decide `es_pedido` (un bloque vacio sin adjunto no pide nada).
+    assert es_pedido([_cli(0, "")]) is False
+    assert es_pedido([_cli(0, "   ")]) is False
+
+
+def test_el_saludo_AUTOMATICO_del_widget_web_no_es_pedido():
+    # Lo genera el widget de la web, no lo escribe la persona. 2.385 sesiones (4,5% del
+    # segmento agente) arrancan asi y el 100% NO tiene ningun media real en toda la
+    # sesion: nunca hay comprobante ni transaccion. Se median igual como pedido de caja.
+    # Caso 3e5a48f2: todo el chat es esa frase, el operador saluda 5min7s despues, y esos
+    # 7 segundos sobre el umbral bajaban la sesion entera a 3 estrellas.
+    for texto in ("Hola, estoy escribiendo desde sorti.ec",
+                  "Hola, te escribo desde sorti.ec",
+                  "Hola 👋 estoy escribiendo desde sorti.ec"):
+        assert es_pedido([_cli(0, texto)]) is False, texto
+
+
+def test_el_widget_con_un_pedido_pegado_SI_es_pedido():
+    # El guard es para el opener SOLO. Si la persona escribio algo mas, es un pedido.
+    assert es_pedido([_cli(0, "Hola, estoy escribiendo desde sorti.ec, necesito una recarga")]) is True
