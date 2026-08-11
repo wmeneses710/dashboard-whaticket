@@ -95,33 +95,51 @@ def test_atendio_extra_y_cortesia_con_empuje_es_excelente():
     assert r.rating_label == "excelente" and r.stars == 5
 
 
-# --- PIEZA 2: cap de uplift — AHORA SOLO EN `promo` ------------------------
-# Decision del negocio del 2026-08-05, probada con datos: el uplift SOLO mueve la
-# aguja en promo (deposito posterior 24,9% -> 34,1% con empuje+material, +9,2 pp),
-# mientras que en retiro la EMPEORA (83,8% -> 69,9%). Aplicarlo a todos los motivos
-# convertia al empuje comercial en un peaje: medido el 2026-08-06, tumbaba a 3
-# estrellas al 47-67% de las sesiones segun el motivo, incluidas 135 de 149
-# transacciones de deposito hechas perfectas (respuesta <=2 min + acreditacion
-# confirmada). Un deposito bien atendido no necesita que le vendan un bono encima.
+# --- LA PIEZA 2 SE RETIRO (2026-08-11) -------------------------------------
+# Habia un cap que topaba buena/excelente en 'aceptable' cuando `promo` no mostraba un
+# EMPUJE CONCRETO, apoyado en la prueba del 2026-08-05 (deposito posterior 24,9% -> 34,1%
+# con empuje+material, +9,2 pp). Se retiro por DOS razones medidas:
+#
+#   1. ERA INALCANZABLE. `promo` es 100% determinista (14.165 de 14.165 filas con el
+#      centinela `determinista/promo-v1`), asi que `score_by_motivo` retorna en la rama
+#      del motivo mucho antes de llegar al cap. No topaba nada.
+#   2. EL CRITERIO APUNTA AL REVES. Corriendo las señales reales sobre 1.200 sesiones de
+#      `promo` y cruzandolas contra DOS desenlaces independientes de nuestro gate -el tag
+#      humano del CRM y si la persona deposito despues-, las sesiones con material y SIN
+#      empuje fuerte convierten **24,8%** contra **5,7%** de las que tienen los dos, y
+#      2,8% -> 23,3% en la tasa del tag. Ademas `operator_strong_uplift` resulto ser un
+#      SUBCONJUNTO de `material` (no existe la celda empuje-sin-material en 1.200 casos),
+#      asi que como discriminador encima de material no agregaba nada.
+#      CAVEAT registrado: su patron ("registrate ya", "depositá ya", "pasame tus datos") es
+#      lenguaje de PROSPECCION SALIENTE, asi que la direccion puede estar reflejando quien
+#      es el cliente y no que hizo el operador — el mismo confundido que ya invirtio la
+#      hipotesis de la verbosidad en `registro`. Por eso el criterio no se movio adentro de
+#      `calificar_promo`: se retiro, no se relocalizo.
+#
+# Con el cap se fueron `operator_strong_uplift`, el sub-evaluador `verify_uplift` (existia
+# SOLO para rescatar los borderline del cap) y el flag SCORING_VERIFY_UPLIFT.
+# ESTE TEST EXISTE PARA QUE NO VUELVA SIN REHACER LA MEDICION.
 
-def test_cap_uplift_sigue_vivo_en_promo():
-    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True,
-                                                 cortesia_destacada=True)))
-    assert r.rating_label == "aceptable" and r.stars == 3
-    assert r.floor_applied is True
-
-
-def test_cap_uplift_NO_aplica_fuera_de_promo():
-    # Mismo caso exacto, cambiando solo el motivo: sin empuje comercial, un deposito
-    # bien atendido conserva su nota.
-    # `registro` NO entra en este loop: tiene su propio techo en el fall-through (PIEZA 3),
+def test_ningun_motivo_se_capea_por_falta_de_empuje_comercial():
+    # `registro` queda afuera del loop: tiene su propio techo en el fall-through (PIEZA 3),
     # porque con mensajes NEUTROS no hay ninguna señal de que el alta se haya guiado.
-    for motivo in ("deposito", "retiro", "soporte_cuenta", "info", "problema"):
+    for motivo in ("promo", "deposito", "retiro", "soporte_cuenta", "info", "problema"):
         r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
                             llm=FakeLLM(_motivo_resp(motivo=motivo, hizo_accion_extra=True,
                                                      cortesia_destacada=True)))
         assert r.rating_label == "excelente" and r.stars == 5, motivo
+
+
+def test_el_cableado_del_verificador_no_existe_mas():
+    import inspect
+
+    import src.signals as sig
+    import src.subeval as sub
+    from src.config import Config
+    assert not hasattr(sig, "operator_strong_uplift")
+    assert not hasattr(sub, "verify_uplift")
+    assert "verify_uplift_enabled" not in Config.__dataclass_fields__
+    assert "verifier" not in inspect.signature(score_by_motivo).parameters
 
 
 # --- PIEZA 3: techo de `registro` en el fall-through -----------------------
@@ -275,20 +293,6 @@ def test_piso_funnel_info_con_empuje_no_es_deficiente():
     assert r.floor_applied is True
 
 
-def test_verifier_recupera_la_nota_en_borderline():
-    # En promo (unico motivo con cap) sin señal fuerte se capearia, pero el
-    # verificador confirma uplift genuino y la recupera.
-    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True)),
-                        verifier=lambda msgs, motivo: True)
-    assert r.rating_label == "excelente" and r.stars == 5
-
-
-def test_verifier_falso_capea_a_aceptable_en_promo():
-    r = score_by_motivo(target_messages=NEUTRAL, thread_context="",
-                        llm=FakeLLM(_motivo_resp(motivo="promo", hizo_accion_extra=True)),
-                        verifier=lambda msgs, motivo: False)
-    assert r.rating_label == "aceptable"
 
 
 def test_recommender_pisa_la_recomendacion():

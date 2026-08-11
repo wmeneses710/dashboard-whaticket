@@ -2,15 +2,19 @@
 
 El scorer determinista (src/scorer.py) es la base barata y confiable. Estos son el
 bisturí sobre lo DIFUSO que el determinismo no alcanza, y corren SOLO cuando se los
-habilita (params `verifier`/`recommender` en score_by_motivo):
+habilita (param `recommender` en score_by_motivo):
 
-- verify_uplift: adjudica el BORDERLINE de uplift — buena/excelente que el modelo
-  reclamó pero sin señal concreta (¿esfuerzo real o cortesía de plantilla?). UNA sola
-  pregunta, prompt adversarial y distinto del scorer (mitiga el punto ciego compartido).
 - build_recomendacion: genera el consejo de coaching como TAREA dedicada (no mezclada
   en el prompt de scoring), opcionalmente con ejemplos few-shot.
 
-Cada uno hace UNA cosa: un modelo chico rinde mucho mejor así que juzgando todo junto.
+Hace UNA cosa: un modelo chico rinde mucho mejor asi que juzgando todo junto.
+
+HUBO UN SEGUNDO sub-evaluador, `verify_uplift`, que adjudicaba el borderline del cap de
+uplift de `promo` (la PIEZA 2 del scorer). Se retiro junto con ese cap el 2026-08-11: el
+cap era inalcanzable -`promo` es 100% determinista, asi que score_by_motivo retorna antes-
+y al medir el criterio contra dos desenlaces independientes resulto que apuntaba al REVES
+(las sesiones con material y SIN empuje fuerte convierten 24,8% contra 5,7% de las que
+tienen los dos). Sin cap no habia borderline que rescatar.
 """
 from __future__ import annotations
 
@@ -24,50 +28,6 @@ class LLM(Protocol):
 
     def chat_json(self, system: str, user: str, schema: dict | None = ...) -> dict: ...
 
-
-# --- Verificador de uplift ------------------------------------------------
-
-_VERIFY_SYSTEM = """\
-Sos un auditor ESTRICTO de calidad de atencion. Mira SOLO esta interaccion y decidi UNA cosa:
-¿el OPERADOR hizo un esfuerzo EXTRA real, mas alla de atender el motivo minimo?
-
-CUENTA como esfuerzo extra: empujar un registro/deposito CONCRETO (mandar link, pedir los
-datos, invitar a recargar), ofrecer un bono puntual, retener (invitar a volver a jugar),
-o acompañar/confirmar/prevenir el proximo problema.
-
-NO cuenta (esto es el minimo, no extra): saludar con el nombre (aunque sea de plantilla),
-jerga afectuosa (bro/amigo/ñaño), emojis, o simplemente EXPLICAR la promo.
-
-Se estricto: si no podes CITAR textualmente el esfuerzo extra, es que no existe.
-Responde SOLO con JSON: {"uplift_real": true|false, "evidencia": "<cita textual o 'ninguna'>"}"""
-
-
-def _verify_schema() -> dict:
-    return {
-        "type": "object",
-        "properties": {
-            "uplift_real": {"type": "boolean"},
-            "evidencia": {"type": "string"},
-        },
-        "required": ["uplift_real"],
-    }
-
-
-def verify_uplift(target_messages: list[dict], motivo: str, llm: LLM) -> dict:
-    """Adjudica si hubo uplift REAL. Devuelve {uplift_real: bool, evidencia: str}.
-
-    Tolerante: si el LLM falla o devuelve algo raro, uplift_real=False (conservador:
-    ante la duda NO se licencia buena/excelente; el determinismo ya topo en aceptable).
-    """
-    user = f"MOTIVO: {motivo}\n\n### CONVERSACION\n{format_transcript(target_messages, motivo)}"
-    try:
-        raw = llm.chat_json(_VERIFY_SYSTEM, user, _verify_schema())
-    except Exception:
-        return {"uplift_real": False, "evidencia": ""}
-    return {"uplift_real": raw.get("uplift_real") is True, "evidencia": str(raw.get("evidencia") or "")}
-
-
-# --- Generador de recomendacion (coaching) --------------------------------
 
 _RECOM_SYSTEM = """\
 Eres un coach de operadores de atencion al cliente de una plataforma de apuestas. Basandote en

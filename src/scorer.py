@@ -20,7 +20,6 @@ from src.signals import (
     operator_maltrato,
     operator_pushed,
     operator_resolved,
-    operator_strong_uplift,
     client_asked_question,
     client_reasked,
 )
@@ -110,7 +109,6 @@ def score_by_motivo(
     thread_context: str,
     llm: LLM,
     deposit_hint: bool = False,
-    verifier=None,
     recommender=None,
     cierre_at=None,
 ) -> ScoreResult:
@@ -280,26 +278,6 @@ def score_by_motivo(
     # confuso rescatado (no corroborado) no debe marcarse como override.
     if friccion or (atendio and claridad_eff == "confuso" and confuso_corroborado):
         override = True  # el modulador bajó la nota -> marca el ajuste determinista
-    # PIEZA 2 - CAP DE UPLIFT, SOLO EN `promo`: buena/excelente exige un EMPUJE CONCRETO
-    # (link o invitación explícita a convertir), no la mera explicación de la promo ni la
-    # cortesía de plantilla ({nombre} autocompletado), jerga o emojis -> si no hay, se topa
-    # en aceptable. (Lo genuinamente difuso -warmth real sin empuje- lo recupera el
-    # verificador angosto.)
-    #
-    # POR QUE SOLO promo. La prueba de negocio del 2026-08-05: con empuje + material el
-    # deposito posterior sube de 24,9% a 34,1% (+9,2 pp) en promo, pero en retiro BAJA de
-    # 83,8% a 69,9% (ahi el cliente ya volvia solo). Aplicado a todos los motivos, el cap
-    # convertia al empuje comercial en un peaje para pasar de 3 estrellas: medido el
-    # 2026-08-06 topaba entre el 47% y el 67% de las sesiones segun el motivo, y en
-    # `deposito` dejaba en 3 a 135 de las 149 transacciones hechas perfectas (respuesta
-    # <=2 min + acreditacion confirmada). Un deposito bien atendido no necesita que le
-    # vendan un bono encima para valer 4.
-    if motivo == "promo" and label in ("buena", "excelente") \
-            and not operator_strong_uplift(target_messages):
-        # borderline: sin señal fuerte, se topa en aceptable... salvo que un VERIFICADOR
-        # angosto (opcional, 2da pasada del LLM) confirme uplift genuino -> lo recupera.
-        if not (verifier and verifier(target_messages, motivo)):
-            label, override = "aceptable", True
     # PIEZA 3 - TECHO DE `registro` EN EL FALL-THROUGH. Llegar hasta aca con motivo
     # 'registro' PRUEBA que score_registro devolvio None (ver arriba), o sea que la sesion
     # NO fue una transaccion: el alta no se cerro. Y el mejor escenario de la rubrica de

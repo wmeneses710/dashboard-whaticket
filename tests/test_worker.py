@@ -205,7 +205,7 @@ def test_score_sessions_batch_cuenta_y_no_aborta_por_una_excepcion(monkeypatch):
     monkeypatch.setattr(worker, "fetch_pending_sessions",
                         lambda cur, account, limit: sessions)
 
-    def fake_score(conn, sess, llm, op_map, verifier=None, recommender=None, lineas=None):
+    def fake_score(conn, sess, llm, op_map, recommender=None, lineas=None):
         if sess["session_id"] == "s2":
             raise RuntimeError("boom")  # una sesion falla, el lote sigue
         return ("evaluated" if sess["session_id"] == "s1" else "skipped", None, None)
@@ -254,7 +254,7 @@ def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
 
     cfg = types.SimpleNamespace(
         database_url="postgresql://x", ollama_url="http://x", ollama_model="qwen",
-        ollama_token="", verify_uplift_enabled=False, recom_subagent_enabled=False,
+        ollama_token="", recom_subagent_enabled=False,
         scoring_accounts=("sistemas",), scoring_batch_size=20, scoring_poll_seconds=1,
         ollama_num_ctx=16384, ollama_num_predict=768, llm_fast_attempts=2,
     )
@@ -406,7 +406,7 @@ def test_score_sessions_batch_construye_el_mapa_de_lineas_si_no_lo_recibe(monkey
     monkeypatch.setattr(worker, "build_operator_map", lambda cur: {})
     monkeypatch.setattr(worker, "build_lineas_map", lambda cur: {"991194133": "CONNECTED"})
 
-    def spy(conn, sess, llm, op_map, verifier=None, recommender=None, lineas=None):
+    def spy(conn, sess, llm, op_map, recommender=None, lineas=None):
         vistos["lineas"] = lineas
         return "skipped", "redireccion", None
 

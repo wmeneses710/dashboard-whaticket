@@ -1,9 +1,9 @@
 """Tests de los sub-evaluadores angostos (2da pasada del LLM), src/subeval.py.
 
-verify_uplift adjudica el borderline de uplift; build_recomendacion genera el coaching
+build_recomendacion genera el coaching como tarea dedicada
 como tarea dedicada (± ejemplos). El LLM va falseado.
 """
-from src.subeval import build_recomendacion, verify_uplift
+from src.subeval import build_recomendacion
 
 MSGS = [
     {"from_me": False, "is_note": False, "body": "quiero el bono"},
@@ -24,36 +24,6 @@ class FakeLLM:
         if self.raises:
             raise RuntimeError("boom")
         return self.resp
-
-
-# --- verify_uplift --------------------------------------------------------
-
-def test_verify_uplift_true():
-    out = verify_uplift(MSGS, "promo", FakeLLM({"uplift_real": True, "evidencia": "registrate y recargá"}))
-    assert out["uplift_real"] is True and "recarg" in out["evidencia"]
-
-
-def test_verify_uplift_false():
-    out = verify_uplift(MSGS, "promo", FakeLLM({"uplift_real": False, "evidencia": "ninguna"}))
-    assert out["uplift_real"] is False
-
-
-def test_verify_uplift_valor_raro_es_false():
-    # ante ambigüedad, conservador -> False (no licencia buena/excelente)
-    out = verify_uplift(MSGS, "promo", FakeLLM({"uplift_real": "quizá"}))
-    assert out["uplift_real"] is False
-
-
-def test_verify_uplift_error_del_llm_es_false():
-    out = verify_uplift(MSGS, "promo", FakeLLM(None, raises=True))
-    assert out["uplift_real"] is False
-
-
-def test_verify_uplift_manda_motivo_y_transcript():
-    llm = FakeLLM({"uplift_real": True})
-    verify_uplift(MSGS, "retiro", llm)
-    system, user, schema = llm.calls[0]
-    assert "auditor" in system.lower() and "retiro" in user and "Operador:" in user
 
 
 # --- build_recomendacion --------------------------------------------------

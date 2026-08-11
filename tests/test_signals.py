@@ -15,7 +15,6 @@ from src.signals import (
     operator_resolved,
     operator_sent_credentials,
     operator_sent_media,
-    operator_strong_uplift,
     app_mentioned,
     client_asked_question,
     client_reasked,
@@ -227,29 +226,6 @@ def test_jerga_amistosa_no_es_maltrato():
 
 def test_saludo_normal_no_es_maltrato():
     assert operator_maltrato([_agent("Hola, gracias por comunicarte 🙂")]) is False
-
-
-# --- operator_strong_uplift (empuje CONCRETO para licenciar buena/excelente) --
-
-def test_strong_uplift_link():
-    assert operator_strong_uplift([_agent("Registrate acá https://www.sorti.ec/register")]) is True
-
-
-def test_strong_uplift_imperativo():
-    assert operator_strong_uplift([_agent("te invito a depositar y jugar")]) is True
-    assert operator_strong_uplift([_agent("depositá ya y activás el bono")]) is True
-
-
-def test_strong_uplift_pide_datos():
-    assert operator_strong_uplift([_agent("pasame tu nombre y cédula para crearte la cuenta")]) is True
-
-
-def test_plantilla_de_anuncio_NO_es_uplift_concreto():
-    # el caso real: 'con tu primer deposito activas...' + 'aprovecha' + 'Anímate' es PISO,
-    # no empuje concreto -> no debe licenciar buena/excelente (evita el 5★ de la plantilla).
-    assert operator_strong_uplift([_agent(_AD_TEMPLATE)]) is False
-    # pero SÍ dispara el push amplio (piso del funnel):
-    assert operator_pushed([_agent(_AD_TEMPLATE)]) is True
 
 
 # --- client_reasked (fricción determinista) -------------------------------

@@ -489,29 +489,12 @@ def operator_pushed(messages: list[dict]) -> bool:
     """True si el OPERADOR empujo conversion/retencion (link, invitacion, bono por recarga).
 
     Señal AMPLIA: sirve para el PISO del front-of-funnel (explicar la promo YA cuenta) y
-    para el eje atencion. Para el UPLIFT (buena/excelente) es demasiado laxa -> usar
-    operator_strong_uplift, que exige una accion concreta (no la mera explicacion de la promo).
+    para el eje atencion. NO se usa para el UPLIFT: habia un `operator_strong_uplift` que
+    exigia una accion concreta para licenciar buena/excelente, y se retiro el 2026-08-11
+    junto con el cap de `promo` al que alimentaba — medido, apuntaba al reves (ver la nota
+    de tests/test_scorer.py). El uplift de promo lo decide el MATERIAL, en src/promo.py.
     """
     return any(_PUSH_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
-
-
-# UPLIFT CONCRETO (para licenciar buena/excelente): un LINK, o una invitacion IMPERATIVA a
-# convertir AHORA (depositar/recargar/registrarse/jugar). Deliberadamente NO incluye la mera
-# mencion de "primer deposito"/"con tu primera carga" ni "aprovecha": eso está DENTRO de la
-# plantilla de explicacion de la promo (= piso), no es un empuje concreto (dos conversaciones
-# con la MISMA plantilla salian 3★ y 5★; el empuje real es el link o el imperativo).
-STRONG_UPLIFT_PATTERN = (
-    r"https?://|t[ei] invit[oa] a (deposit|recarg|jug|apost|registr)|"
-    r"deposit[aá] (ya|ahora|hoy)|recarg[aá] (ya|ahora|hoy)|"
-    r"reg[íi]strate (ya|ahora|aqu[ií]|en el|en este)|complet[aá] tu registro|"
-    r"pas[aá]me (tu|los) (nombre|datos|c[eé]dula)|indic[aá]me (tu|el)"
-)
-_STRONG_UPLIFT_RE = re.compile(STRONG_UPLIFT_PATTERN, re.IGNORECASE)
-
-
-def operator_strong_uplift(messages: list[dict]) -> bool:
-    """True si el OPERADOR hizo un empuje CONCRETO (link o invitacion explicita a convertir)."""
-    return any(_STRONG_UPLIFT_RE.search(m.get("body") or "") for m in messages if _is_operator(m))
 
 
 def operator_maltrato(messages: list[dict]) -> bool:

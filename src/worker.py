@@ -153,11 +153,11 @@ def fetch_pending_sessions(cur, account: str, limit: int) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None,
+def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                             recommender=None, lineas: dict | None = None):
     """Scorea UNA sesion (transcript mergeado) y la persiste. Devuelve (eval_status,
     skip_reason, score). Espeja score_and_store pero a grano SESION.
-    verifier/recommender: sub-evaluadores angostos opcionales (ver src/subeval.py)."""
+    recommender: sub-evaluador angosto opcional (ver src/subeval.py)."""
     with conn.cursor() as cur:
         msgs = fetch_session_messages(cur, sess["session_id"])
     stats, rubric, eval_status, skip_reason = evaluate_session(msgs, lineas=lineas)
@@ -181,7 +181,7 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None,
             # la senal determinista de comprobante para anclar el motivo 'deposito'.
             score = score_by_motivo(
                 target_messages=msgs, thread_context="", llm=llm,
-                deposit_hint=deposit_count > 0, verifier=verifier, recommender=recommender,
+                deposit_hint=deposit_count > 0, recommender=recommender,
                 # Cierre del ticket: lo necesita la pregunta de cierre para exigir la espera
                 # de 5 min (regla del negocio). Sin el, el credito se mantiene.
                 cierre_at=sess.get("resolved_at"),
@@ -209,7 +209,7 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict, verifier=None,
 
 
 def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | None = None,
-                         verifier=None, recommender=None, lineas: dict | None = None) -> dict:
+                         recommender=None, lineas: dict | None = None) -> dict:
     """Scorea un lote de sesiones pendientes de una cuenta. Devuelve conteos.
 
     `lineas`: mapa de las lineas propias (ver src/redireccion.build_lineas_map), para el
@@ -225,7 +225,7 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
     counts = {"evaluated": 0, "skipped": 0, "error": 0, "seen": len(pending)}
     for sess in pending:
         try:
-            eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map, verifier,
+            eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map,
                                                         recommender, lineas=lineas)
             counts[eval_status] += 1
         except Exception as e:  # noqa: BLE001 - no abortar el lote por una sesion
@@ -264,15 +264,13 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                        num_ctx=cfg.ollama_num_ctx, num_predict=cfg.ollama_num_predict,
                        fast_attempts=cfg.llm_fast_attempts)
     # Sub-evaluadores angostos opcionales (2da pasada del LLM), gateados por config.
-    verifier = recommender = None
-    if cfg.verify_uplift_enabled or cfg.recom_subagent_enabled:
-        from src.subeval import build_recomendacion, verify_uplift
-        if cfg.verify_uplift_enabled:
-            verifier = lambda m, mo: verify_uplift(m, mo, llm)["uplift_real"]  # noqa: E731
+    recommender = None
+    if cfg.recom_subagent_enabled:
+        from src.subeval import build_recomendacion
         if cfg.recom_subagent_enabled:
             recommender = lambda m, mo, l: build_recomendacion(m, mo, l, llm)  # noqa: E731
     emit(f"[worker] iniciado · cuentas={cfg.scoring_accounts} batch={cfg.scoring_batch_size}"
-         f" · verify_uplift={cfg.verify_uplift_enabled} recom_subagente={cfg.recom_subagent_enabled}")
+         f" · recom_subagente={cfg.recom_subagent_enabled}")
     ok, msg = llm.check_model()  # pre-flight: no aborta, pero avisa fuerte si falta el modelo
     emit(f"[worker] {'preflight ok' if ok else 'PREFLIGHT FALLIDO'}: {msg}")
     # SINGLETON: solo UN worker scorea a la vez. Sin esto, varias réplicas del contenedor
@@ -342,7 +340,7 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
                 for account in cfg.scoring_accounts:
                     t0 = time.time()
                     c = score_sessions_batch(conn, llm, account, cfg.scoring_batch_size, op_map,
-                                             verifier=verifier, recommender=recommender,
+                                             recommender=recommender,
                                              lineas=lineas)
                     dt = time.time() - t0
                     seen += c["seen"]
