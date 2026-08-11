@@ -71,15 +71,21 @@ _COACHING = {
     2: "El cliente preguntó por la promo y la respuesta tardó más de 15 minutos. Una "
        "consulta así se enfría rápido.",
     3: "Respondiste, pero fuera de los 2 minutos. En promo la ventana es corta.",
-    4: "Explicaste la promo solo con texto. Mandale algo concreto junto con la "
-       "invitación —una imagen, un video o un enlace—: es lo que más mueve que la "
-       "aproveche.",
+    4: "Se lo explicaste solo con texto. Mandale una captura mostrándole dónde tocar, "
+       "o un video de cómo hacerlo: es lo que más mueve que la aproveche.",
 }
 _COACHING_1 = "El cliente preguntó por la promo y nadie le respondió."
 
 
 def _material_del_operador(messages: list[dict]) -> bool:
     """El operador le mando algo CONCRETO ademas del texto: un adjunto o un enlace.
+
+    QUE MANDAN DE VERDAD. Auditado el 2026-08-11 leyendo los adjuntos: NO es material de
+    promocion — ATC lo dijo y los datos lo confirman. Son CAPTURAS ANOTADAS que muestran donde
+    tocar ("presionas donde te encerre", "asi debes seleccionar los 3 eventos", "presiona ahi y
+    te lleva al juego donde estan tus giros") y videos de como hacerlo. Eso le da mecanismo al
+    numero que no cerraba: material SIN empuje convierte 24,8% y con empuje 5,7%, porque
+    mostrarle a alguien donde apretar sirve y pegarle un "depositá ya" no.
 
     SOLO SE AFIRMA LA FORMA, NUNCA EL CONTENIDO. De un adjunto conocemos el `media_type` y
     de una URL el dominio; no hay manera de saber si esa imagen es material de la promo o
@@ -134,16 +140,16 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     if material and espera <= RAZONABLE:
         return Promo(5, "excelente",
                      f"Respondió en {_mins(espera)} y no se lo explicó solo con texto: "
-                     "le mandó algo concreto, que es lo que hace que la promo convierta.",
+                     "le mostró cómo, que es lo que hace que la promo convierta.",
                      espera, True, empuje)
     if espera > AGIL:
         return Promo(3, "aceptable",
                      f"Respondió en {_mins(espera)} y solo con texto. Se apunta a "
-                     "contestar en 2 minutos, o a mandarle algo concreto.",
+                     "contestar en 2 minutos, o a mostrarle cómo con una captura.",
                      espera, material, empuje)
     return Promo(4, "buena",
                  f"Respondió en {_mins(espera)}, pero le explicó la promo solo con "
-                 "texto: no le mandó nada que se pueda llevar.",
+                 "texto: no le mostró cómo.",
                  espera, material, empuje)
 
 

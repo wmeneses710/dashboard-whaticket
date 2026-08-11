@@ -994,8 +994,8 @@ const CONTEO_LABEL = {
 // REGLA: `no` describe LO QUE PASÓ, no la ausencia del logro. Nunca "no hizo X".
 const HECHO_LABEL = {
   acredito: {
-    si: "le confirmó al cliente que la plata entró",
-    no: "nunca le confirmó que la plata entró",
+    si: "le confirmó que el saldo ya estaba acreditado",
+    no: "nunca le confirmó si el saldo se había acreditado",
     tip: 'Un "en breve" no alcanza: tiene que decir que el saldo ya está disponible.' },
   entrego_credenciales: {
     si: "le entregó usuario y clave",
@@ -1006,9 +1006,9 @@ const HECHO_LABEL = {
     no: "el cliente quedó registrado pero no llegó a recargar",
     tip: "Es el mejor final posible de un registro: la persona pasó de interesada a jugadora sin irse del chat." },
   mando_material: {
-    si: "le mandó una imagen, un video o un enlace",
-    no: "se lo explicó solo con texto: no le mandó nada que se pueda llevar",
-    tip: "No miramos qué contiene el adjunto, solo que el cliente se llevó algo además de la explicación." },
+    si: "le mostró cómo, con una captura o un video",
+    no: "se lo explicó solo con texto, sin mostrarle cómo",
+    tip: "Auditado el 2026-08-11: lo que los operadores mandan de verdad NO es material de promoción, son CAPTURAS ANOTADAS mostrando dónde tocar (\"presionas donde te encerré\", \"así debes seleccionar los 3 eventos\") y videos de cómo hacerlo. Un enlace cuenta igual. No miramos qué contiene el adjunto, solo que el cliente se llevó algo más que la explicación." },
   empujo: {
     si: "lo invitó a registrarse o a recargar",
     no: "le explicó la promo pero no lo invitó a registrarse ni a recargar",
