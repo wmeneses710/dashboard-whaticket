@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from src.deposits import has_recharge_context
+from src.interacciones import interaccion_de
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
@@ -133,7 +134,15 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
     if not es_transaccion(messages):
         return None
     comprobante = _comprobante_del_cliente(messages)
-    reales = sorted((m for m in messages if not m.get("is_note")),
+    # LA EVIDENCIA SE BUSCA EN LA INTERACCION DEL COMPROBANTE, no en toda la sesion. La
+    # frontera la pone el objeto: la nota de cierre del operador (ver src/interacciones.py).
+    # Sin esto, en las 5.624 conversaciones con varios cierres -- el 3,51%, pero donde viven
+    # el 41,7% de los mensajes -- la acreditacion de una transaccion acreditaba el
+    # comprobante de otra. Caso `f9b31f4f`: 8 dias, 16 cierres y cuatro operadores en una
+    # sola conversacion; un comprobante del 3-ago que nadie contesto salia como "confirmo la
+    # acreditacion, pero tardo 39,5 horas en avisarle".
+    ventana = interaccion_de(messages, comprobante)
+    reales = sorted((m for m in ventana if not m.get("is_note")),
                     key=lambda m: m["created_at"])
     # El reloj arranca en el COMPROBANTE, no en el primer mensaje: la charla previa
     # no es tiempo que el operador le deba al cliente.

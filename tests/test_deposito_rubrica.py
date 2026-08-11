@@ -165,3 +165,38 @@ def test_la_recomendacion_dice_QUE_falto_para_el_5():
     r = score_deposito(msgs)
     assert r.stars == 4
     assert "algo mas" in r.recomendacion.lower() or "algo más" in r.recomendacion.lower()
+
+
+# --- LA EVIDENCIA SE BUSCA EN LA INTERACCION DEL COMPROBANTE, NO EN TODA LA SESION ---
+# Caso `f9b31f4f-6399-4e76-96ce-3a1b726aa7da`: 84 mensajes, 8 dias, 16 cierres del operador
+# y cuatro operadores distintos, todo en UNA conversacion porque el CRM no abrio filas
+# nuevas. Un comprobante del 3-ago que NADIE contesto se emparejaba con el saludo y la
+# acreditacion de otra transaccion del 6-ago, y salia "Confirmo la acreditacion, pero tardo
+# 39,5 horas en avisarle" -- un hecho que no ocurrio.
+# La frontera es la nota de cierre del operador (ver src/interacciones.py).
+
+def _cierre(minutos, quien="Mario"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación"}
+
+
+def test_la_acreditacion_de_OTRA_interaccion_no_cuenta():
+    # El comprobante de la primera interaccion queda sin respuesta y el operador cierra.
+    # Dias despues hay otra recarga, esa si acreditada. La primera vale 1, no 2.
+    msgs = [_cli(0, "les mando el comprobante de la recarga"), _comprobante(0), _cierre(5),
+            _cli(2880, "otra recarga"), _comprobante(2880),
+            _op(2881, "Gracias por tu recarga, tu saldo ya esta disponible"), _cierre(2882)]
+    d = calificar_deposito(msgs)
+    assert d is not None
+    assert d.acredito is False, "la acreditacion del 2do dia no puede acreditar el 1er comprobante"
+    assert d.stars == 1, f"{d.stars}★ {d.rationale}"
+    assert "39" not in d.rationale and "hora" not in d.rationale.lower()
+
+
+def test_sin_cierres_la_ventana_sigue_siendo_toda_la_sesion():
+    # No-regresion del 96,3% de las conversaciones: un solo cierre (o ninguno) = una sola
+    # interaccion, y todo funciona como antes.
+    msgs = [_cli(0, "les mando el comprobante de la recarga"), _comprobante(0),
+            _op(1, "Gracias por tu recarga, tu saldo ya esta disponible")]
+    d = calificar_deposito(msgs)
+    assert d is not None and d.acredito is True and d.stars == 4
