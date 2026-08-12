@@ -38,7 +38,10 @@ import re
 # Es la misma trampa que inflo el gate de deposito un 41,4% por leer el script del
 # operador: enumerar verbos sueltos captura la plantilla, no la intencion.
 TRASPASO_PATTERN = (
-    r"a partir de ahora.{0,60}(atend|escrib|comunic)"
+    # `atenci[oó]n` ademas de `atend`: "a partir de ahora tu numero principal de ATENCION
+    # al Cliente sera" es LA migracion institucional, y `atend` esta en "atenderemos"
+    # pero NO en "Atencion". Hallado el 2026-08-12.
+    r"a partir de ahora.{0,60}(atend|atenci[oó]n|escrib|comunic)"
     r"|(este|el) (numero|número).{0,40}(fuera de servicio|en revisi)"
     r"|(numeros|números).{0,20}en revisi"
     r"|(escrib|comunic|contact)\w*.{0,25}(al |a la )(siguiente )?(numero|número|linea|línea)"
@@ -50,7 +53,11 @@ TRASPASO_PATTERN = (
     r"|atendid\w+ (directamente )?por (el |la |los |las )?"
     r"(servicio|atencion|atención|plataforma|departamento)"
     r"|contactate con esta (linea|línea)"
-    r"|escribeme al|escribirme al|escribenos al|escríbenos al"
+    # ACENTOS: `re.IGNORECASE` no los dobla, y esto estaba ASIMETRICO -- la variante
+    # `-nos` tenia su forma acentuada y la `-me` no. "Escríbeme al <numero>" es la
+    # plantilla de migracion Facebook -> WhatsApp, de las mas frecuentes de la data.
+    # El "al" es lo que separa el traspaso del "escríbeme cuando gustes" de la despedida.
+    r"|escr[ií]b[ea]me al|escribirme al|escr[ií]b[ae]nos al"
 )
 _TRASPASO_RE = re.compile(TRASPASO_PATTERN, re.IGNORECASE)
 

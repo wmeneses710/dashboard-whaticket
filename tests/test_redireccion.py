@@ -224,3 +224,34 @@ def test_build_lineas_map_prefiere_CONNECTED_ante_el_mismo_numero():
     # nombre). Si alguna esta viva, la linea esta viva.
     cur = _Cur([("593991194133", "DISCONNECTED"), ("593991194133", "CONNECTED")])
     assert build_lineas_map(cur) == {"991194133": "CONNECTED"}
+
+
+# --- DOS HUECOS DE ACENTO/RAIZ EN EL PATRON ------------------------------------------
+# Hallados el 2026-08-12 barriendo las sesiones que pasan una linea NUESTRA viva y que el
+# patron NO ve. `re.IGNORECASE` no dobla acentos, y el patron quedo ASIMETRICO: la variante
+# `-nos` tiene su forma acentuada y la `-me` no. "Escríbeme al <numero>" es la plantilla de
+# migracion Facebook -> WhatsApp, de las mas frecuentes.
+# Y "a partir de ahora tu numero principal de ATENCION al Cliente sera" no matcheaba porque
+# la alternancia pedia `atend` -- que esta en "atenderemos" y no en "Atención".
+# Arreglar los dos lleva los skips de 3 a 9 sobre 3.000 sesiones de la copia.
+
+def test_escribeme_al_matchea_con_acento_y_sin_acento():
+    for texto in ("Escríbeme al 0991701676 y conversamos",
+                  "Escribeme al 0991701676",
+                  "escríbenos al 0991701676",
+                  "Escríbanos al 0991701676"):
+        assert es_traspaso(texto), texto
+
+
+def test_la_migracion_institucional_dice_ATENCION_no_atender():
+    assert es_traspaso("Te informamos que a partir de ahora tu número principal de "
+                       "Atención al Cliente será: 0991701676")
+    assert es_traspaso("a partir de ahora te atenderemos por este numero 0991701676")
+
+
+def test_la_despedida_con_numero_alterno_sigue_NO_siendo_traspaso():
+    # El guard que ya existia: es la plantilla de cierre mas comun y no traspasa nada.
+    assert not es_traspaso("Mucha suerte hoy, esperamos poder atenderte de nuevo, pronto! "
+                          "Recuerda que siempre tenemos un numero alterno 0991701676")
+    # Y el operador dando SU PROPIO numero tampoco: no hay traspaso a otro.
+    assert not es_traspaso("Estoy a la orden siempre. Escríbeme de una cuando gustes")

@@ -51,6 +51,21 @@ from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/registro-v1"
 
+# EL RECHAZO VALIDO: el alta NO PODIA salir y no es culpa del operador -- casi siempre porque
+# el cliente YA TIENE cuenta, con otro agente o con la plataforma. Ahi su trabajo es DECIRLO,
+# y por eso hay una rama propia (ver calificar_registro). Espejo de `deposito._RECHAZO_RE`.
+#
+# EL GUARD DE LA NEGACION NO ES COSMETICO: "este numero no esta registrado" es el operador
+# PIDIENDO datos, lo OPUESTO a un rechazo, y sin el lookbehind daba rechazo en 12 de los 86
+# candidatos medidos el 2026-08-12. Y `ya tienes cuenta` exige el "ya": "no tienes cuenta"
+# no matchea porque no lo lleva.
+_RECHAZO_RE = re.compile(
+    r"ya (tienes|tiene|ten[eé]s|posee|posees) (una |la )?cuenta"
+    r"|(la )?cuenta (ya )?(existe|est[aá] (creada|registrada)|esta duplicada)"
+    r"|(?<!no )(est[aá]s?|se encuentra) registrad[oa]"
+    r"|(?<!no )(est[aá]|se encuentra) (registrada )?(bajo|con) otr[ao]",
+    re.IGNORECASE)
+
 ENTREGA_AGIL = timedelta(minutes=5)   # del traspaso de datos a las credenciales
 
 # Datos personales que el cliente manda para que le creen la cuenta. El correo y la
@@ -79,6 +94,15 @@ _COACHING = {
     4: "La cuenta quedó creada. Lo que falta es acompañarlo hasta la primera recarga, "
        "que es donde el registro se convierte en jugador.",
 }
+# La rama del rechazo tiene su propio consejo: el del 2 dice "decile cuándo la va a tener" y
+# ahí NUNCA la va a tener -- la cuenta no se puede crear. Ese texto delante de un operador que
+# hizo lo correcto es peor que no decir nada.
+_COACHING_RECHAZO_RAPIDO = (
+    "Avisaste rápido que la cuenta no se podía crear. Lo que suma es asegurarte de que "
+    "llegue a quien sí puede ayudarlo: pasarle el contacto y verificar que lo recibió.")
+_COACHING_RECHAZO_TARDE = (
+    "El aviso llegó tarde: el cliente estuvo esperando una cuenta que no iba a llegar. "
+    "Cuando el alta no puede salir, conviene decirlo apenas se sabe.")
 _COACHING_1 = ("El cliente entregó sus datos y nadie le respondió. Conviene acusar el "
                "recibo enseguida: ya había decidido registrarse y es el peor momento "
                "para dejarlo esperando.")
@@ -165,6 +189,31 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
             return Registro(1, "mala",
                             "El cliente entregó sus datos y nadie le respondió.",
                             None, False, convirtio)
+        # LA RAMA DEL RECHAZO. Si el alta no podia salir por una razon valida -- el cliente
+        # ya tiene cuenta -- el trabajo del operador es AVISARLO, y se califica por la
+        # velocidad de ese aviso. TECHO EN 4 sin que haga falta pedirlo: el 5 de `registro`
+        # es la conversion a deposito y se evalua mas abajo, fuera de este bloque.
+        # Solo aplica cuando NO se entregaron credenciales: "ya tienes cuenta creada, tu
+        # usuario es X" es un alta EXITOSA, no un rechazo (96 de los casos medidos).
+        rechazo = next((m for m in reales
+                        if _is_operator(m) and _RECHAZO_RE.search(m.get("body") or "")
+                        and (datos is None or m["created_at"] > datos["created_at"])), None)
+        if rechazo is not None:
+            aviso = (espera_efectiva(datos["created_at"], rechazo["created_at"])
+                     if datos is not None else None)
+            if aviso is not None and aviso <= ENTREGA_AGIL:
+                return Registro(
+                    4, "buena",
+                    f"La cuenta no se podía crear (el cliente ya tenía una) y lo avisó "
+                    f"{_mins(aviso)} después de recibir los datos.",
+                    aviso, False, convirtio)
+            return Registro(
+                3, "aceptable",
+                "La cuenta no se podía crear (el cliente ya tenía una), pero el aviso "
+                f"tardó {_mins(aviso)} desde que el cliente pasó sus datos."
+                if aviso is not None else
+                "La cuenta no se podía crear (el cliente ya tenía una) y lo avisó.",
+                aviso, False, convirtio)
         return Registro(
             2, "deficiente",
             "El cliente entregó sus datos pero nunca recibió su usuario y clave: "
@@ -204,6 +253,16 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
         espera, True, False)
 
 
+def _coaching(r: Registro) -> str:
+    """El consejo de la nota. La rama del rechazo tiene el suyo: un 4 o un 3 SIN credenciales
+    entregadas solo puede venir de ahi (en el camino normal el 4 y el 3 siempre entregaron),
+    y el consejo generico del 3 habla de crear la cuenta cuanto antes -- que es justo lo que
+    NO se podia hacer."""
+    if r.stars in (3, 4) and not r.entrego:
+        return _COACHING_RECHAZO_RAPIDO if r.stars == 4 else _COACHING_RECHAZO_TARDE
+    return _COACHING_1 if r.stars == 1 else _COACHING[r.stars]
+
+
 def score_registro(messages: list[dict]) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
@@ -237,8 +296,7 @@ def score_registro(messages: list[dict]) -> ScoreResult | None:
         # rubrica determinista no tiene opinion que reconciliar.
         deposit_observed=None,
         floor_applied=False,
-        recomendacion="" if r.stars == 5 else (
-            _COACHING_1 if r.stars == 1 else _COACHING[r.stars]),
+        recomendacion="" if r.stars == 5 else _coaching(r),
         claridad="claro",
         friccion=False,
         aciertos=[],

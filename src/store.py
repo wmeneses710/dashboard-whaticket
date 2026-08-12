@@ -126,7 +126,33 @@ from src.segments import segment_for_queue
 #     una nota de 2★ al lado de un tramo que habia salido bien y concluia que el sistema se
 #     equivocaba. La nota describe UNA interaccion, no la sesion. Ahora el chat lo dice.
 #   - Las filas de v8 y anteriores no lo traen: ahi no se senala ninguna, que es lo honesto.
-SCORING_VERSION = "2026.08-rubricas-v9"
+#
+# 2026.08-rubricas-v10 (2026-08-12). Sale de un caso de produccion que el negocio leyo con la
+# corrida v9 ya andando: el cliente entrego nombre, celular y correo; el operador consulto a
+# Atencion al Cliente, le dijo que YA TENIA CUENTA con otro agente, y lo derivo con el numero
+# de ese agente. La rubrica le puso 2 estrellas -- "el alta quedo a medias" -- y la
+# recomendacion decia "conviene decirle cuando la va a tener". Nunca la va a tener.
+#   - RAMA DEL RECHAZO en `registro`, simetrica a la de `deposito` en v8. Cuando el alta NO
+#     PODIA salir por una razon valida (el cliente ya tiene cuenta), el trabajo del operador es
+#     AVISARLO y se califica por la velocidad de ese aviso: 4 si avisa dentro de los 5 min del
+#     traspaso de datos (el umbral propio de `registro`), 3 si tarda, 2 si nunca dice nada.
+#     TECHO EN 4 sin pedirlo: el 5 de `registro` es la conversion a deposito y se evalua fuera
+#     de esa rama. Solo aplica SIN credenciales entregadas: "ya tienes cuenta creada, tu
+#     usuario es X" es un alta EXITOSA (96 de los casos medidos). Con su coaching propio.
+#     MEDIDO corriendo la rubrica sobre mensajes reales: de 184 registros con vocabulario de
+#     rechazo, **74 estan hoy en 2 estrellas con un rechazo REAL y suben**; y 12 candidatos
+#     eran FALSO POSITIVO ("este numero no esta registrado" es el operador PIDIENDO datos, lo
+#     opuesto) -- de ahi el guard de negacion en el patron;
+#   - DOS HUECOS DE PATRON en `redireccion`, del mismo caso. `re.IGNORECASE` no dobla acentos y
+#     el patron estaba ASIMETRICO: la variante `-nos` tenia su forma acentuada y la `-me` no,
+#     asi que "Escríbeme al <numero>" -- la plantilla de migracion Facebook -> WhatsApp, de las
+#     mas frecuentes -- NO matcheaba. Y "a partir de ahora tu numero principal de ATENCION al
+#     Cliente sera" tampoco, porque la alternancia pedia `atend`, que esta en "atenderemos" y
+#     no en "Atencion". Los skips pasan de 3 a 9 sobre 3.000 sesiones de la copia.
+# NO se toco el bucket B de `redireccion` (el traspaso como UN mensaje dentro de una
+# conversacion real, 566 de 671 casos): ahi el motivo real sigue mandando. El caso que lo
+# disparo cae justamente ahi, y lo que lo arregla es la rama del rechazo, no el skip.
+SCORING_VERSION = "2026.08-rubricas-v10"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

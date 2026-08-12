@@ -243,3 +243,84 @@ def test_con_espera_medible_el_texto_sigue_diciendo_los_minutos():
     msgs = [_cli(0, DATOS_CLIENTE), _op(2, CREDENCIALES)]
     r = calificar_registro(msgs)
     assert "2 minutos" in r.rationale, r.rationale
+
+
+# --- LA RAMA DEL RECHAZO ------------------------------------------------------
+# Simetrica a la de `deposito` (2026-08-12). El caso real que la obligo: el cliente entrego
+# nombre, celular y correo; el operador consulto a Atencion al Cliente, le dijo que YA TENIA
+# CUENTA con otro agente, y lo derivo con el numero de ese agente. La rubrica le puso 2
+# estrellas -- "el alta quedo a medias" -- y la recomendacion decia "conviene decirle cuando
+# la va a tener": nunca la va a tener, la cuenta no se puede crear.
+# Cuando el alta NO PODIA salir por una razon valida, el trabajo del operador es AVISARLO, y
+# se califica por la velocidad de ese aviso. TECHO EN 4: el 5 de `registro` es la conversion
+# a deposito, y una cuenta que no se pudo crear no la alcanza.
+# MEDIDO corriendo la rubrica sobre mensajes reales: de 184 sesiones de registro con
+# vocabulario de rechazo, 74 estan hoy en 2 estrellas con un rechazo REAL y suben.
+
+RECHAZO = "amigo, me dice Atencion al Cliente que ya tienes cuenta con otro agente"
+
+
+def test_el_alta_que_no_podia_salir_no_es_un_alta_a_medias():
+    # Avisa dentro de los 5 min del traspaso de datos -> 4, el techo de la rama.
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE), _op(4, RECHAZO)]
+    r = calificar_registro(msgs)
+    assert r.stars == 4, r.rationale
+    assert r.entrego is False
+    assert "medias" not in r.rationale.lower(), r.rationale
+
+
+def test_el_aviso_tarde_del_rechazo_baja_a_3():
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE), _op(28, RECHAZO)]
+    r = calificar_registro(msgs)
+    assert r.stars == 3, r.rationale
+
+
+def test_el_rechazo_NUNCA_avisado_se_queda_en_2():
+    # Sin aviso el cliente queda esperando una cuenta que no va a llegar: eso SI es a medias.
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE), _op(30, "dame un momento")]
+    r = calificar_registro(msgs)
+    assert r.stars == 2, r.rationale
+
+
+def test_el_techo_de_la_rama_es_4_aunque_haya_recargado():
+    # El 5 de `registro` es la conversion. Si la cuenta no se pudo crear, no hay conversion
+    # que premiar: la recarga sera de la cuenta que ya tenia con el otro agente.
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE), _op(3, RECHAZO),
+            _cli(5, "listo ya recargue", media="image")]
+    r = calificar_registro(msgs)
+    assert r.stars == 4, r.rationale
+
+
+def test_no_esta_registrado_es_LO_OPUESTO_a_un_rechazo():
+    # El guard de la negacion. Sin el, "este numero no esta registrado" -- que es el operador
+    # PIDIENDO datos, no rechazando -- daba rechazo: 12 de los 86 candidatos medidos.
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE),
+            _op(4, "amigo, este numero no esta registrado, me indica desde otro celular?")]
+    r = calificar_registro(msgs)
+    assert r.stars == 2, r.rationale
+
+
+def test_ya_tienes_cuenta_CON_credenciales_entregadas_no_es_rechazo():
+    # "ya tienes cuenta creada, tu usuario es X" es un ALTA EXITOSA, no un rechazo. La rama
+    # solo aplica cuando NO se entregaron credenciales.
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE),
+            _op(3, "ya tienes cuenta creada. " + CREDENCIALES)]
+    r = calificar_registro(msgs)
+    assert r.stars == 4 and r.entrego is True, r.rationale
+
+
+def test_el_coaching_del_rechazo_no_habla_de_cuando_la_va_a_tener():
+    from src.registro import score_registro
+    msgs = [_cli(0, "quiero registrarme"), _op(1, PIDE_DATOS),
+            _cli(2, DATOS_CLIENTE), _op(28, RECHAZO)]
+    s = score_registro(msgs)
+    bajo = s.recomendacion.lower()
+    assert "cuándo la va a tener" not in bajo and "cuando la va a tener" not in bajo, \
+        s.recomendacion
+    assert "avis" in bajo or "deriv" in bajo, s.recomendacion
