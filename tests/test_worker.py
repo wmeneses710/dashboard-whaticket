@@ -544,3 +544,18 @@ def test_el_cierre_de_una_sesion_completa_es_el_ULTIMO_no_el_primero():
     assert inicio == _T0
     assert primera_op == _T0 + timedelta(seconds=30)
     assert cierre == _T0 + timedelta(seconds=90060)
+
+
+def test_el_desenlace_del_cliente_se_PERSISTE_en_todas_las_filas(monkeypatch):
+    # El desenlace se agrega en `dimensions` DESPUES de armar el record, y ese bloque es
+    # facil de dejar mal ubicado: si cae dentro de un docstring sigue siendo Python valido,
+    # los tests siguen verdes y la feature no persiste NADA. Paso el 2026-08-12 al partir el
+    # arbol en commits, y no habia ni un test que lo cubriera. Ahora si.
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_de_deposito())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    dims = _params_of_upsert(conn)["dimensions"].obj
+    assert "cliente_desenlace" in dims, "el desenlace no llego a la fila"
+    assert "cliente_abandono" in dims, "el booleano viejo tampoco"

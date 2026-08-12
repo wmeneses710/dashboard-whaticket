@@ -22,7 +22,7 @@ from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
 from src.redireccion import build_lineas_map
-from src.signals import cliente_abandono_tras_pedido
+from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
@@ -264,6 +264,12 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     if isinstance(record.get("dimensions"), dict):
         record["dimensions"].setdefault(
             "cliente_abandono", cliente_abandono_tras_pedido(msgs))
+        # QUE PASO CON EL CLIENTE (se_fue | no_lo_abrio | no_le_llego | dijo_no | None). El
+        # booleano de arriba responde "¿le perdonamos al operador?" y exige que el cliente
+        # haya LEIDO el pedido; este responde "¿que paso con el cliente?", que es lo que
+        # necesita el negocio. MEDIDO: 48 clientes recibieron el pedido y nunca lo abrieron,
+        # y esos desenlaces no se veian en ninguna parte. Ver signals.desenlace_del_cliente.
+        record["dimensions"].setdefault("cliente_desenlace", desenlace_del_cliente(msgs))
     with conn.cursor() as cur:
         upsert_score(cur, record)
     conn.commit()

@@ -621,14 +621,36 @@ _PEDIDO_PENDIENTE_PATTERN = (
     r"indicame|indícame|compartime|dame (tu|los|el)|"
     r"necesito (tus|los|el|que)|nos falta|confirmame|confírmame|adjunta|"
     # proponer y quedar esperando el si
-    r"quieres que|queres que|deseas que|te parece si|te gustar[ií]a|me avisas si"
+    r"quieres que|queres que|deseas que|te parece si|te gustar[ií]a|"
+    # LA PLANTILLA DE PROSPECCION, la de mayor volumen del negocio: "Con gusto te ayudo con
+    # tu registro. Animate y me avisas para crear tu cuenta". El patron pedia `me avisas si`
+    # -- con "si" -- y la plantilla dice "me avisas PARA": nunca matcheaba. MEDIDO el
+    # 2026-08-12 sobre la copia: de 252 sesiones habia 85 candidatos a abandono y 10
+    # marcados; **25 de los que se escapaban eran por esta forma de pedir**. Y es el pedido
+    # con mas intencion del embudo: el cliente pregunto por la promo, le ofrecieron crear la
+    # cuenta y se fue.
+    r"me avisas|me avis[aá]s|an[ií]mate|te ayudo con tu registro|te creo el usuario"
 )
 _PEDIDO_PENDIENTE_RE = re.compile(_PEDIDO_PENDIENTE_PATTERN, re.IGNORECASE)
+
+# DECIR NO **NO** ES ABANDONAR. Hallado leyendo los 10 abandonos de produccion el 2026-08-12:
+# `5011a22b` tenia al cliente diciendo "No gracias publicidad engañosa hacen" y quedaba
+# marcado como abandono, porque el operador siguio empujando DESPUES del rechazo y ese empuje
+# caia en el tramo final. Pero el cliente ya habia contestado, y contesto que no.
+# Son desenlaces distintos para el negocio: el silencio es una FUGA del embudo (arreglable,
+# simplificando el pedido de datos); el rechazo es un lead perdido y no hay nada que corregir.
+# MEDIDO: 525 conversaciones de la copia tienen un rechazo explicito del cliente.
+_RECHAZO_CLIENTE_RE = re.compile(
+    r"\b(no gracias|no me interesa|no quiero|ya no quiero|no deseo|"
+    r"otro d[ií]a|m[aá]s adelante|"
+    r"(es|son) una? (estafa|fraude|robo)|publicidad enga[nñ]osa|enga[nñ]an?)\b",
+    re.IGNORECASE)
 
 
 # `ack` = estado de entrega de WhatsApp, y viene en `messages` al 100% (3.303.952 filas):
 #   <0 fallo · 0 pendiente · 1 enviado · 2 entregado · 3 LEIDO · 4 escuchado
 _ACK_LEIDO = 3
+_ACK_ENTREGADO = 2
 
 
 def _cliente_lo_leyo(m: dict) -> bool:
@@ -666,24 +688,58 @@ def cliente_abandono_tras_pedido(messages: list[dict]) -> bool:
     entrego. La logica vieja les daba la misma nota a las tres (4,04 contra 4,20): no
     distinguia al operador que perdio a un cliente presente del que le escribio al vacio.
     """
+    return desenlace_del_cliente(messages) == "se_fue"
+
+
+def _es_pedido(body: str) -> bool:
+    """El mensaje del operador PIDE u OFRECE algo concreto (no es cortesia ni confirmacion)."""
+    if not body or _ANYTHING_ELSE_RE.search(body):
+        return False
+    if _PEDIDO_PENDIENTE_RE.search(body):
+        return True
+    return "?" in body and not _CONFIRMATION_RE.search(body)
+
+
+def desenlace_del_cliente(messages: list[dict]) -> str | None:
+    """QUE PASO CON EL CLIENTE cuando quedo un pedido del operador sin responder.
+
+    `cliente_abandono_tras_pedido` responde "¿le perdonamos al operador?" y para eso exige que
+    el cliente haya LEIDO el pedido. Esta responde la otra pregunta -- "¿que paso con el
+    cliente?" --, que es la que necesita el NEGOCIO y hoy no se veia en ninguna parte.
+    MEDIDO el 2026-08-12 sobre la copia, 252 sesiones evaluadas: 48 clientes recibieron el
+    pedido y NUNCA LO ABRIERON, y 11 no lo recibieron. Esos 59 desenlaces eran invisibles.
+
+    Cuatro finales, mutuamente excluyentes y accionables de forma DISTINTA:
+        se_fue       lo leyo y no volvio  -> fuga del embudo: el pedido no lo convencio
+        no_lo_abrio  le llego, no lo vio  -> lead frio: el canal no lo alcanza
+        no_le_llego  no se entrego        -> problema tecnico o numero muerto
+        dijo_no      contesto que no      -> lead perdido, no hay nada que corregir
+    None = no quedo nada pendiente (el cliente contesto, o el operador no pidio nada).
+
+    ES LA FUENTE UNICA: el booleano de arriba se deriva de aca, para que la regla no viva en
+    dos lugares y pueda divergir (la leccion de `_OPERADOR_RESUELTO`, que estaba inline en 5
+    consultas distintas).
+    """
     reales = [m for m in messages if not m.get("is_note")]
     if not any(m.get("from_me") for m in reales):
-        return False
+        return None
     idx_cliente = [i for i, m in enumerate(reales) if not m.get("from_me")]
     if not idx_cliente:
-        return False
+        return None
+    ultimo_del_cliente = reales[idx_cliente[-1]]
     tramo = reales[idx_cliente[-1] + 1:]
-    for m in tramo:
-        body = (m.get("body") or "").strip()
-        if not body or _ANYTHING_ELSE_RE.search(body):
-            continue
-        if not _cliente_lo_leyo(m):
-            continue
-        if _PEDIDO_PENDIENTE_RE.search(body):
-            return True
-        if "?" in body and not _CONFIRMATION_RE.search(body):
-            return True
-    return False
+    pedidos = [m for m in tramo if _es_pedido((m.get("body") or "").strip())]
+    if not pedidos:
+        return None
+    # Si lo ULTIMO que dijo el cliente fue un NO, no se fue en silencio: contesto. Lo que el
+    # operador siga empujando despues no lo convierte en abandono.
+    if _RECHAZO_CLIENTE_RE.search(ultimo_del_cliente.get("body") or ""):
+        return "dijo_no"
+    if any(_cliente_lo_leyo(m) for m in pedidos):
+        return "se_fue"
+    # No lo leyo: distinguir "le llego" de "no se entrego" por el mejor ack de los pedidos.
+    mejor = max((m.get("ack") for m in pedidos if m.get("ack") is not None), default=None)
+    return "no_lo_abrio" if mejor == _ACK_ENTREGADO else "no_le_llego"
 
 
 # --- LA PREGUNTA DE CIERRE, Y LA ESPERA QUE LA HACE VALER ------------------------

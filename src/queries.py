@@ -735,6 +735,10 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        -- hay que abrir sesión por sesión para entenderlo. Booleano derivado del jsonb: sin
        -- migración y sin peso en el payload.
        (cs.dimensions->>'cliente_abandono')::boolean AS cliente_abandono,
+       -- QUE PASO CON EL CLIENTE: se_fue | no_lo_abrio | no_le_llego | dijo_no | null.
+       -- El booleano de arriba solo marca `se_fue`; los otros tres finales eran invisibles
+       -- y son 48 de 71 en la medicion del 2026-08-12. Ver signals.desenlace_del_cliente.
+       cs.dimensions->>'cliente_desenlace' AS cliente_desenlace,
        """ + OPERADOR_O_NADA + """ AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
