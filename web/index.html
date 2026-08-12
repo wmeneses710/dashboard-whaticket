@@ -1634,11 +1634,15 @@ createApp({
     }
     function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
     function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":(author||(m.role==="BOT"?"Bot":"Operador")); }
-    // Claves del jsonb que NO son notas de dimensión (se muestran aparte): errores,
-    // aciertos, recomendación y los ejes del modulador (claridad/reinsistió).
-    const _NON_DIM = new Set(["errores","aciertos","claridad","cliente_reinsistio","recomendacion",
-                          "cliente_abandono","friccion"]);
-    function dimsOnly(dims) { const o={}; for (const [k,v] of Object.entries(dims||{})) if (!_NON_DIM.has(k) && typeof v==="string") o[k]=v; return o; }
+    // LAS NOTAS EN PROSA que el modal muestra, y NADA MAS. Son exactamente las tres que
+    // declara el esquema del prompt (src/prompts.py): el piso, el uplift y el trato.
+    // Era una DENY-LIST y pintaba cualquier dimension de tipo string con la clave CRUDA como
+    // título, así que cada clave nueva del jsonb se filtraba sola: el 2026-08-12 aparecio
+    // «interaccion_juzgada_desde / 2026-08-12T12:58:52.408000+00:00» en el modal, en produccion.
+    // Invertida a ALLOW-LIST: una clave nueva sin etiqueta queda INVISIBLE, que es mucho mejor
+    // que filtrada. El resto del jsonb ya se muestra en su lugar (chips, tiempos, recomendación).
+    const DIM_PROSA = { resolucion:"Resolución", iniciativa:"Iniciativa", cortesia:"Cortesía" };
+    function dimsOnly(dims) { const o={}; for (const [k,t] of Object.entries(DIM_PROSA)) { const v=(dims||{})[k]; if (typeof v==="string" && v.trim()) o[t]=v; } return o; }
     function dimErrors(dims) { return (dims&&dims.errores)||[]; }
     // Tiempos que dejo la rubrica determinista del motivo, ya con etiqueta legible.
     function dimTiempos(dims) {

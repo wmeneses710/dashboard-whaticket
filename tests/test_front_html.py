@@ -264,3 +264,28 @@ def test_el_javascript_del_tablero_parsea():
             ruta = f.name
         r = subprocess.run(["node", "--check", ruta], capture_output=True, text=True)
         assert r.returncode == 0, f"el bloque <script> #{n} no parsea:\n{r.stderr}"
+
+
+# --- EL MODAL NO PUEDE MOSTRAR CLAVES INTERNAS DE dimensions -------------------------
+# `dimsOnly` era una DENY-LIST: pintaba CUALQUIER dimension de tipo string, con la clave
+# cruda como titulo. O sea que cada clave nueva se filtraba sola. Aparecio en produccion el
+# 2026-08-12 asi, en el modal, delante del negocio:
+#     interaccion_juzgada_desde
+#     2026-08-12T12:58:52.408000+00:00
+# `cliente_desenlace` tenia el mismo destino (es string y tampoco estaba en la lista), ademas
+# de su chip. Las notas en prosa que el modal SI debe mostrar son exactamente tres, y son las
+# que declara el esquema del prompt (src/prompts.py): resolucion, iniciativa, cortesia.
+# Invertido a ALLOW-LIST: una clave nueva sin etiqueta queda INVISIBLE, que es mucho mejor que
+# filtrada. Es la misma leccion que la regla de identidad: una lista que hay que acordarse de
+# actualizar a mano en cada agregado no es una regla, es una trampa.
+
+def test_el_modal_solo_muestra_las_notas_en_prosa_conocidas():
+    html = _html()
+    i = html.index("const DIM_PROSA")
+    bloque = html[i:html.index("\n", html.index("dimsOnly", i))]
+    for prosa in ("resolucion", "iniciativa", "cortesia"):
+        assert prosa in bloque, f"falta la nota en prosa {prosa!r}"
+    for interna in ("interaccion_juzgada_desde", "cliente_desenlace", "recomendacion"):
+        assert interna not in bloque, f"{interna} no es una nota en prosa para mostrar"
+    # y que sea una ALLOW-list: la funcion tiene que consultar el mapa, no negarlo
+    assert "_NON_DIM" not in bloque, "sigue siendo deny-list: cada clave nueva se filtra sola"
