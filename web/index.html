@@ -701,7 +701,7 @@
                @click="openModal(cv.conversation_id)" @keydown.enter.prevent="openModal(cv.conversation_id)" @keydown.space.prevent="openModal(cv.conversation_id)">
             <span class="when num">{{ fmtDate(cv.conversation_created_at) }}</span>
             <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
-            <span class="op">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
+            <span class="op" :title="opTip(cv)">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
             <span class="chips">
               <!-- El reloj es el eje de casi todas las rubricas: va en la lista para
                    poder barrer las lentas sin abrir una por una. -->
@@ -1022,7 +1022,18 @@ const HECHO_LABEL = {
     no: "cerró sin preguntarle si le faltaba algo",
     tip: "Preguntar si necesita algo más antes de cerrar. No es lo mismo que despedirse con la plantilla." },
 };
-const opName = r => r.user_name || (r.user_id? "Operador sin identificar":"—");
+// La etiqueta la resuelve el SQL (src/identidad.py), no el front. Antes se re-derivaba acá
+// desde user_name/user_id: no conocía el split del usuario borrado por el CRM ni la cuarta
+// puerta, así que una misma persona salía con un nombre en el detalle y con otro en los
+// cuadros. Acá solo queda el guion del NULL: no hubo operador que nombrar.
+const opName = r => r.user_name || "—";
+// Las dos etiquetas sin nombre significan cosas DISTINTAS y una de ellas es un fallo nuestro:
+// sin el tip, quien lee el tablero no tiene forma de saber cuál de las dos está mirando.
+const OP_TIP = {
+  "Operador sin identificar": "El operador escribió pero no pudimos ponerle nombre: la conversación no trae usuario asignado ni firma «*Nombre:*». El trabajo se cuenta igual; el nombre falta por un hueco nuestro.",
+  "Operador borrado por Whaticket": "La conversación sí tenía usuario asignado, pero el CRM borró esa cuenta y su nombre ya no es recuperable. No es un hueco de medición: es un dato que dejó de existir.",
+};
+const opTip = r => OP_TIP[r.user_name] || "";
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
 const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
 const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -1607,7 +1618,9 @@ createApp({
     // trámite abierto no se lea como culpa del operador (ver src/signals.py).
     function dimAbandono(dims) { return !!(dims&&dims.cliente_abandono); }
     function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
-      return m("operador",esc(opName(r)))+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} operador${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
+      const opT = opTip(r);
+      const opCell = opT? `<span title="${esc(opT)}" style="border-bottom:1px dotted currentColor;cursor:help">${esc(opName(r))}</span>` : esc(opName(r));
+      return m("operador",opCell)+m("canal",esc(r.channel||"—"))+m("1ª respuesta",secs(r.first_response_seconds))+m("resolución",secs(r.resolution_seconds))+m("mensajes",`${r.message_count} · ${r.contact_message_count} cliente / ${r.agent_message_count} operador${r.bot_message_count?` / ${r.bot_message_count} bot`:""}`)+m("asignada",r.was_unassigned?"no":"sí");
     }
 
     // ---- Chart.js (imperativo, sobre los refs) ----
@@ -1797,7 +1810,7 @@ createApp({
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
-      miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, starColor,
+      miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
       fmtDur, dimTiempos, dimConteos, dimHechos,
       dimClaridad, dimReinsistio, dimAbandono, metaGrid, AYUDA, AYUDA_TITULO,

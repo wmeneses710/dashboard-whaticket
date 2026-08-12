@@ -26,8 +26,9 @@ El ARCHIVO (`config/operadores.json`) es el espejo auditable y la semilla:
 CLAVE = (account, operator_name). No `user_id`: 38 de los 67 operadores que mandan
 mensajes en `sistemas` no existen en la tabla `users` y se identifican por la firma
 `*Nombre:*` del cuerpo. El nombre usado es el RESUELTO, el mismo con el que agrupan los
-cuadros: `coalesce(nullif(coalesce(users.name, conversation_scores.user_name),''),
-'Operador sin identificar')`.
+cuadros: `identidad.OPERADOR_RESUELTO`, que es la FUENTE UNICA de esa regla (este modulo
+tenia su propia copia de la expresion Y del translate de acentos, con el bug de la ñ que ya
+se habia arreglado en queries.py -- por eso seguia apareciendo la etiqueta en el modal).
 
 DEFAULT = ACTIVO. Un operador sin fila se considera activo, y por eso se consultan los
 INACTIVOS (ver `inactive_names`). Alguien que entra a trabajar hoy tiene que aparecer solo;
@@ -36,6 +37,8 @@ si el default fuera "oculto", nadie se enteraría de que falta.
 from __future__ import annotations
 
 import json
+
+from src.identidad import HAY_OPERADOR, OPERADOR_RESUELTO, clave_sql
 from pathlib import Path
 
 CONFIG_VERSION = 2   # v2: el archivo lista solo apagados (v1 enumeraba todos)
@@ -235,13 +238,13 @@ def inactive_names(cur, account: str) -> set[str]:
 # ESTABA SIN DEFINIR: `activity_rows` lo usaba y tiraba NameError, o sea que
 # scripts/dump_operadores.py -- el que genera config/operadores.json -- estaba roto, y no lo
 # atrapaba nada porque ningun test llamaba a la funcion.
-_ACTIVITY = """
+_ACTIVITY = f"""
 WITH ancla AS (
   SELECT account, max(conversation_created_at) AS ultimo
     FROM conversation_scores GROUP BY account
 )
 SELECT cs.account,
-       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS operador,
+       {OPERADOR_RESUELTO} AS operador,
        count(*) AS sesiones,
        count(*) FILTER (
          WHERE cs.conversation_created_at >= a.ultimo - make_interval(days => %(dias)s)
@@ -265,12 +268,12 @@ def activity_rows(cur, dias: int = 30) -> list[tuple]:
 
 # Lo que consume el modal: actividad + estado guardado, de UNA cuenta. El LEFT JOIN con
 # coalesce(activo, true) materializa el default seguro: un operador sin fila sale ACTIVO.
-_ADMIN_ROWS = """
+_ADMIN_ROWS = f"""
 WITH ancla AS (
   SELECT max(conversation_created_at) AS ultimo
     FROM conversation_scores WHERE account = %(account)s
 )
-SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS operador,
+SELECT {OPERADOR_RESUELTO} AS operador,
        count(*) AS sesiones,
        -- `recientes` cuenta SOLO las EVALUADAS. Es el numero contra el que el modal pre-marca
        -- activos, y de eso depende quien aparece en los cuadros -- que muestran evaluadas.
@@ -293,12 +296,9 @@ SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identi
   LEFT JOIN users u ON u.id = cs.user_id AND u.account = cs.account
   LEFT JOIN operator_status os
          ON os.account = cs.account
-        AND translate(lower(os.operator_name),
-                      'áéíóúüàèìòùäëïöñÁÉÍÓÚÜÑ', 'aeiouuaeiouaeioanAEIOUUN')
-          = translate(lower(coalesce(nullif(coalesce(u.name, cs.user_name), ''),
-                                     'Operador sin identificar')),
-                      'áéíóúüàèìòùäëïöñÁÉÍÓÚÜÑ', 'aeiouuaeiouaeioanAEIOUUN')
+        AND {clave_sql("os.operator_name")} = {clave_sql(OPERADOR_RESUELTO)}
  WHERE cs.account = %(account)s
+   AND {HAY_OPERADOR}
  GROUP BY 1
  ORDER BY 3 DESC, 2 DESC
 """

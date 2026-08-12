@@ -3,6 +3,7 @@ esta scopeada por cuenta (datos vs sistemas conviven en la misma BD)."""
 from decimal import Decimal
 
 from src.router import ANOMALOUS_MESSAGE_MAX
+from src.identidad import OPERADOR_RESUELTO
 from src.queries import (
     _build_dep_channel,
     _build_load_series,
@@ -99,12 +100,16 @@ def test_scored_rows_coacciona_decimal_a_numero():
 
 def test_scored_rows_resuelve_operador_por_users():
     # Fuente canonica del nombre = tabla `users` (poblada por el monitor del ETL).
-    # La firma '*Nombre:*' (cs.user_name) queda solo de fallback: COALESCE.
+    # La firma '*Nombre:*' (cs.user_name) queda solo de fallback.
+    # La etiqueta la arma el SQL, no el front: si no hay NINGUN rastro de operador el campo
+    # llega NULL (conversacion 100% bot) y si lo hay, llega ya resuelto -- con el split del
+    # usuario que borro el CRM incluido.
+    from src.identidad import OPERADOR_O_NADA
     cur = _FakeCursor([], description=[])
     scored_rows(cur, "datos")
     query, _ = cur.executed[0]
     assert "JOIN users" in query
-    assert "COALESCE(u.name, cs.user_name) AS user_name" in query
+    assert f"{OPERADOR_O_NADA} AS user_name" in query
 
 
 def test_scored_rows_incluye_contact_id_para_agrupar_por_cliente():
@@ -127,11 +132,15 @@ def test_scored_rows_aligera_payload_de_la_lista():
     # rationale como snippet truncado, con el mismo alias para el front
     assert "left(cs.rating_rationale" in query.lower()
     assert "AS rating_rationale" in query
-    # campos de solo-detalle fuera de la lista (peso muerto)
+    # campos de solo-detalle fuera de la lista (peso muerto). Se mide sobre lo que se DEVUELVE:
+    # `agent_message_count` vive dentro del CASE de identidad y ahi no pesa nada en el payload,
+    # es un predicado. Sin descontar la expresion, el test prohibiria la cuarta puerta.
+    from src.identidad import OPERADOR_O_NADA
+    devuelto = query.replace(OPERADOR_O_NADA, "")
     for dead in ("cs.queue_name", "cs.resolved_at", "cs.rubric", "cs.message_count",
                  "cs.agent_message_count", "cs.bot_message_count", "cs.contact_message_count",
                  "cs.first_response_seconds", "cs.resolution_seconds", "cs.was_unassigned"):
-        assert dead not in query, f"{dead} deberia salir de la lista"
+        assert dead not in devuelto, f"{dead} deberia salir de la lista"
     # lo que la lista SI usa se mantiene
     for keep in ("cs.stars", "cs.rating_label", "cs.deposit_count", "cs.segment", "AS user_name"):
         assert keep in query, f"{keep} no deberia salir de la lista"
@@ -158,7 +167,8 @@ def test_scores_filters_aplica_cada_filtro():
     assert "cs.motivo = %(motivo)s" in where and params["motivo"] == "retiro"
     assert "cs.segment = %(segment)s" in where and params["segment"] == "jugador"
     assert "t.channel = %(canal)s" in where and params["canal"] == "WHATSAPP"
-    assert "COALESCE(u.name, cs.user_name) = %(op)s" in where and params["op"] == "Virginia"
+    # El filtro compara la MISMA etiqueta que ofrece el desplegable (ver el test de identidad).
+    assert f"{OPERADOR_RESUELTO} = %(op)s" in where and params["op"] == "Virginia"
     assert "cs.conversation_created_at >= %(dfrom)s" in where and params["dfrom"] == "2026-01-01"
     assert "cs.conversation_created_at <= %(dto)s" in where and params["dto"] == "2026-06-30"
     # búsqueda: mismos campos que matchBase del front (cliente, número, operador)
@@ -1232,3 +1242,94 @@ def test_el_cuadro_de_operadores_no_esconde_el_trabajo_humano_sin_atribuir():
     # entra tambien por `agent_message_count > 0` -> el fallo se VE. El solo-bot sigue afuera.
     from src.queries import _OPS_SQL
     assert "cs.agent_message_count > 0" in _OPS_SQL
+
+
+# --- LA REGLA DE IDENTIDAD VIVE EN UN SOLO LUGAR ------------------------------------
+# El 2026-08-12 se unificaron las 5 consultas de `queries.py`... y quedaron TRES copias mas
+# en `operators_status.py` (el modal de prender/apagar) y una en el front. Resultado: el
+# usuario seguia viendo "Operador sin identificar" en el modal, que ademas NO conocia el
+# split de `Operador borrado por Whaticket` y NO filtraba `eval_status`, asi que 4 filas
+# SALTEADAS sin un solo mensaje del negocio creaban un operador fantasma.
+# Y peor: `operators_status.py` tenia su PROPIA copia del translate de acentos con el bug de
+# la ñ (23 caracteres contra 24) que ya se habia arreglado en `queries.py`.
+# La regla ahora vive en `src/identidad.py`, igual que el horario vive en `src/horario.py`.
+
+def test_la_etiqueta_de_identidad_solo_se_define_en_identidad_py():
+    # Mira las lineas de CODIGO, no los comentarios: la historia de por que esta regla
+    # divergio esta escrita en prosa en varios archivos y esa prosa no es una copia.
+    from pathlib import Path
+    culpables = []
+    for f in Path("src").glob("*.py"):
+        if f.name == "identidad.py":
+            continue
+        for n, linea in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if linea.strip().startswith("#"):
+                continue
+            if "'Operador sin identificar'" in linea:
+                culpables.append(f"{f.name}:{n}")
+    assert not culpables, f"la etiqueta se define fuera de identidad.py: {culpables}"
+
+
+def test_el_translate_de_acentos_solo_se_define_en_identidad_py():
+    from pathlib import Path
+    culpables = []
+    for f in Path("src").glob("*.py"):
+        if f.name == "identidad.py":
+            continue
+        if "aeiouuaeiouaeion" in f.read_text(encoding="utf-8"):
+            culpables.append(f.name)
+    assert not culpables, f"el translate se define fuera de identidad.py: {culpables}"
+
+
+def test_el_filtro_de_operador_compara_contra_LO_QUE_OFRECE_el_desplegable():
+    # El desplegable ofrece la etiqueta RESUELTA (con el split y la cuarta puerta) y el filtro
+    # comparaba el `COALESCE(u.name, cs.user_name)` crudo -- que es NULL justo en las dos
+    # etiquetas. Elegir "Operador borrado por Whaticket" devolvia CERO filas sin explicacion:
+    # exactamente lo que el docstring de `filter_options` dice no volver a hacer.
+    import inspect
+
+    from src.identidad import OPERADOR_RESUELTO
+    from src.queries import _scores_filters, filter_options
+    ofrece = inspect.getsource(filter_options)
+    filtra = inspect.getsource(_scores_filters)
+    assert OPERADOR_RESUELTO in ofrece or "_OPERADOR_RESUELTO" in ofrece
+    assert "_OPERADOR_RESUELTO" in filtra, "el filtro no usa la expresion resuelta"
+    assert "COALESCE(u.name, cs.user_name) = %(op)s" not in filtra
+
+
+def test_el_front_NO_calcula_la_etiqueta_de_identidad():
+    # La regla vive en SQL. Si el front la re-deriva desde `user_name`/`user_id`, no conoce el
+    # split de "borrado por Whaticket" ni la cuarta puerta, y dice otra cosa que los cuadros.
+    # Nombrarla para EXPLICARLA si vale (el mapa de tips): las dos etiquetas significan cosas
+    # distintas y una es un fallo nuestro. Lo prohibido es DERIVARLA.
+    from pathlib import Path
+
+    from src.identidad import BORRADO_POR_CRM, SIN_IDENTIFICAR
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    linea_opname = next(ln for ln in html.splitlines() if ln.startswith("const opName ="))
+    assert SIN_IDENTIFICAR not in linea_opname, "el front re-deriva la etiqueta"
+    assert "user_id" not in linea_opname, "el front decide por user_id, como hacia el SQL"
+    for etiqueta in (SIN_IDENTIFICAR, BORRADO_POR_CRM):
+        usos = [ln.strip() for ln in html.splitlines() if etiqueta in ln]
+        assert usos, f"{etiqueta} no esta explicada en el front"
+        for u in usos:
+            assert u.startswith(f'"{etiqueta}":'), f"uso que no es un tip: {u[:80]}"
+
+
+def test_el_modal_y_los_cuadros_listan_el_MISMO_universo():
+    # Si el modal lista operadores que los cuadros no muestran, el que prende/apaga esta
+    # decidiendo sobre filas que no existen en ningun promedio.
+    from src.identidad import OPERADOR_RESUELTO
+    from src.operators_status import _ACTIVITY, _ADMIN_ROWS
+    from src.queries import _OPS_SQL
+    for sql in (_ADMIN_ROWS, _OPS_SQL):
+        assert "cs.agent_message_count > 0" in sql, "falta la cuarta puerta"
+    # La etiqueta SI aparece en el SQL armado -- la expresion la embebe. Lo que se exige es
+    # que sea la MISMA expresion, no una tipeada al lado.
+    for sql in (_ADMIN_ROWS, _ACTIVITY, _OPS_SQL):
+        assert OPERADOR_RESUELTO in sql, "no usa la expresion de identidad.py"
+        # `{where}` y `{cola}` son placeholders LEGITIMOS de .format(). Los de identidad no:
+        # `operators_status.py` quedo con las constantes en un string sin la `f`, asi que el
+        # SQL viajaba con `{OPERADOR_RESUELTO}` como texto y Postgres reventaba.
+        for ph in ("{OPERADOR_RESUELTO}", "{HAY_OPERADOR}", "{clave_sql", "{clave_os}"):
+            assert ph not in sql, f"placeholder de identidad sin interpolar: {ph}"

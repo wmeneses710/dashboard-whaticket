@@ -9,6 +9,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 from src.context import fetch_messages
+from src.identidad import (HAY_OPERADOR, OPERADOR_O_NADA, OPERADOR_RESUELTO,
+                          clave_sql, expr_resuelto)
 from src.router import ANOMALOUS_MESSAGE_MAX
 from src.rubrics import MOTIVOS
 
@@ -23,7 +25,7 @@ from src.rubrics import MOTIVOS
 # usados (queue_name, resolved_at) se omiten aca: peso muerto en la lista.
 _SCORES_SQL = """
 SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
-       cs.user_id, COALESCE(u.name, cs.user_name) AS user_name,
+       cs.user_id, """ + OPERADOR_O_NADA + """ AS user_name,
        cs.conversation_created_at,
        cs.eval_status, cs.skip_reason, cs.rating_label, cs.stars,
        left(cs.rating_rationale, 160) AS rating_rationale, cs.deposit_count,
@@ -39,7 +41,7 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
 
 _DETAIL_SQL = """
 SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
-       cs.user_id, COALESCE(u.name, cs.user_name) AS user_name,
+       cs.user_id, """ + OPERADOR_O_NADA + """ AS user_name,
        cs.conversation_created_at, cs.resolved_at,
        cs.rubric, cs.eval_status, cs.skip_reason, cs.rating_label, cs.stars,
        cs.rating_rationale, cs.deposit_count, cs.dimensions, cs.message_count, cs.agent_message_count,
@@ -132,39 +134,11 @@ _RATING_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "m
 # trampa armada para la proxima grafia que cambie.
 # translate() y NO unaccent(): unaccent es una EXTENSION que puede no estar instalada en la
 # base de produccion, y esto tiene que andar sin pedir superusuario.
-def _clave_sql(expr: str) -> str:
-    """Clave de comparacion de nombres: minusculas y sin acentos.
+# La regla de identidad vive en src/identidad.py (fuente unica). Ver ahi el por que.
+_clave_sql = clave_sql
+_OPERADOR_RESUELTO = OPERADOR_RESUELTO
+_OPERADOR_O_NADA = OPERADOR_O_NADA
 
-    Las dos cadenas de `translate` TIENEN QUE MEDIR LO MISMO. Estaban en 23 contra 24 y
-    Postgres no se queja -- ignora el sobrante y DESPLAZA el mapeo desde el caracter 16:
-    `ñ` caia en 'a' en vez de 'n', asi que `Muñoz` NO matcheaba con `Munoz`, que es
-    justamente lo que esta funcion existe para resolver. Latente hasta el 2026-08-12
-    (cero nombres con ñ en `users`, `user_name` y `operator_status`), pero le pegaba al
-    primer Muñoz/Peña/Nuñez que entrara.
-    Las mayusculas acentuadas se sacaron: el `lower()` va ANTES del `translate`, asi que
-    nunca llegaban -- eran codigo muerto, y eran el origen del desalineo.
-    """
-    return (f"translate(lower({expr}), "
-            "'áéíóúüàèìòùäëïöñ', 'aeiouuaeiouaeion')")
-
-
-# Nombre del operador RESUELTO: el mismo con el que agrupan todos los cuadros. `users.name`
-# manda y la firma `*Nombre:*` guardada en `user_name` es el fallback (38 de 67 operadores
-# de `sistemas` no existen en `users`).
-# DOS CAUSAS, DOS ETIQUETAS. 'Operador sin identificar' colapsaba dos cosas distintas, y eso
-# es peligroso justamente porque la etiqueta se puede APAGAR: si un bug futuro rompe la
-# atribucion de alguien ACTIVO, su trabajo caeria en el mismo cajon apagado y desapareceria
-# sin que nadie se entere. MEDIDO el 2026-08-12 sobre 130.558 filas evaluadas:
-#   - 128 tienen `user_id` pero NO hay fila en `users` -> el CRM BORRO al usuario. Causa
-#     conocida y cerrada: son 2 personas, activas ene/feb/may 2026, y el nombre NO se puede
-#     recuperar (0 de sus 745 mensajes trae la firma `*Nombre:*`). Esa se APAGA.
-#   - 675 no tienen NI `user_id` NI firma -> el fallo es NUESTRO, no del CRM. De esas, **640
-#     tienen mensajes de un humano**: trabajo real sin nombre. Esa queda VISIBLE, para que un
-#     fallo nuevo se vea en vez de heredar el apagado del caso viejo.
-_OPERADOR_RESUELTO = ("coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
-                      "CASE WHEN cs.user_id IS NOT NULL AND u.id IS NULL "
-                      "THEN 'Operador borrado por Whaticket' "
-                      "ELSE 'Operador sin identificar' END)")
 
 # BAJA LÓGICA de operadores. Un operador apagado desaparece de TODO lo que sale de
 # conversation_scores — KPIs incluidos, no solo de los cuadros por operador: en `sistemas`
@@ -215,7 +189,7 @@ def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
     if canal and canal != "all":
         where.append("t.channel = %(canal)s"); params["canal"] = canal
     if op and op != "all":
-        where.append("COALESCE(u.name, cs.user_name) = %(op)s"); params["op"] = op
+        where.append(f"{_OPERADOR_RESUELTO} = %(op)s"); params["op"] = op
     if date_from:
         where.append("cs.conversation_created_at >= %(dfrom)s"); params["dfrom"] = date_from
     if date_to:
@@ -224,7 +198,7 @@ def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
         where.append("cs.stars = %(rstars)s"); params["rstars"] = _RATING_STARS[rating]
     if search:
         where.append("(ct.name ILIKE %(q)s OR ct.number ILIKE %(q)s "
-                     "OR COALESCE(u.name, cs.user_name) ILIKE %(q)s)")
+                     f"OR {_OPERADOR_RESUELTO} ILIKE %(q)s)")
         params["q"] = f"%{search}%"
     return " AND ".join(where), params
 
@@ -436,10 +410,9 @@ def _build_ops(rows) -> list[dict]:
 # sesiones, sin un mensaje humano) sigue afuera: ahi no hubo operador que evaluar.
 _OPS_SQL = f"""
 SELECT {_OPERADOR_RESUELTO} AS op,
-       cs.rating_label, count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
+       cs.rating_label, count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + f"""
    AND cs.eval_status = 'evaluated'
-   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL
-        OR cs.user_id IS NOT NULL OR cs.agent_message_count > 0)
+   AND {HAY_OPERADOR}
  GROUP BY 1, cs.rating_label"""
 
 
@@ -456,9 +429,9 @@ def operators_table(cur, account: str, **filters) -> list[dict]:
 _OPS_MOTIVO_SQL = f"""
 SELECT {_OPERADOR_RESUELTO} AS op,
        coalesce(cs.motivo, 'sin_motivo') AS motivo,
-       count(*) AS n, avg(cs.stars) AS avg_stars""" + _SCORES_JOINS + """
+       count(*) AS n, avg(cs.stars) AS avg_stars""" + _SCORES_JOINS + f"""
    AND cs.eval_status = 'evaluated'
-   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+   AND {HAY_OPERADOR}
  GROUP BY 1, 2"""
 
 
@@ -545,9 +518,9 @@ def _build_quality_evolution(rows, top_n: int | None = None, min_conv: int = 5) 
 _QUALITY_SQL = f"""
 SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
        {_OPERADOR_RESUELTO} AS op,
-       count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
+       count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + f"""
    AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
-   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+   AND {HAY_OPERADOR}
  GROUP BY 1, 2"""
 
 
@@ -626,10 +599,10 @@ _QUALITY_MOTIVO_SQL = f"""
 SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
        cs.motivo AS motivo,
        {_OPERADOR_RESUELTO} AS op,
-       count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
+       count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + f"""
    AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
    AND cs.motivo IS NOT NULL
-   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+   AND {HAY_OPERADOR}
  GROUP BY 1, 2, 3"""
 
 
@@ -762,7 +735,7 @@ SELECT """ + _CARD_KEY + """ AS card_key,
        -- hay que abrir sesión por sesión para entenderlo. Booleano derivado del jsonb: sin
        -- migración y sin peso en el payload.
        (cs.dimensions->>'cliente_abandono')::boolean AS cliente_abandono,
-       COALESCE(u.name, cs.user_name) AS user_name, cs.user_id
+       """ + OPERADOR_O_NADA + """ AS user_name, cs.user_id
   FROM conversation_scores cs
   LEFT JOIN tickets  t  ON t.id  = cs.ticket_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
@@ -849,8 +822,7 @@ def filter_options(cur, account: str, ambiente: str = "todos") -> dict:
     # divergen, el filtro no puede llegar a filas que igual estan en el promedio.
     cur.execute(f"SELECT DISTINCT {_OPERADOR_RESUELTO} AS op FROM conversation_scores cs "
                 "LEFT JOIN users u ON u.id = cs.user_id WHERE cs.account = %(account)s "
-                "AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL "
-                "OR cs.user_id IS NOT NULL OR cs.agent_message_count > 0)"
+                f"AND {HAY_OPERADOR}"
                 + amb + " ORDER BY 1", params)
     operators = [r[0] for r in cur.fetchall()]
     cur.execute("SELECT DISTINCT cs.motivo FROM conversation_scores cs "
@@ -912,7 +884,8 @@ _MONTH_WINDOW = """
 # resuelve, vía `cs.user_name`), pero acá se comparaba contra 'Operador sin identificar'
 # -> para esos 38 la BAJA LÓGICA no funcionaba en los cuadros. Apagabas a alguien, seguía
 # apareciendo, y no había forma de saber por qué.
-_OP_CHARTS = "coalesce(nullif(u.name, ''), nullif(sig.name, ''), 'Operador sin identificar')"
+# La firma llega por el CTE `op_sig`, no por `cs`: aca no hay `conversation_scores`.
+_OP_CHARTS = expr_resuelto(firma="sig.name", user_id="co.user_id")
 
 # user_id -> nombre firmado más frecuente. Espeja build_operator_map (nombre más frecuente
 # por operador, no el último). El tiebreaker por nombre lo hace determinista: sin él, dos
@@ -1287,7 +1260,7 @@ def new_vs_deposit_by_month(cur, account: str,
 # Operador = user_id (entidad users); NULL = bot/sin asignar.
 # =====================================================================
 _CONV_OP_EXPR = ("CASE WHEN pc.user_id IS NULL THEN 'BOT / sin operador' "
-                 "ELSE coalesce(nullif(u.name, ''), 'Operador sin identificar') END")
+                 f"ELSE {expr_resuelto(firma=None, user_id='pc.user_id')} END")
 
 
 # Baja lógica en la conversión. Tercera expresión distinta de "operador": acá cuelga de
@@ -1373,6 +1346,8 @@ def conversion_by_operator(cur, account: str, **filters) -> dict:
 
 
 _CONV_BY_MONTH_SQL = """
+# `potential_clients` no guarda firma: si hay `user_id` y no hay fila en `users`, es un
+# usuario que el CRM borro, y esa es la etiqueta que corresponde (no "sin identificar").
 SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
        count(*) AS potential,
        count(*) FILTER (WHERE pc.deposited) AS converted,
@@ -1410,7 +1385,7 @@ def conversion_by_month(cur, account: str, **filters) -> dict:
 # diluir la línea roja con lo aún sin clasificar. Solo operadores HUMANOS (user_id).
 _CONV_PASV_SQL = """
 SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
-       coalesce(nullif(u.name, ''), 'Operador sin identificar') AS op,
+       """ + expr_resuelto(firma=None, user_id='pc.user_id') + """ AS op,
        count(*) AS n,
        count(*) FILTER (WHERE pc.deposited) AS conv,
        count(*) FILTER (WHERE pc.attention IS NOT NULL) AS clasif,
