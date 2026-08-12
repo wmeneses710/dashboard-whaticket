@@ -224,7 +224,12 @@ def score_retiro(messages: list[dict], cierre_at=None) -> ScoreResult | None:
         # El eje de uplift de retencion se saco a proposito: medido, empujar en retiro
         # EMPEORA el deposito posterior (83,8% -> 69,9%). El cliente ya volvia solo.
         atencion=None,
-        deposit_observed=False,
+        # None = NO OBSERVO, que es distinto de "observe que no hubo". `deposit_mismatch`
+        # reconcilia el gate determinista contra la OBSERVACION del LLM; una rubrica
+        # determinista no tiene opinion que reconciliar, y con `False` el flag comparaba el
+        # gate contra un DEFAULT y disparaba al vacio. MEDIDO el 2026-08-12: 20 de los 48
+        # mismatches de la corrida v6 eran estos. Igual que promo/info/soporte/agilidad.
+        deposit_observed=None,
         floor_applied=False,
         recomendacion=_coaching(r),
         claridad="claro",

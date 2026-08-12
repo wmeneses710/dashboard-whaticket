@@ -63,7 +63,37 @@ from src.segments import segment_for_queue
 #   - `deposit_mismatch` reconcilia contra LAS DOS PUERTAS del gate: 840 de 889 filas que
 #     marcaban discrepancia no tenian ninguna (quedan las 49 del camino con LLM, que es
 #     donde el flag significa algo).
-SCORING_VERSION = "2026.08-rubricas-v6"
+#
+# 2026.08-rubricas-v7 (2026-08-12). Sale de auditar la corrida v6 y el PROMPT contra el
+# modelo real. Lo que cambio contra v6:
+#   - `registro` entra al VENTANEO POR INTERACCION, del que se habia quedado afuera: sobre la
+#     sesion entera emparejaba los datos de un alta con las credenciales de OTRA, y el
+#     `convirtio` que habilita el 5 agarraba una recarga de cualquier interaccion mientras el
+#     texto afirmaba "en la misma conversacion". VALIDADO re-corriendo la rubrica real sobre
+#     1.717 sesiones: 1.508 de UNA interaccion no se mueven y **27 cambian, TODAS hacia
+#     abajo** (13 de 5->4, 6 de 5->3, 4 de 5->2, 4 de 3->2);
+#   - el texto ya no dice "Creo la cuenta NUNCA despues de recibir los datos": cuando las
+#     credenciales salen ANTES de los datos la espera NO se puede medir, y la frase no la
+#     afirma. Eran 14 filas, LAS 14 con 5 estrellas, mas 43 con "tardo nunca";
+#   - PROMPT, `cliente_reinsistio`: reconocia el "?" literal y nada mas -- el caso mas
+#     explicito ("llevo 40 minutos esperando", "me estan ignorando?") daba false. Es el hecho
+#     que DEMOTA, asi que roto empujaba las notas hacia ARRIBA. Medido contra qwen3:14b: de
+#     1 de 4 formas reconocidas a 5 de 5;
+#   - PROMPT, `atendio_el_motivo`: una DESPEDIDA ya no atiende. "Mucha suerte hoy" es cierre,
+#     no atencion; "listo"/"ing"/"cargado" siguen contando porque ACUSAN el pedido. Cerro la
+#     inestabilidad que hacia alternar el mismo ghosteo entre `buena` y `deficiente`;
+#   - PROMPT, `deposito` vs `problema`: un reclamo por una recarga YA HECHA (en pasado, sin
+#     adjuntar nada) es `problema`, no `deposito`;
+#   - PROMPT: se reescribio como HECHO la unica regla que quedaba redactada en terminos de la
+#     NOTA ("la nota es aceptable, NO deficiente"), instruccion muerta desde `label_from_facts`;
+#   - `retiro` y `registro` reportan `deposit_observed=None` (= no observo) en vez de un
+#     booleano: `deposit_mismatch` reconcilia el gate contra la observacion del LLM, y una
+#     rubrica determinista no tiene opinion que reconciliar. Eran 28 de los 48 mismatches.
+# Banco de casos del prompt (scripts/eval_prompt.py): 26/28, estable en 3 repeticiones.
+# NO se cambio el transcript: se probo darle tiempos y fronteras al modelo y NO mejora
+# (26/28 sin tiempos contra 25/28 con), asi que `format_transcript(con_tiempos=)` queda
+# apagado. Ver el docstring de esa funcion.
+SCORING_VERSION = "2026.08-rubricas-v7"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

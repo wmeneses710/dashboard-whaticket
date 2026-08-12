@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from src.deposits import deposit_candidate_count
+from src.interacciones import interaccion_de
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
@@ -117,11 +118,32 @@ def es_transaccion(messages: list[dict]) -> bool:
             or _credenciales_del_operador(messages) is not None)
 
 
+def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
+    """La ventana que `calificar_registro` va a juzgar. None si no hubo un alta.
+
+    El ancla es el traspaso de datos del cliente, y si no lo hay (paso los datos por otro
+    canal: 25 de 707 casos) la entrega de credenciales del operador — las dos puntas de
+    `es_transaccion`. Espejo de deposito/retiro; ver src/interacciones.py.
+    """
+    if not es_transaccion(messages):
+        return None
+    ancla = _datos_del_cliente(messages) or _credenciales_del_operador(messages)
+    return None if ancla is None else interaccion_de(messages, ancla)
+
+
 def calificar_registro(messages: list[dict]) -> Registro | None:
     """Nota determinista de la sesion. None si no hubo un alta que calificar."""
     if not es_transaccion(messages):
         return None
-    reales = sorted((m for m in messages if not m.get("is_note")),
+    # LA EVIDENCIA SE BUSCA EN LA INTERACCION DEL ALTA. `registro` se habia quedado afuera
+    # del ventaneo que `aaadca7` le dio a deposito y retiro, y sobre la sesion entera
+    # emparejaba altas distintas: los `datos` de la interaccion 1 con las `cred` de la 5 (una
+    # espera inventada), y peor, `convirtio` -- lo que habilita el 5 -- agarraba una recarga
+    # de CUALQUIER interaccion mientras el texto afirma "en la misma conversacion".
+    # HALLADO el 2026-08-12 auditando v6: `c4a69129` decia "Creo la cuenta 1,3 minutos
+    # despues de recibir los datos" con 20.226 minutos (14 dias) de primera respuesta al lado.
+    ventana = interaccion_juzgada(messages) or messages
+    reales = sorted((m for m in ventana if not m.get("is_note")),
                     key=lambda m: m["created_at"])
     datos = _datos_del_cliente(reales)
     cred = _credenciales_del_operador(reales)
@@ -147,13 +169,28 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
             "El cliente entregó sus datos pero nunca recibió su usuario y clave: "
             "el alta quedó a medias.",
             None, False, convirtio)
+    # `espera` es None cuando las credenciales salieron ANTES de que el cliente pasara los
+    # datos: los dio por otro canal (25 de 707 casos, ver `es_transaccion`). Ahi la espera NO
+    # SE PUEDE MEDIR, y la frase no puede afirmar una duracion: `formato_espera(None)` es
+    # "nunca", correcto en "nunca envio el comprobante" y absurdo como duracion.
+    # MEDIDO el 2026-08-12 sobre el respaldo v5: 14 filas decian "Creo la cuenta NUNCA
+    # despues de recibir los datos" y LAS 14 tenian 5 estrellas, mas 43 con "tardo nunca".
+    # Se corrige el TEXTO, no la nota.
     if convirtio:
+        detalle = (f" {_mins(espera)} después de recibir los datos"
+                   if espera is not None else "")
         return Registro(
             5, "excelente",
-            f"Creó la cuenta {_mins(espera)} después de recibir los datos y además "
-            "logró que el cliente recargara en la misma conversación.",
+            f"Creó la cuenta{detalle} y además logró que el cliente recargara en la "
+            "misma conversación.",
             espera, True, True)
-    if espera is None or espera > ENTREGA_AGIL:
+    if espera is None:
+        return Registro(
+            3, "aceptable",
+            "Entregó el usuario y la clave, pero no se puede medir cuánto tardó: las "
+            "credenciales salieron antes de que el cliente pasara sus datos.",
+            None, True, False)
+    if espera > ENTREGA_AGIL:
         return Registro(
             3, "aceptable",
             f"Entregó el usuario y la clave, pero tardó {_mins(espera)} desde que el "
@@ -191,7 +228,13 @@ def score_registro(messages: list[dict]) -> ScoreResult | None:
         # `registro` es el UNICO motivo donde el eje comercial es el objetivo mismo:
         # el 5 es la conversion. Por eso no hace falta un `atencion` aparte.
         atencion="empujo" if r.convirtio else None,
-        deposit_observed=r.convirtio,
+        # None = NO OBSERVO. `convirtio` sigue decidiendo el 5 (es la conversion), pero NO
+        # sirve para reconciliar `deposit_mismatch`: desde el ventaneo por interaccion del
+        # 2026-08-12 mira SOLO la interaccion del alta, mientras el gate mira la sesion
+        # entera -- ventanas distintas, mismatch sistematico. MEDIDO: 8 de los 48 mismatches
+        # de la corrida v6 eran estos. El flag reconcilia el gate contra el LLM, y una
+        # rubrica determinista no tiene opinion que reconciliar.
+        deposit_observed=None,
         floor_applied=False,
         recomendacion="" if r.stars == 5 else (
             _COACHING_1 if r.stars == 1 else _COACHING[r.stars]),

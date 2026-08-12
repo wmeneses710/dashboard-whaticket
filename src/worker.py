@@ -16,6 +16,7 @@ from src.deposito import es_transaccion as es_transaccion_deposito
 from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
 from src.deposits import deposit_candidate_count
 from src.interacciones import tiempos_de
+from src.registro import interaccion_juzgada as interaccion_juzgada_registro
 from src.retiro import interaccion_juzgada as interaccion_juzgada_retiro
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
@@ -151,6 +152,11 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
 _ANCLA_POR_MOTIVO = {
     "deposito": interaccion_juzgada_deposito,
     "retiro": interaccion_juzgada_retiro,
+    # `registro` entro el 2026-08-12: su ancla es el traspaso de datos del cliente, y ya
+    # estaba en el codigo — la rubrica dice "despues de recibir los datos". Sin esto, el
+    # rationale citaba minutos y al lado se persistian dias (caso `c4a69129`: 1,3 min de
+    # texto contra 20.226 min de metrica).
+    "registro": interaccion_juzgada_registro,
 }
 
 

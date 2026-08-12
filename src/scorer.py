@@ -8,7 +8,7 @@ evaluated/skipped) la decide antes el router; aca ya llega una conversacion
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from src.prompts import build_motivo_prompt, build_motivo_schema
@@ -168,42 +168,44 @@ def score_by_motivo(
     # el turno al pase con LLM cuando el cliente solo pregunto (56,8% en retiro, 52,1%
     # en deposito): sin plata pedida no hay nada que entregar ni que acreditar.
     # Import diferido: los dos modulos importan ScoreResult de este.
+    determinista = None
     if motivo == "deposito":
         from src.deposito import score_deposito
 
         determinista = score_deposito(target_messages, cierre_at)
-        if determinista is not None:
-            return determinista
     elif motivo == "retiro":
         from src.retiro import score_retiro
 
         determinista = score_retiro(target_messages, cierre_at)
-        if determinista is not None:
-            return determinista
     elif motivo == "registro":
         from src.registro import score_registro
 
         determinista = score_registro(target_messages)
-        if determinista is not None:
-            return determinista
     elif motivo == "promo":
         from src.promo import score_promo
 
         determinista = score_promo(target_messages)
-        if determinista is not None:
-            return determinista
     elif motivo == "soporte_cuenta":
         from src.soporte import score_soporte
 
         determinista = score_soporte(target_messages, cierre_at)
-        if determinista is not None:
-            return determinista
     elif motivo == "info":
         from src.info import score_info
 
         determinista = score_info(target_messages, cierre_at)
-        if determinista is not None:
-            return determinista
+
+    if determinista is not None:
+        # LOS FRAGMENTOS DE NEGOCIO TAMBIEN EN EL CAMINO DETERMINISTA. `refine_recomendacion`
+        # se llamaba SOLO abajo (el camino LLM), y las rubricas deterministas retornaban antes
+        # sin pasar por ahi. MEDIDO el 2026-08-12: de las 294 filas de
+        # `determinista/registro-v1`, **278 entregaron credenciales y NI UNA le decia al
+        # cliente que cambie la contraseña** -- una regla de SEGURIDAD que existe en el codigo
+        # y no disparaba justo donde mas aplica, porque `registro` es determinista cuando SI
+        # hubo alta. En el camino LLM eran 88 de 397 (22%).
+        # `agilidad` queda afuera a proposito: no pasa por aca (worker.py la llama directo) y
+        # sus fragmentos serian de otro dominio -- un agente no se convierte, opera una caja.
+        return replace(determinista, recomendacion=refine_recomendacion(
+            determinista.recomendacion, motivo=motivo, target_messages=target_messages))
 
     # HECHOS del LLM -> etiqueta por CODIGO. El modelo juzga hechos concretos (que hace
     # bien); la regla de 2 capas la aplica label_from_facts (que el modelo aplicaba de

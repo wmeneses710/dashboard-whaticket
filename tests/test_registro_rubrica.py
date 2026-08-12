@@ -22,7 +22,12 @@ alcanza, porque crear una cuenta lleva mas que acusar un comprobante.
 """
 from datetime import datetime, timedelta, timezone
 
-from src.registro import calificar_registro, es_transaccion, score_registro
+from src.registro import (
+    calificar_registro,
+    es_transaccion,
+    interaccion_juzgada,
+    score_registro,
+)
 
 BASE = datetime(2026, 3, 10, 20, 0, 0, tzinfo=timezone.utc)
 
@@ -148,3 +153,93 @@ def test_la_recomendacion_del_4_apunta_al_deposito():
     r = score_registro(msgs)
     assert r.stars == 4
     assert "deposit" in r.recomendacion.lower() or "recarga" in r.recomendacion.lower()
+
+
+# --- LA EVIDENCIA SE BUSCA EN LA INTERACCION DEL ALTA ------------------------------
+# `registro` se quedo afuera del ventaneo por interaccion que `aaadca7` le dio a deposito y
+# retiro: `calificar_registro` mira la sesion ENTERA. En las conversaciones con varios
+# cierres eso empareja cosas de altas distintas:
+#   - `datos` de la interaccion 1 con `cred` de la 5 -> una espera inventada;
+#   - y peor, `convirtio` (lo que habilita el 5) agarra una recarga de CUALQUIER
+#     interaccion, mientras el texto afirma "en la misma conversacion".
+# HALLADO el 2026-08-12 auditando v6: `c4a69129` dice "Creo la cuenta 1,3 minutos despues de
+# recibir los datos" y al lado tiene 20.226 minutos (14 dias) de primera respuesta. Y de los
+# 13 cinco-estrellas del camino LLM, LOS 13 tienen `cliente_abandono`.
+
+def _cierre(minutos, quien="Mario"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación"}
+
+
+def test_no_empareja_los_datos_de_un_alta_con_las_credenciales_de_otra():
+    # Interaccion 1: el cliente pasa los datos y nadie le entrega nada -> 2 estrellas.
+    # Interaccion 2, tres dias despues: otra alta que si se completa.
+    msgs = [_cli(0, DATOS_CLIENTE), _op(3, "ahi te reviso"), _cierre(10),
+            _cli(4320, DATOS_CLIENTE), _op(4322, CREDENCIALES), _cierre(4330)]
+    r = calificar_registro(msgs)
+    assert r is not None
+    # Sin ventaneo, `cred` de la 2da tapaba el fracaso de la 1ra y daba 3 o 4.
+    assert r.stars == 2, r.rationale
+
+
+def test_el_5_exige_la_recarga_en_LA_MISMA_interaccion():
+    # El alta se completa en la interaccion 1 SIN recarga (=4). La recarga llega en otra
+    # interaccion dos dias despues: no puede licenciar el 5 de la primera.
+    msgs = [_cli(0, DATOS_CLIENTE), _op(2, CREDENCIALES), _cierre(8),
+            _cli(2880, "ahi te mando el comprobante de la recarga"),
+            _cli(2881, "", media="image"), _op(2882, "ing"), _cierre(2890)]
+    r = calificar_registro(msgs)
+    assert r is not None
+    assert r.stars == 4, r.rationale
+
+
+def test_una_sola_interaccion_sigue_dando_lo_mismo():
+    # Guard de no-regresion: el 96,3% de las conversaciones tiene UN cierre.
+    msgs = [_cli(0, DATOS_CLIENTE), _op(2, CREDENCIALES), _cierre(8)]
+    assert calificar_registro(msgs).stars == 4
+
+
+def test_interaccion_juzgada_expone_la_ventana_del_alta():
+    msgs = [_cli(0, DATOS_CLIENTE), _op(2, CREDENCIALES), _cierre(8),
+            _cli(4320, DATOS_CLIENTE), _op(4322, CREDENCIALES), _cierre(4330)]
+    ventana = interaccion_juzgada(msgs)
+    assert ventana is not None
+    reales = [m for m in ventana if not m["is_note"]]
+    assert reales[0]["created_at"] == BASE          # ancla = el PRIMER traspaso de datos
+    assert all(m["created_at"] < BASE + timedelta(minutes=4000) for m in ventana)
+
+
+def test_interaccion_juzgada_es_None_si_no_hubo_alta():
+    assert interaccion_juzgada([_cli(0, "como me registro?"), _op(1, "te explico")]) is None
+
+
+# `formato_espera(None)` devuelve "nunca", que es correcto en "nunca envio el comprobante"
+# pero absurdo incrustado como duracion: "Creo la cuenta NUNCA despues de recibir los datos".
+# Pasa cuando las credenciales salen ANTES de que el cliente pase los datos -- el cliente los
+# dio por otro canal, 25 de 707 casos, documentado en `es_transaccion`. Ahi `espera` es None.
+# MEDIDO el 2026-08-12 en el respaldo v5: **14 filas dicen "nunca despues de recibir los
+# datos" y LAS 14 tienen 5 estrellas**, mas 43 que dicen "tardo nunca". Salio a produccion.
+# Se corrige el TEXTO, no la nota: cuando no se puede medir la espera, la frase no la afirma.
+
+def test_sin_espera_medible_el_texto_no_dice_nunca():
+    # Credenciales primero (datos por otro canal) + recarga -> 5, pero sin duracion medible.
+    msgs = [_op(0, CREDENCIALES), _cli(2, DATOS_CLIENTE),
+            _cli(3, "ahi va el comprobante de la recarga"), _cli(4, "", media="image"),
+            _op(5, "ing")]
+    r = calificar_registro(msgs)
+    assert r is not None and r.stars == 5
+    assert "nunca" not in r.rationale.lower(), r.rationale
+    assert r.espera is None
+
+
+def test_sin_espera_medible_y_sin_recarga_tampoco_dice_nunca():
+    msgs = [_op(0, CREDENCIALES), _cli(2, DATOS_CLIENTE)]
+    r = calificar_registro(msgs)
+    assert r is not None
+    assert "nunca" not in r.rationale.lower(), r.rationale
+
+
+def test_con_espera_medible_el_texto_sigue_diciendo_los_minutos():
+    msgs = [_cli(0, DATOS_CLIENTE), _op(2, CREDENCIALES)]
+    r = calificar_registro(msgs)
+    assert "2 minutos" in r.rationale, r.rationale

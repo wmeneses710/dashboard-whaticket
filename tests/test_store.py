@@ -407,3 +407,40 @@ def test_ensure_scores_columns_incluye_rating_applicable():
     ), "falta ALTER para rating_applicable"
 
 
+
+
+# `deposit_mismatch` reconcilia el GATE DETERMINISTA contra la OBSERVACION DEL LLM: es una
+# señal de calidad de DATO entre dos fuentes distintas. Una rubrica determinista no tiene
+# opinion que reconciliar, asi que tiene que reportar `deposit_observed=None` (= "no observo")
+# y no un booleano — si no, el flag compara el gate contra un DEFAULT y dispara al vacio.
+# MEDIDO el 2026-08-12 sobre la corrida v6: de 48 mismatches, **28 eran falsos** —
+# 20 de `determinista/retiro-v1` (que tenia `False` hardcodeado) y 8 de
+# `determinista/registro-v1` (cuyo `convirtio` quedo VENTANEADO por interaccion mientras el
+# gate sigue mirando la sesion entera: ventanas distintas, mismatch sistematico).
+# `promo`, `info`, `soporte` y `agilidad` ya lo hacian bien con None.
+
+def test_las_rubricas_que_no_observan_depositos_reportan_None():
+    from src.registro import score_registro
+    from src.retiro import score_retiro
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
+
+    def _m(seg, from_me, body, media="chat"):
+        return {"created_at": base + timedelta(seconds=seg), "from_me": from_me,
+                "is_note": False, "body": body, "media_type": media,
+                "sent_from": "OPERATOR" if from_me else None}
+
+    r = score_retiro([_m(0, False, "Monto a retirar: 30 Cedula: 0951964055 Banco: Guayaquil"),
+                      _m(60, True, "Tu retiro está en proceso"), _m(180, True, "", "image")])
+    assert r is not None and r.deposit_observed is None, "retiro no observa depositos"
+
+    g = score_registro([_m(0, False, "Nancy Toaquiza toaquizanancy68@gmail.com 0986987466"),
+                        _m(120, True, "Usuario: nancy593 Clave: 12345")])
+    assert g is not None and g.deposit_observed is None, "registro no observa depositos"
+
+
+def test_sin_observacion_no_hay_mismatch_que_reportar():
+    # Es el efecto: con `deposit_observed=None`, `_deposit_mismatch` devuelve None y el flag
+    # no ensucia el KPI con filas donde no habia nada que reconciliar.
+    r = _record(score=_score(deposit_observed=None), deposit_count=0, deposit_gate=True)
+    assert r["deposit_mismatch"] is None

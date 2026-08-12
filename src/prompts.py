@@ -6,7 +6,7 @@ El LLM recibe:
   - la CONVERSACION OBJETIVO (transcript sin notas internas), que es la unica
     que califica.
 
-Emite: dimensions (una nota por dimension + errores[]), rating_label (una
+Emite: dimensions (una nota por dimension + errores[]), los HECHOS booleanos (una
 etiqueta permitida) y rating_rationale (el porque, especifico de esa
 conversacion). NO emite stars: la estrella se calcula aparte en
 src.rubrics.label_to_stars.
@@ -14,6 +14,7 @@ src.rubrics.label_to_stars.
 from __future__ import annotations
 
 from src.fewshot import formatear_fewshot
+from src.interacciones import es_cierre
 from src.rubrics import MOTIVO_LABELS, MOTIVOS, RubricSpec, get_rubric
 
 # Rotulo del lado "negocio" (from_me=True) segun quien atiende esa rubrica.
@@ -44,22 +45,56 @@ _USER_TEMPLATE = """\
 """
 
 
-def format_transcript(messages: list[dict], rubric: str) -> str:
+def _delta(seg: float) -> str:
+    """El hueco entre dos mensajes, compacto, para el margen del transcript."""
+    if seg < 60:
+        return f"+{round(seg)} s"
+    if seg < 3600:
+        return f"+{round(seg / 60)} min"
+    if seg < 86400:
+        return f"+{seg / 3600:.1f} h".replace(".0 h", " h")
+    d = seg / 86400
+    return f"+1 dia" if round(d, 1) == 1.0 else f"+{d:.1f} dias"
+
+
+def format_transcript(messages: list[dict], rubric: str, *, con_tiempos: bool = False) -> str:
     """Convierte los mensajes en un transcript legible, excluyendo notas internas.
 
     `from_me=True` = lado negocio (Operador o Bot segun la rubrica); False = Cliente.
     Los mensajes sin texto (solo media) se marcan para que el LLM lo sepa.
+
+    `con_tiempos` (EXPERIMENTAL, apagado por defecto) agrega la HORA DE RELOJ del primer
+    mensaje, el DELTA entre mensajes y la FRONTERA de cada interaccion. Sin eso el modelo no
+    puede saber si contestaron en 20 segundos o en 20 horas, y una sesion de 17 interacciones
+    le llega como un chat plano.
+    VA APAGADO A PROPOSITO: darle tiempos crudos tiene un riesgo medible. El HORARIO ya esta
+    resuelto de forma determinista (`src/horario.espera_efectiva` descuenta la noche; el 26%
+    de los deficientes eran clientes que escribian de madrugada), y hay esperas LEGITIMAS que
+    el reloj no distingue -- un retiro que depende del banco, un deposito en validacion. Un
+    modelo con timestamps y sin ese contexto castigaria esas esperas. Se prende recien si el
+    banco de casos (scripts/eval_prompt.py) demuestra que gana precision SIN romperlas.
     """
     # Las rubricas de MOTIVO (deposito/retiro/...) no estan en _BUSINESS_LABEL: el
     # lado negocio se rotula 'Operador' (el motivo evalua al operador humano).
     biz = _BUSINESS_LABEL.get(get_rubric(rubric).name, "Operador")
     lines: list[str] = []
+    previo = None
     for m in messages:
         if m.get("is_note"):
+            # La nota de CIERRE es la unica que se emite, y como SEPARADOR: es la frontera
+            # de la interaccion (ver src/interacciones.py), no un mensaje del operador.
+            if con_tiempos and es_cierre(m):
+                lines.append("--- el operador CERRO la interacción aquí ---")
             continue
         body = (m.get("body") or "").strip() or "[media/sin texto]"
         who = biz if m.get("from_me") else "Cliente"
-        lines.append(f"{who}: {body}")
+        marca = ""
+        if con_tiempos and m.get("created_at") is not None:
+            at = m["created_at"]
+            marca = (f"[{_delta((at - previo).total_seconds())}] " if previo is not None
+                     else f"[{at:%d/%m %H:%M}] ")
+            previo = at
+        lines.append(f"{who}: {marca}{body}")
     if len(lines) > TRANSCRIPT_MAX:
         omitidos = len(lines) - TRANSCRIPT_HEAD - TRANSCRIPT_TAIL
         lines = [
@@ -93,7 +128,9 @@ depositos/retiros el comprobante suele venir como media: NO asumas fracaso por n
 - JERGA AFECTUOSA: el trato coloquial (ñaño, naho, pana, panita, mi rey, causa, amigo/amiga) \
 NO es maltrato ni falta de respeto: es cercania. NUNCA lo cuentes como error de tono.
 - CLIENTE SIN NECESIDAD: si el cliente solo saluda, agradece, dice "ok" o se despide SIN \
-plantear una consulta, y el operador respondio cordial, la nota es "aceptable", NO "deficiente".
+plantear una consulta, y el operador respondio cordial, entonces `atendio_el_motivo` es \
+TRUE: no habia nada que resolver mas que responder con cortesia. NO lo pongas en false — \
+false significa que HABIA un motivo y no se atendio.
 - No inventes emociones ni contexto: evalua SOLO lo EXPLICITO en los mensajes. Atribui \
 cada mensaje a quien lo dijo (Cliente vs Operador/Bot).
 
@@ -121,6 +158,10 @@ devolvio usuario y clave) el motivo es `registro`, sin importar que haya pasado 
 despues — aunque la conversacion arrancara por una promo o terminara en una recarga. El alta \
 es el hecho consumado; la promo fue el gancho. (Decision del negocio, 2026-08-07.)
 - algo no funciona / no se le acredito / reclamo -> problema
+CLAVE deposito vs problema: si el cliente manda el comprobante AHORA para que le acrediten, \
+es `deposito`. Si RECLAMA por una recarga YA HECHA que no se le acredito -- habla en PASADO \
+("hice una recarga hace 2 horas y no me aparece"), sin adjuntar nada nuevo -- es `problema`. \
+Lo que decide es si viene a que le carguen algo o a reclamar que no le cargaron.
 
 PASO 2 - HECHOS. NO elijas una nota: responde estos HECHOS (los 4 primeros true/false; \
 claridad es una etiqueta) y el sistema calcula la nota de forma determinista.
@@ -128,6 +169,14 @@ claridad es una etiqueta) y el sistema calcula la nota de forma determinista.
 templateado. CUENTAN: la respuesta IMPLICITA, la PLANTILLA correcta ("listo"/"ing"/"cargado") \
 y la MEDIA del operador (comprobante de retiro, video-tutorial). Si dio una respuesta accionable \
 y el cliente se fue, igual ATENDIO (el abandono es del cliente).
+  NO CUENTA UNA DESPEDIDA. "Mucha suerte hoy", "esperamos poder atenderte de nuevo", "un \
+placer atenderte", "gracias por preferirnos" son CIERRE de la conversacion, no atencion del \
+pedido. Si despues del pedido del cliente el operador SOLO mando una despedida -- nada que \
+acuse, confirme ni resuelva lo que el cliente pidio --, `atendio_el_motivo` es FALSE.
+  LA DIFERENCIA: "listo"/"ing"/"cargado" ACUSAN el pedido (hablan de lo que el cliente pidio); \
+"mucha suerte" no dice NADA del pedido. Una plantilla que acusa atiende; una que solo se \
+despide, no. Y esto vale aunque el cliente se haya ido despues: el abandono disculpa la falta \
+de CIERRE, no la falta de RESPUESTA.
 - hizo_accion_extra: ADEMAS hizo la accion extra del motivo (columna UPLIFT).
 - cortesia_destacada: cortesia notable (usa el nombre, calidez real, personaliza). La jerga \
 afectuosa (ñaño/pana/panita/mi rey) SUMA, no resta.
@@ -140,8 +189,16 @@ paso o la info pedida esta EXPLICITA; si uso plantilla, la plantilla RESPONDE lo
 generica que NO encaja con la pregunta puntual (deflexion tipo "crea tu cuenta" ante una consulta concreta).
   * dudoso: si NO estas seguro (no fuerces "claro" ni "confuso" en un caso borderline).
   El TONO/cortesia NO es claridad: un mensaje seco pero claro es claro; uno calido pero confuso NO lo es.
-- cliente_reinsistio: true SOLO si el cliente tuvo que REPETIR o re-preguntar lo mismo (o mando \
-"?", "ayuda") porque no obtuvo respuesta clara. false si se fue callado (abandono) o quedo conforme.
+- cliente_reinsistio: true si el cliente tuvo que VOLVER A ESCRIBIR porque no obtuvo \
+respuesta. CUENTAN TODAS estas formas, y la lista NO es cerrada:
+  * repetir el pedido, igual o dicho de otra manera;
+  * insistir o pedir ayuda de nuevo ("me ayudan?", "hola?", "sigo esperando", "ahi?");
+  * RECLAMAR la demora o el SILENCIO ("llevo 40 minutos esperando", "nadie me contesta", \
+"me estan ignorando?");
+  * un "?" o un "ayuda" suelto.
+  La CANTIDAD no importa: alcanza UNA sola vez para que sea true.
+  false SOLO si el cliente NO volvio a escribir (se fue callado = abandono) o si volvio \
+CONFORME (agradece, confirma que le llego, se despide).
 
 Dimensiones (una nota de 1 frase con evidencia del chat cada una): resolucion (el PISO), \
 iniciativa (la accion extra = UPLIFT), cortesia. Mas la lista de errores concretos (vacia si no hay).
@@ -287,7 +344,7 @@ def _motivo_tabla_block() -> str:
 
 def build_motivo_prompt(
     target_messages: list[dict], thread_context: str, *, deposit_hint: bool = False,
-    abandono_hint: bool = False,
+    abandono_hint: bool = False, con_tiempos: bool = False,
 ) -> tuple[str, str]:
     """Prompt v2: el LLM elige el MOTIVO de la tabla y califica en 2 capas. (system, user).
 
@@ -309,7 +366,8 @@ def build_motivo_prompt(
     )
     contexto = (thread_context or "").strip() or "(sin visitas previas)"
     user = _USER_TEMPLATE.format(
-        contexto=contexto, transcript=format_transcript(target_messages, MOTIVOS[0])
+        contexto=contexto,
+        transcript=format_transcript(target_messages, MOTIVOS[0], con_tiempos=con_tiempos),
     )
     return system, user
 
