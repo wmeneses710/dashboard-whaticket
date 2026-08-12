@@ -78,18 +78,19 @@ class Retiro:
 # 112 de las 221 sesiones en 2 estrellas (50,7%) SI habian entregado el comprobante y
 # recibian igual el consejo de que "el retiro quedo sin comprobante".
 _COACHING = {
-    3: "Faltó velocidad. Se apunta a responder el pedido dentro de los 2 minutos y a "
-       "tener el comprobante arriba en 15.",
-    4: "Antes de cerrar, preguntale si necesita algo más.",
+    3: "El objetivo son 2 minutos para acusar el pedido y 15 para tener el comprobante "
+       "arriba. Acusar primero y entregar después cumple las dos cosas.",
+    4: "Cerrar con \"¿te falta algo más?\" es la diferencia entre entregar y acompañar: en "
+       "retiro el agente suele tener una segunda operación en camino.",
 }
 _COACHING_2_SIN_COMPROBANTE = (
-    "El retiro quedó sin comprobante. Enviarlo siempre: es el respaldo de que la plata "
-    "salió, y es lo que sostiene la confianza del agente.")
+    "Enviar el comprobante siempre, incluso si el agente no lo pidió: es el único respaldo "
+    "de que la plata salió, y es lo que sostiene la confianza de la agencia.")
 _COACHING_2_TARDE = (
-    "Enviaste el comprobante, pero tarde. El agente necesita el respaldo cuanto antes: "
-    "se apunta a responder en 2 minutos y entregar dentro de los 15.")
-_COACHING_1 = ("El pedido de retiro quedó sin respuesta. Aunque no puedas procesarlo "
-               "en el momento, avisale al agente que lo recibiste.")
+    "El comprobante llegó pero tarde. Conviene avisar en cuanto el retiro entra en "
+    "proceso: el agente necesita saber que está en marcha, no solo que terminó.")
+_COACHING_1 = ("El pedido de retiro quedó sin respuesta. Aunque no se pueda procesar en el "
+               "momento, conviene acusar el recibo: el agente tiene plata comprometida.")
 
 
 def _pedido_del_cliente(messages: list[dict]):

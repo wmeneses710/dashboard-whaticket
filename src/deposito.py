@@ -32,6 +32,7 @@ separan sin ser ni regalados ni imposibles.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -56,6 +57,23 @@ from src.horario import espera_efectiva
 # por SQL las filas del path determinista de las del pase con LLM.
 MODELO_DETERMINISTA = "determinista/deposito-v1"
 
+# EL RECHAZO VALIDO: la plata NO podia entrar y no es culpa del operador. Cuando eso pasa su
+# trabajo es DECIRLO, y por eso hay una rama propia (ver calificar_deposito).
+# Solo formas INEQUIVOCAS, y se mira despues del comprobante y sin acreditacion — el contexto
+# desambigua "debe verificar", que suelto aparece 4.026 veces como instruccion general.
+# DOS FALSOS POSITIVOS medidos que quedan AFUERA a proposito:
+#   "Monto minimo: $5" -> 20.489 mensajes, es la PLANTILLA de como transferir;
+#   "El bono esta vigente" -> "vigente" en contexto positivo.
+# LIMITACION CONOCIDA: si el texto del rechazo trae vocabulario de acreditacion ("esa boleta
+# ya fue CARGADA antes"), `operator_acreditacion` gana y la sesion no entra a esta rama.
+_RECHAZO_RE = re.compile(
+    r"titular (incorrecto|no coincide|distinto)"
+    r"|(comprobante|boleta) (repetid|duplicad)"
+    r"|\b(rechazad|denegad)"
+    r"|no (se )?(puede|pudo|podr[aá]) (cargar|acreditar|procesar)"
+    r"|(debe|debes|necesitas|tiene que|tienes que)[^.!?\n]{0,25}verificar",
+    re.IGNORECASE)
+
 AGIL = timedelta(minutes=2)       # <= 2 min -> el acuse fue inmediato
 ACEPTABLE = timedelta(minutes=5)  # <= 5 min -> tolerable; mas que eso, no
 
@@ -77,18 +95,28 @@ class Deposito:
 # diciendo lo contrario. Medido el 2026-08-11: 370 de las 1.400 sesiones en 2 estrellas
 # (26,4%) ya tenian `acredito=true` y recibian igual el consejo de "confirmale siempre".
 _COACHING = {
-    3: "Tardaste más de 2 minutos en avisar. Aunque no puedas acreditar en el momento, "
-       "decile enseguida que ya recibiste el comprobante.",
-    4: "Antes de cerrar, preguntale si necesita algo más.",
+    3: "Un primer mensaje corto —\"ya lo recibí, lo reviso\"— apenas entra el comprobante "
+       "alcanza para que el cliente no quede en silencio mientras se procesa.",
+    4: "Cerrar con \"¿te falta algo más?\" abre la puerta a la segunda duda, que en recargas "
+       "suele ser el bono o el próximo depósito.",
 }
 _COACHING_2_SIN_ACREDITAR = (
-    "Confirmale siempre al cliente que la plata entró. Un \"en breve\" sin cierre lo deja "
-    "sin saber si su recarga se acreditó.")
+    "Conviene confirmar que la plata entró con una línea al cierre: \"listo, ya tienes "
+    "tu saldo\". "
+    "Un \"en breve\" deja esa pregunta sin responder.")
 _COACHING_2_TARDE = (
-    "Confirmaste la acreditación, pero el primer aviso tardó demasiado. Avisale enseguida "
-    "que recibiste el comprobante, aunque todavía no puedas acreditarlo.")
-_COACHING_1 = ("El comprobante quedó sin respuesta. En operaciones de caja conviene "
-               "contestar siempre, aunque sea con una línea mientras se procesa.")
+    "El primer aviso tardó demasiado. Conviene separar los dos momentos: acusar el "
+    "comprobante apenas entra, y avisar la acreditación cuando esté lista.")
+# LA RAMA DEL RECHAZO (ver calificar_deposito): la plata no podia entrar y el operador lo
+# aviso. El consejo NO puede ser el del 4/3 normal, que habla del bono o del acuse.
+_COACHING_RECHAZO_RAPIDO = (
+    "El aviso salió rápido. Lo que más ayuda es decirle también cómo arreglarlo —qué dato "
+    "corregir o cómo verificar la cuenta— para que el próximo intento sí entre.")
+_COACHING_RECHAZO_TARDE = (
+    "El rechazo conviene avisarlo enseguida: mientras espera, el cliente cree que su plata "
+    "está en camino. Un mensaje corto en cuanto se ve el problema evita esa espera a ciegas.")
+_COACHING_1 = ("El comprobante quedó sin respuesta. En caja conviene contestar siempre: una "
+               "línea mientras se procesa evita que el cliente crea que se perdió su plata.")
 
 
 def _comprobante_del_cliente(messages: list[dict]):
@@ -171,6 +199,27 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
         return Deposito(1, "mala", "El cliente mandó el comprobante y nadie le respondió.",
                         None, False, algo_mas)
     if not acredito:
+        # LA RAMA DEL RECHAZO. Si la plata no podia entrar por una razon valida (titular
+        # incorrecto, boleta repetida, cuenta sin verificar), el trabajo del operador es
+        # AVISARLO: se califica por la velocidad de ese aviso, con TECHO EN 4. El 5 no es
+        # alcanzable aca a proposito -- significa "el mejor escenario del motivo", y un
+        # deposito rechazado no lo es. Decision del negocio, 2026-08-12.
+        rechazo = next((m for m in reales
+                        if _is_operator(m) and m["created_at"] > comprobante["created_at"]
+                        and _RECHAZO_RE.search(m.get("body") or "")), None)
+        if rechazo is not None:
+            aviso = espera_efectiva(comprobante["created_at"], rechazo["created_at"])
+            if aviso <= AGIL:
+                return Deposito(
+                    4, "buena",
+                    f"La recarga no se pudo acreditar y se lo informó en {_mins(aviso)}. "
+                    "El cliente supo enseguida por qué y qué le faltaba.",
+                    aviso, False, algo_mas)
+            return Deposito(
+                3, "aceptable",
+                f"La recarga no se pudo acreditar y se lo informó, pero tardó "
+                f"{_mins(aviso)} en decírselo. El objetivo son 2 minutos.",
+                aviso, False, algo_mas)
         return Deposito(
             2, "deficiente",
             f"Respondió en {_mins(espera)}, pero nunca le confirmó al cliente que la "
@@ -210,6 +259,10 @@ def _coaching(d: Deposito) -> str:
         return _COACHING_1
     if d.stars == 2:
         return _COACHING_2_SIN_ACREDITAR if not d.acredito else _COACHING_2_TARDE
+    # 4 o 3 SIN acreditacion = la rama del rechazo (en la normal el 4 y el 3 siempre
+    # acreditaron). Su consejo apunta al rechazo, no al bono ni al acuse.
+    if not d.acredito:
+        return _COACHING_RECHAZO_RAPIDO if d.stars == 4 else _COACHING_RECHAZO_TARDE
     return _COACHING[d.stars]
 
 

@@ -200,3 +200,86 @@ def test_sin_cierres_la_ventana_sigue_siendo_toda_la_sesion():
             _op(1, "Gracias por tu recarga, tu saldo ya esta disponible")]
     d = calificar_deposito(msgs)
     assert d is not None and d.acredito is True and d.stars == 4
+
+
+# --- LA RAMA DEL RECHAZO ------------------------------------------------------------
+# HALLADA leyendo los 2 estrellas de produccion el 2026-08-12. La rubrica no tenia rama para
+# "el deposito NO se podia acreditar por una razon VALIDA", y trataba la ausencia de
+# confirmacion como falla del operador SIEMPRE. Dos casos reales de 5:
+#   `0b3389f6`: el comprobante fue RECHAZADO. Anggie contesto en 14 s "Titular incorrecto" y
+#               el cliente dijo "Si ya me di cuenta". La plata nunca entro porque la boleta
+#               era invalida, y la nota la castigaba por "nunca confirmo".
+#   `b2369395`: el usuario no estaba verificado. Arturo dijo "para realizar cargas debe
+#               verificar su usuario" y mando un video-tutorial. Hizo lo correcto -> 2 estrellas.
+#
+# LA DECISION (2026-08-12): cuando la plata no puede entrar, el trabajo del operador es
+# DECIRLO, rapido y claro. Se califica por la velocidad de ese aviso, con TECHO EN 4:
+#   4  informo el rechazo dentro de los 2 min
+#   3  lo informo, pero tarde
+#   2  nunca le dijo nada (el cliente queda sin saber por que no le entro)
+# El 5 NO es alcanzable en esta rama a proposito: significa "el mejor escenario del motivo",
+# y un deposito rechazado no lo es. No es un castigo -- el techo es honesto y mantiene el
+# incentivo de ayudar al cliente a arreglarlo para que el proximo intento si entre.
+#
+# DOS FALSOS POSITIVOS que hay que evitar, medidos en la base:
+#   "monto minimo 5"  -> 20.489 mensajes: es la PLANTILLA de como transferir, no un rechazo.
+#   "El bono esta vigente" -> "vigente" en contexto POSITIVO.
+# El contexto desambigua el resto: la rama solo mira mensajes POSTERIORES al comprobante en
+# sesiones donde NO hubo acreditacion, asi que "debe verificar" ahi si es el motivo del rechazo.
+
+def test_rechazo_informado_rapido_es_4():
+    r = calificar_deposito([
+        _cli(0, "les mando el comprobante de la recarga"), _cli(0, "", media="image"),
+        _op(1, "Titular incorrecto, la cuenta debe estar a tu nombre"),
+    ], _cierre(10))
+    assert r.stars == 4, r.rationale
+    assert "no se pudo acreditar" in r.rationale or "rechaz" in r.rationale.lower(), r.rationale
+
+
+def test_rechazo_informado_TARDE_es_3():
+    r = calificar_deposito([
+        _cli(0, "les mando el comprobante de la recarga"), _cli(0, "", media="image"),
+        _op(8, "Boleta repetida"),   # la frase real de la base, sin "cargada"
+    ], _cierre(20))
+    assert r.stars == 3, r.rationale
+
+
+def test_sin_verificar_es_un_rechazo_valido():
+    # El caso `b2369395`: no se puede cargar porque el usuario no esta verificado.
+    r = calificar_deposito([
+        _cli(0, "sera posible que me ayude con una recarga"), _cli(0, "", media="image"),
+        _op(1, "para realizar cargas y retiros debe verificar su usuario"),
+        _op(2, "Aquí le dejo un video de como hacerlo", media="video"),
+    ], _cierre(30))
+    assert r.stars == 4, r.rationale
+
+
+def test_la_PLANTILLA_del_monto_minimo_no_es_un_rechazo():
+    # 20.489 mensajes la tienen: es la instruccion de como transferir. Si contara como
+    # rechazo, cualquier deposito sin acreditar pasaria de 2 a 4.
+    r = calificar_deposito([
+        _cli(0, "les mando el comprobante de la recarga"), _cli(0, "", media="image"),
+        _op(1, "Deja el concepto en blanco. Monto mínimo: $5. Gracias por tomarlo en cuenta"),
+    ], _cierre(10))
+    assert r.stars == 2, r.rationale
+
+
+def test_un_deposito_que_SI_se_acredito_no_entra_a_la_rama():
+    # Guard: la rama es solo para cuando NO hubo acreditacion.
+    r = calificar_deposito([
+        _cli(0, "les mando el comprobante de la recarga"), _cli(0, "", media="image"),
+        _op(1, "recibido"), _op(2, "listo, tu saldo ya está disponible"),
+    ], _cierre(10))
+    assert r.stars == 4 and r.acredito is True, r.rationale
+
+
+def test_el_rechazo_ANTES_del_comprobante_no_cuenta():
+    # Si el operador dijo "debe verificar" ANTES de que llegue el comprobante, no es el
+    # motivo del rechazo de ESTE comprobante.
+    r = calificar_deposito([
+        _cli(0, "quiero recargar"),
+        _op(1, "para realizar cargas debe verificar su usuario"),
+        _cli(5, "les mando el comprobante de la recarga"), _cli(5, "", media="image"),
+        _op(6, "ahi lo reviso"),
+    ], _cierre(20))
+    assert r.stars == 2, r.rationale

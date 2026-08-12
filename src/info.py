@@ -58,13 +58,15 @@ class Info:
 
 
 _COACHING = {
-    2: "La consulta tardó más de 5 minutos en ser respondida. Quien pregunta todavía "
-       "está decidiendo si se queda: cada minuto cuenta.",
-    3: "Respondiste, pero fuera de los 2 minutos.",
-    4: "Antes de cerrar, preguntale si necesita algo más: en una consulta suele quedar "
+    2: "Quien pregunta todavía está decidiendo si se queda. Conviene responder con lo "
+       "que se sabe y completar después, antes que demorar la primera respuesta.",
+    3: "El objetivo son 2 minutos para la primera respuesta, aunque sea parcial: quien "
+       "consulta está comparando y la demora se nota.",
+    4: "Cerrar con \"¿te falta algo más?\" rinde acá: en una consulta suele quedar "
        "una segunda duda sin plantear.",
 }
-_COACHING_1 = "El cliente preguntó y nadie le respondió."
+_COACHING_1 = ("El cliente preguntó y nadie le respondió. Conviene contestar aunque sea "
+               "parcialmente: quien consulta todavía está decidiendo si se queda.")
 
 
 def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:

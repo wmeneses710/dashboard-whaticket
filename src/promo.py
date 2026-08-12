@@ -68,13 +68,15 @@ class Promo:
 
 
 _COACHING = {
-    2: "El cliente preguntó por la promo y la respuesta tardó más de 15 minutos. Una "
-       "consulta así se enfría rápido.",
-    3: "Respondiste, pero fuera de los 2 minutos. En promo la ventana es corta.",
-    4: "Se lo explicaste solo con texto. Mandale una captura mostrándole dónde tocar, "
-       "o un video de cómo hacerlo: es lo que más mueve que la aproveche.",
+    2: "Una consulta de promo se enfría rápido. Conviene responder aunque sea con lo que "
+       "se sabe y completar después, en vez de esperar a tener todo el detalle.",
+    3: "En promo la ventana es corta: un primer mensaje dentro de los 2 minutos —aunque "
+       "sea \"ya te confirmo el detalle\"— evita que la consulta se enfríe.",
+    4: "Una imagen marcando dónde tocar, o un video corto, hace lo que el texto no "
+       "puede: le muestra el camino. Es lo que más mueve que la promo se aproveche.",
 }
-_COACHING_1 = "El cliente preguntó por la promo y nadie le respondió."
+_COACHING_1 = ("El cliente preguntó por la promo y nadie le respondió. Es la consulta con "
+               "más intención de todas: conviene contestar aunque sea con lo que se sabe.")
 
 
 def _material_del_operador(messages: list[dict]) -> bool:

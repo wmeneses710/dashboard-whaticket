@@ -93,7 +93,27 @@ from src.segments import segment_for_queue
 # NO se cambio el transcript: se probo darle tiempos y fronteras al modelo y NO mejora
 # (26/28 sin tiempos contra 25/28 con), asi que `format_transcript(con_tiempos=)` queda
 # apagado. Ver el docstring de esa funcion.
-SCORING_VERSION = "2026.08-rubricas-v7"
+# 2026.08-rubricas-v8 (2026-08-12). Sale de auditar los 1★ y 2★ de una copia fresca con v7
+# corriendo: de 7 leidos en detalle, 2 estaban bien puestos y 5 no. Lo que cambio contra v7:
+#   - VOCABULARIO DE ACREDITACION, tercera ronda y la mas grande. El patron se escribio
+#     leyendo PLANTILLAS y el texto libre del operador se le escapa: "Tu saldo ya está en tu
+#     cuenta", "Su saldo ya se encuentra en su cuenta", "ya lo tienes en tu cuenta",
+#     "ya te lo cargué" (¡"cargo" se reconocia y "cargué" no!), "ya está realizado".
+#     VALIDADO: **154 de 323 (47,7%)** depositos en 2★ "nunca confirmo" SUBEN — 132 a 4★,
+#     19 a 3★, 3 a 5★. Con las dos rondas previas ("en breve" el 11-08 y "ya puedes disfrutar
+#     tu saldo" el 12-08) el vocabulario ya explica ~360 sesiones mal calificadas;
+#   - RAMA DEL RECHAZO en `deposito`: cuando la plata NO podia entrar por una razon valida
+#     (titular incorrecto, boleta repetida, cuenta sin verificar), el trabajo del operador es
+#     AVISARLO, y se califica por la velocidad de ese aviso — 4 si avisa en <=2 min, 3 si
+#     tarda, 2 si nunca dice nada. **TECHO EN 4 a proposito**: el 5 significa "el mejor
+#     escenario del motivo" y un deposito rechazado no lo es; el techo es honesto y mantiene
+#     el incentivo de ayudarlo a arreglarlo. Con su coaching propio, porque el del 4 normal
+#     habla del bono y el del 3 del acuse, y ninguno aplica. Dispara en 5 sesiones: quirurgico.
+# NO se toco el corte en interacciones: se audito sobre 576 interacciones reales y esta bien
+# (0 de mas de 24 h, 0 visitas pegadas, las largas son el cliente demorando dentro de un mismo
+# pedido o el operador esperando antes de cerrar). Ver el docstring de src/interacciones.py.
+#
+SCORING_VERSION = "2026.08-rubricas-v8"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

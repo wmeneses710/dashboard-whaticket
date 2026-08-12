@@ -85,7 +85,7 @@ def test_deposito_sin_acreditar_habla_de_CONFIRMAR_no_de_tiempo():
     ], BASE + timedelta(seconds=600))
     assert s is not None and s.stars == 2, s.rating_rationale
     bajo = s.recomendacion.lower()
-    assert "confirma" in bajo, s.recomendacion
+    assert "confirm" in bajo, s.recomendacion
     # NO puede reprocharle el tiempo: avisó en 20 segundos.
     assert "tard" not in bajo, s.recomendacion
 
@@ -97,7 +97,8 @@ def test_deposito_que_tardo_habla_de_TIEMPO_no_de_confirmar():
     ], BASE + timedelta(seconds=1200))
     assert s is not None
     bajo = s.recomendacion.lower()
-    assert "tard" in bajo or "enseguida" in bajo, s.recomendacion
+    assert any(p in bajo for p in ("tard", "aviso", "apenas", "acusar")), \
+        s.recomendacion
 
 
 def test_retiro_sin_comprobante_habla_del_COMPROBANTE():
@@ -191,3 +192,58 @@ def test_el_consejo_propio_de_la_rubrica_NO_se_pierde_al_agregar_el_fragmento():
     s = score_by_motivo(target_messages=[_cli(0, DATOS), _op(120, CREDENCIALES)],
                         thread_context="", llm=_FakeLLM("registro"))
     assert "primera recarga" in s.recomendacion.lower(), s.recomendacion
+
+
+# --- 6. DICCION Y VALOR AGREGADO --------------------------------------------------
+# MEDIDO en produccion el 2026-08-12: **824 de 1.108** recomendaciones deterministas usaban
+# voseo rioplatense (`Confirmale`, `Mandale`, `preguntale`, `decile`, `avisale`) contra 1 de
+# 462 del camino LLM, cuyo prompt dice "PROHIBIDO el voseo". Los operadores son ECUATORIANOS:
+# el 74% del coaching que leen esta en un registro que no es el suyo, y las dos vias le hablan
+# distinto. El acuerdo del proyecto para artefactos en español es NEUTRO/profesional.
+# Y la REDUNDANCIA: 231 recomendaciones repetian "2 minutos" y 215 "algo mas", frases que ya
+# estaban en el rationale. El rationale dice QUE paso; la recomendacion tiene que decir COMO
+# hacerlo distinto. Si solo repite el reproche, no agrega nada.
+
+_IMPERATIVOS_VOSEO = ("confirmale", "mandale", "preguntale", "decile", "avisale", "contale",
+                      "fijate", "acordate", "mostrale", "pedile", "escribile", "dale ")
+
+
+def _todos_los_textos():
+    from src.agilidad import _COACHING as A
+    from src.deposito import (_COACHING as D, _COACHING_1 as D1,
+                              _COACHING_2_SIN_ACREDITAR as D2A, _COACHING_2_TARDE as D2T)
+    from src.info import _COACHING as I, _COACHING_1 as I1
+    from src.promo import _COACHING as P, _COACHING_1 as P1
+    from src.registro import _COACHING as R, _COACHING_1 as R1
+    from src.retiro import (_COACHING as T, _COACHING_1 as T1,
+                            _COACHING_2_SIN_COMPROBANTE as T2S, _COACHING_2_TARDE as T2T)
+    from src.soporte import (_COACHING as S, _COACHING_1 as S1,
+                             _COACHING_2_LENTO as S2L, _COACHING_2_SIN_INTENTO as S2I)
+    out = []
+    for d in (A, D, I, P, R, T, S):
+        out += [(f"{k}", v) for k, v in d.items()]
+    for nombre, v in (("dep_1", D1), ("dep_2_sin", D2A), ("dep_2_tarde", D2T),
+                      ("info_1", I1), ("promo_1", P1), ("reg_1", R1),
+                      ("ret_1", T1), ("ret_2_sin", T2S), ("ret_2_tarde", T2T),
+                      ("sop_1", S1), ("sop_2_lento", S2L), ("sop_2_sin", S2I)):
+        out.append((nombre, v))
+    return out
+
+
+def test_el_coaching_no_usa_voseo():
+    for clave, texto in _todos_los_textos():
+        bajo = texto.lower()
+        for v in _IMPERATIVOS_VOSEO:
+            assert v not in bajo, f"{clave} usa voseo {v!r}: {texto}"
+
+
+def test_el_coaching_dice_COMO_no_solo_QUE_paso():
+    # Tiene que traer una accion o un criterio accionable, no solo el reproche. Se acepta un
+    # imperativo neutro, un infinitivo de instruccion, o una formula de recomendacion.
+    señales = ("confírm", "mánda", "pregúnt", "avísa", "dile", "muéstra", "pide", "envía",
+               "conviene", "alcanza", "basta", "se apunta", "objetivo", "recuerda", "avisar",
+               "cerrar con", "un primer mensaje", "una línea", "una imagen", "un video",
+               "indícale", "acompañ", "responder", "contestar", "enviarlo", "enviar", "decirle")
+    for clave, texto in _todos_los_textos():
+        bajo = texto.lower()
+        assert any(s in bajo for s in señales), f"{clave} no dice COMO: {texto}"

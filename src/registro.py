@@ -71,16 +71,17 @@ class Registro:
 
 
 _COACHING = {
-    2: "El cliente entregó sus datos y nunca recibió su usuario y clave: el alta "
-       "quedó a medias. Si no podés crearla en el momento, decile cuándo la va a tener.",
+    2: "El alta quedó a medias. Si la cuenta no se puede crear en el momento, conviene "
+       "decirle cuándo la va a tener: ya entregó sus datos y está esperando.",
     3: "El usuario y la clave tardaron más de 5 minutos desde que el cliente pasó sus "
        "datos. Es el momento de mayor riesgo de que se caiga: conviene crear la cuenta "
        "cuanto antes.",
     4: "La cuenta quedó creada. Lo que falta es acompañarlo hasta la primera recarga, "
        "que es donde el registro se convierte en jugador.",
 }
-_COACHING_1 = ("El cliente entregó sus datos y nadie le respondió. Es el peor momento "
-               "para dejarlo esperando: ya había decidido registrarse.")
+_COACHING_1 = ("El cliente entregó sus datos y nadie le respondió. Conviene acusar el "
+               "recibo enseguida: ya había decidido registrarse y es el peor momento "
+               "para dejarlo esperando.")
 
 
 def _datos_del_cliente(messages: list[dict]):

@@ -367,3 +367,48 @@ def test_app_mentioned_ignora_notas():
 
 def test_sin_app_mentioned():
     assert app_mentioned([_client("quiero depositar"), _agent("claro, decime cuanto")]) is False
+
+
+# --- EL VOCABULARIO DE ACREDITACION SE ESCAPA POR EL TEXTO LIBRE -------------------
+# Tercera vez que aparece la misma familia de hueco: el patron se armo desde las PLANTILLAS
+# ("tu saldo ya esta disponible") y las confirmaciones que el operador escribe a mano no
+# entran. Ya paso con "ya puedes disfrutar tu saldo" (106 sesiones, arreglado el 2026-08-12
+# por la mañana) y con esto, hallado leyendo los 2 estrellas de produccion:
+#   'Tu saldo ya está en tu cuenta compita'   -> el operador SI confirmo, la nota decia que no
+#   'ya te lo cargué'   ('cargo' se reconocia y 'cargué' no: el acento rompia `carg[oó]`)
+#   'ya lo tienes en tu cuenta' · 'ya esta realizado'
+# VOLUMEN MEDIDO: 76 conversaciones con "saldo ... en tu cuenta", 117 con "ya te lo cargue"
+# y ~371 con "ya esta realizado / ya se proceso".
+# El FALSO POSITIVO a evitar son solo 3 mensajes: "su verificacion ya esta realizada" — ahi
+# lo realizado es el tramite, no la plata.
+
+def test_acreditacion_por_saldo_en_la_cuenta():
+    for texto in ("Tu saldo ya está en tu cuenta compita. Éxitos!!",
+                  "Su saldo ya se encuentra en su cuenta",
+                  "ya lo tienes en tu cuenta amigo"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_acreditacion_en_primera_persona():
+    # 'ya le cargo' se reconocia y 'ya te lo cargué' no, por el acento.
+    for texto in ("ya te lo cargué", "ya le cargue mi pana", "ya lo acredité"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_acreditacion_por_operacion_realizada():
+    for texto in ("ya esta realizado amigo", "ya se realizo mi amigo", "ya quedó realizado"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_un_TRAMITE_realizado_no_es_una_acreditacion():
+    # Lo realizado es la verificacion/solicitud, no la plata. Son 3 mensajes en la base.
+    for texto in ("Estimado su verificacion ya esta realizada",
+                  "tu solicitud ya está realizada, ahora espera la aprobación"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_el_acuse_EN_CURSO_sigue_sin_ser_acreditacion():
+    # Guard: "esta siendo procesada" (en curso) NO es lo mismo que "ya se proceso" (hecho).
+    for texto in ("Tu solicitud de recarga está siendo procesada",
+                  "ya se esta procesando amigo", "tu recarga está en proceso"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto

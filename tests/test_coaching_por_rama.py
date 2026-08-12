@@ -96,3 +96,29 @@ def test_soporte_lento_habla_SOLO_del_tiempo():
     consejo = r.recomendacion.lower()
     assert " o " not in consejo
     assert any(p in consejo for p in ("tard", "esper", "minuto", "tiempo"))
+
+
+# LA RAMA DEL RECHAZO tiene su propio consejo. Sin esto, un 4 de rechazo recibia el consejo
+# del 4 normal ("la segunda duda suele ser el bono o el proximo deposito"), que en una recarga
+# RECHAZADA no aplica: la segunda duda es como arreglar la boleta. Y un 3 de rechazo recibia
+# el del 3 normal ("un primer mensaje corto apenas entra el comprobante"), cuando el problema
+# no fue el acuse sino la demora en avisar el rechazo.
+
+def test_rechazo_rapido_apunta_a_COMO_ARREGLARLO():
+    r = score_deposito([_cli(0, "les mando el comprobante de la recarga"),
+                        _cli(0, "", media="image"),
+                        _op(1, "Titular incorrecto, la cuenta debe estar a tu nombre")])
+    assert r.stars == 4, r.rating_rationale
+    consejo = r.recomendacion.lower()
+    assert "bono" not in consejo, "el consejo del 4 normal no aplica a un rechazo"
+    assert any(p in consejo for p in ("arregl", "corregir", "verificar", "próximo intento",
+                                      "proximo intento")), consejo
+
+
+def test_rechazo_TARDE_apunta_a_la_DEMORA_del_aviso():
+    r = score_deposito([_cli(0, "les mando el comprobante de la recarga"),
+                        _cli(0, "", media="image"),
+                        _op(8 * 60, "Boleta repetida")])   # 8 MINUTOS (helper en seg)
+    assert r.stars == 3, r.rating_rationale
+    consejo = r.recomendacion.lower()
+    assert "en camino" in consejo or "esperando" in consejo or "enseguida" in consejo, consejo

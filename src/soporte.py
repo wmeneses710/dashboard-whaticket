@@ -121,18 +121,19 @@ class Soporte:
 # trajo (`0b321579`) tenia 3,4 min de mediana efectiva, o sea que la mitad del consejo era
 # literalmente falsa.
 _COACHING = {
-    3: "Las respuestas tardaron más de 2 minutos. En soporte el cliente ya viene "
-       "trabado: cada espera pesa doble.",
-    4: "Antes de cerrar, preguntale si necesita algo más. Es el motivo donde más se "
-       "nota, porque muchas veces el problema vuelve.",
+    3: "En soporte el cliente ya viene trabado y cada espera pesa doble. Un mensaje "
+       "corto entre paso y paso alcanza para que no sienta que quedó solo.",
+    4: "Cerrar con \"¿te falta algo más?\" es el motivo donde más rinde, porque el "
+       "problema de cuenta suele volver si quedó un paso a medias.",
 }
 _COACHING_2_SIN_INTENTO = (
     "El cliente no se llevó ningún paso a seguir. Aunque el desbloqueo dependa de otra "
-    "área, decile qué sigue; y si no está en tus manos, avisale que escalaste el caso.")
+    "área, conviene decirle qué sigue y en cuánto tiempo.")
 _COACHING_2_LENTO = (
-    "Hiciste algo por el caso, pero cada ida y vuelta tardó demasiado. En soporte el "
-    "cliente ya viene trabado: cada espera pesa doble.")
-_COACHING_1 = "El cliente reportó un problema con su cuenta y nadie le respondió."
+    "Hubo trabajo en el caso, pero cada ida y vuelta tardó demasiado. Conviene avisar "
+    "antes de cada consulta interna: \"déjame revisar esto y te confirmo en unos minutos\".")
+_COACHING_1 = ("El cliente reportó un problema con su cuenta y nadie le respondió. Conviene "
+               "acusar el recibo aunque la solución dependa de otra área.")
 
 
 def esperas_por_turno(messages: list[dict]) -> list[timedelta]:

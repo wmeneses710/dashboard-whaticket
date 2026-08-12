@@ -53,18 +53,37 @@ _CONFIRMATION_RE = re.compile(CONFIRMATION_PATTERN, re.IGNORECASE)
 _ACREDITA_FUERTE_RE = re.compile(
     # OJO con 'reflej': va la forma consumada (reflejado/reflejo) pero NO el futuro
     # "se reflejara en breve", que es ACUSE. Por eso no se usa \w* aca.
+    # `cargu[eé]`/`acredit` en PRIMERA PERSONA: "ya te lo cargué" se escapaba porque
+    # `carg[oó]` agarra "cargo"/"cargó" y no la forma con -ué. Se exige el "ya" delante para
+    # no morder el subjuntivo ("para que se cargue", que es pendiente, no hecho).
     r"\b(acredit\w*|abonad[oa]s?|abon[oó]|reflejad[oa]s?|reflej[oó]|"
-    r"cargad[oa]s?|carg[oó]|ingresad[oa]s?|ingres[óo]s?\b(?!\s+con)|ing|ingr)\b",
+    r"cargad[oa]s?|carg[oó]|ingresad[oa]s?|ingres[óo]s?\b(?!\s+con)|ing|ingr)\b"
+    r"|ya\s+((te|le|se)\s+)?((lo|la)\s+)?(cargu[eé]|acredit[eé])\b",
     re.IGNORECASE)
+# La OPERACION consumada, en pasado. "ya se proceso" (hecho) es distinto de "esta siendo
+# procesada" (en curso), que es el ACUSE y sigue afuera via _ACUSE_RE. El unico falso
+# positivo del dataset son 3 mensajes donde lo realizado es el TRAMITE y no la plata
+# ("su verificacion ya esta realizada"), y se excluyen por el sujeto.
+_ACREDITA_HECHO_RE = re.compile(
+    r"ya\s+(se\s+)?(est[aá]|qued[oó])?\s*(realizad[oa]|proces[oó]|realiz[oó])\b",
+    re.IGNORECASE)
+_TRAMITE_RE = re.compile(
+    r"\b(verificaci[oó]n|solicitud|registro|cuenta|documento)\b[^.!?\n]{0,30}"
+    r"ya\s+(est[aá]|qued[oó])", re.IGNORECASE)
 # 'disponible' solo vale si habla del SALDO, no de la app ni de una promo.
 # 'ya puedes usar/disfrutar TU SALDO' es la misma idea que 'tu saldo ya esta disponible':
 # la plata esta ahi y el cliente puede tocarla. Exige el saldo por la misma razon que
 # 'disponible' lo exige -- "ya puedes usar la app" o "ya puedes disfrutar de todas las
 # promociones" no acreditan nada.
+# 'el saldo YA ESTA EN TU CUENTA' es la misma idea con otras palabras, y es texto LIBRE del
+# operador (76 conversaciones). Se exige el verbo (`esta`/`se encuentra`/`lo tienes`) para no
+# morder "para retirar el saldo de tu cuenta", que habla de sacarla, no de que llego.
 _ACREDITA_SALDO_RE = re.compile(
     r"(saldo\w*[^.!?\n]{0,40}disponible|disponible[^.!?\n]{0,25}saldo|"
     r"recarga (exitosa|acreditada|realizada)|gracias por tu recarga|"
-    r"ya (puedes|puede) (disfrutar|usar|utilizar) (de )?(tu|su) saldo)",
+    r"ya (puedes|puede) (disfrutar|usar|utilizar) (de )?(tu|su) saldo|"
+    r"saldo\w*[^.!?\n]{0,25}(est[aá]|se encuentra)[^.!?\n]{0,12}en (tu|su) cuenta|"
+    r"ya (lo|la) (tienes|tiene)[^.!?\n]{0,15}en (tu|su) cuenta)",
     re.IGNORECASE)
 # Un "listo" seco confirma; un "listo" seguido de otra instruccion, no.
 _LISTO_RE = re.compile(r"^\s*listo\b", re.IGNORECASE)
@@ -108,9 +127,14 @@ def operator_acreditacion(messages: list[dict]) -> bool:
         for frase in _frases(m.get("body") or ""):
             if _NEGACION_RE.search(frase) or _FUTURO_RE.search(frase):
                 continue
-            if _ACREDITA_FUERTE_RE.search(_strip_accents(frase)):
+            sin_acentos = _strip_accents(frase)
+            if _ACREDITA_FUERTE_RE.search(sin_acentos):
                 return True
-            if _ACREDITA_SALDO_RE.search(_strip_accents(frase)):
+            if _ACREDITA_SALDO_RE.search(sin_acentos):
+                return True
+            # La operacion consumada, salvo que lo realizado sea el TRAMITE y no la plata.
+            if (_ACREDITA_HECHO_RE.search(sin_acentos)
+                    and not _TRAMITE_RE.search(sin_acentos)):
                 return True
             # "Listo amiga" confirma; "Listo, enviame tu usuario para..." no.
             if _LISTO_RE.match(frase) and len(frase.split()) <= 3:
