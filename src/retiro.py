@@ -93,16 +93,30 @@ _COACHING_1 = ("El pedido de retiro quedó sin respuesta. Aunque no se pueda pro
                "momento, conviene acusar el recibo: el agente tiene plata comprometida.")
 
 
-def _pedido_del_cliente(messages: list[dict]):
-    """Primer mensaje del CLIENTE que pide plata (formulario o monto). None si no hay."""
+def _pedidos_del_cliente(messages: list[dict]) -> list[dict]:
+    """Mensajes del CLIENTE que piden plata (formulario o monto), en orden cronologico."""
+    out = []
     for m in sorted((m for m in messages if not m.get("is_note")),
                     key=lambda m: m["created_at"]):
         if m.get("from_me"):
             continue
         body = m.get("body") or ""
         if _FORMULARIO_RE.search(body) or _MONTO_RE.search(body):
-            return m
-    return None
+            out.append(m)
+    return out
+
+
+def _pedido_del_cliente(messages: list[dict]):
+    """El ULTIMO pedido del cliente: el que elige la interaccion a juzgar. None si no hay.
+
+    El ANCLA elige la ULTIMA visita: antes tomaba la primera y una sesion mergea todos los
+    episodios del ticket (mediana 8,6 h de separacion entre la primera y la ultima, p90 12
+    dias, max 266). El 82% de esas sesiones tienen mas de un operador, asi que juzgar la
+    primera le cargaba la nota a quien atendio la visita vieja. Ver src/deposito.py para los
+    numeros completos. DENTRO de la ventana el reloj arranca en el PRIMER de la visita.
+    """
+    pedidos = _pedidos_del_cliente(messages)
+    return pedidos[-1] if pedidos else None
 
 
 def es_transaccion(messages: list[dict]) -> bool:
@@ -137,6 +151,10 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     # mezcla retiros y depositos del 5 al 8-ago y la nota usaba el primer pedido con la
     # evidencia de los siguientes.
     ventana = interaccion_de(messages, pedido)
+    # DENTRO de la ventana el reloj arranca en el PRIMERO de ESA visita: el ancla elige la
+    # interaccion (la ultima), el reloj mide la espera COMPLETA. Contar desde el ultimo
+    # mensaje del tramo esconderia la demora cuando el cliente insiste dos veces seguidas.
+    pedido = _pedidos_del_cliente([m for m in ventana if not m.get("is_note")])[0]
     reales = sorted((m for m in ventana if not m.get("is_note")),
                     key=lambda m: m["created_at"])
     posteriores = [m for m in reales if m["created_at"] > pedido["created_at"]]

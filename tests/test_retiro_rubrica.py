@@ -186,14 +186,15 @@ def _cierre_nota(minutos, quien="Mel"):
 
 
 def test_el_comprobante_de_OTRA_interaccion_no_entrega_este_retiro():
-    msgs = [_cli(0, "Monto a retirar: 70"), _op(1, "Tu retiro está en proceso"),
-            _cierre_nota(5),
-            _cli(2880, "Monto a retirar: 30"), _op(2881, "listo, acá tienes", media="image"),
-            _cierre_nota(2882)]
+    # FIXTURE INVERTIDO el 2026-08-12 al pasar el ancla a la ULTIMA visita. El invariante que
+    # este test protege es el MISMO -- la evidencia no se cruza entre interacciones -- pero
+    # ahora la ventana juzgada es la ultima, asi que lo que no debe filtrarse es lo ANTERIOR.
+    # Visita 1: retiro entregado. Visita 2, horas despues: pedido que nadie entrega.
+    msgs = [_cli(0, FORMULARIO), _op(1, ACUSE), _comprobante_op(2), _cierre(4),
+            _cli(600, FORMULARIO), _op(601, ACUSE), _cierre(604)]
     r = calificar_retiro(msgs)
     assert r is not None
-    assert r.entrega is None, "la entrega del 2do retiro no puede cerrar el 1er pedido"
-    assert r.stars == 2, f"{r.stars}★ {r.rationale}"
+    assert r.entrega is None, "la entrega del 1er retiro no puede cerrar el 2do pedido"
 
 
 def test_sin_cierres_la_ventana_sigue_siendo_toda_la_sesion():
@@ -222,10 +223,43 @@ def test_interaccion_juzgada_devuelve_la_ventana_del_pedido():
     ventana = interaccion_juzgada(msgs)
     assert ventana is not None
     reales = [m for m in ventana if not m["is_note"]]
-    # El ancla es el PRIMER pedido, asi que la ventana es la primera interaccion.
-    assert reales[0]["created_at"] == BASE
-    assert all(m["created_at"] < BASE + timedelta(minutes=500) for m in ventana)
+    # El ancla es el ULTIMO pedido, asi que la ventana es la ULTIMA interaccion.
+    assert reales[0]["created_at"] == BASE + timedelta(minutes=600)
+    # y la ventana NO arrastra nada de la visita anterior
+    assert all(m["created_at"] >= BASE + timedelta(minutes=500) for m in ventana)
 
 
 def test_interaccion_juzgada_es_None_si_no_es_transaccion():
     assert interaccion_juzgada([_cli(0, "cuanto tarda un retiro?"), _op(1, "5 min")]) is None
+
+
+# --- SE JUZGA LA ULTIMA VISITA, NO LA PRIMERA ---------------------------------------
+# Mismo cambio que en `deposito` (2026-08-12): el ancla tomaba el PRIMER pedido de la sesion,
+# o sea la visita mas vieja. Ver el bloque equivalente en tests/test_deposito_rubrica.py para
+# los numeros que lo justifican (mediana 8,6 h de separacion, p90 12 dias, 82% con mas de un
+# operador).
+
+def _cierre_r(minutos, quien="Ana"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación",
+            "media_type": "chat"}
+
+
+def test_retiro_se_juzga_la_ULTIMA_visita():
+    # Visita 1: pedido que nadie contesta. Visita 2 dos dias despues: pedido resuelto con
+    # comprobante en un minuto. La nota describe la SEGUNDA.
+    msgs = [_cli(0, FORMULARIO), _cierre_r(30),
+            _cli(2880, FORMULARIO), _op(2881, "listo, ya te lo envie"),
+            _comprobante_op(2881), _cierre_r(2882)]
+    r = calificar_retiro(msgs)
+    assert r is not None and r.stars >= 4, f"{r.stars}★ {r.rationale}"
+
+
+def test_retiro_el_reloj_arranca_en_el_PRIMER_pedido_de_la_ventana():
+    # El ancla elige la interaccion; adentro el reloj mide desde el primer pedido de ESA visita.
+    msgs = [_cli(0, FORMULARIO), _cierre_r(10),
+            _cli(100, FORMULARIO), _cli(101, FORMULARIO),
+            _op(110, "listo"), _comprobante_op(110), _cierre_r(111)]
+    r = calificar_retiro(msgs)
+    assert r is not None
+    assert r.espera is not None and 9.5 <= r.espera.total_seconds() / 60 <= 10.5, r.espera

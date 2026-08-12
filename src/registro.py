@@ -109,15 +109,29 @@ _COACHING_1 = ("El cliente entregó sus datos y nadie le respondió. Conviene ac
 
 
 def _datos_del_cliente(messages: list[dict]):
-    """Primer mensaje del CLIENTE con datos personales de alta. None si no hay."""
+    """El ULTIMO traspaso de datos del cliente: el que elige la interaccion. None si no hay.
+
+    El ANCLA elige la ULTIMA visita: antes tomaba la primera y una sesion mergea todos los
+    episodios del ticket (mediana 8,6 h de separacion entre la primera y la ultima, p90 12
+    dias, max 266). El 82% de esas sesiones tienen mas de un operador, asi que juzgar la
+    primera le cargaba la nota a quien atendio la visita vieja. Ver src/deposito.py para los
+    numeros completos. DENTRO de la ventana el reloj arranca en el PRIMER de la visita.
+    """
+    traspasos = _traspasos_del_cliente(messages)
+    return traspasos[-1] if traspasos else None
+
+
+def _traspasos_del_cliente(messages: list[dict]) -> list[dict]:
+    """Mensajes del CLIENTE con datos personales de alta, en orden cronologico."""
+    out = []
     for m in sorted((m for m in messages if not m.get("is_note")),
                     key=lambda m: m["created_at"]):
         if m.get("from_me"):
             continue
         body = m.get("body") or ""
         if _EMAIL_RE.search(body) or _CEDULA_RE.search(body):
-            return m
-    return None
+            out.append(m)
+    return out
 
 
 def _credenciales_del_operador(messages: list[dict]):
@@ -170,7 +184,11 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
     ventana = interaccion_juzgada(messages) or messages
     reales = sorted((m for m in ventana if not m.get("is_note")),
                     key=lambda m: m["created_at"])
-    datos = _datos_del_cliente(reales)
+    # DENTRO de la ventana el reloj arranca en el PRIMERO de ESA visita: el ancla elige la
+    # interaccion (la ultima), el reloj mide la espera COMPLETA. Contar desde el ultimo
+    # mensaje del tramo esconderia la demora cuando el cliente insiste dos veces seguidas.
+    traspasos = _traspasos_del_cliente(reales)
+    datos = traspasos[0] if traspasos else None
     cred = _credenciales_del_operador(reales)
     convirtio = deposit_candidate_count(reales) > 0
     espera = (espera_efectiva(datos["created_at"], cred["created_at"])

@@ -119,13 +119,28 @@ _COACHING_1 = ("El comprobante quedó sin respuesta. En caja conviene contestar 
                "línea mientras se procesa evita que el cliente crea que se perdió su plata.")
 
 
+def _comprobantes_del_cliente(messages: list[dict]) -> list[dict]:
+    """Comprobantes (imagenes del CLIENTE) en orden cronologico."""
+    return [m for m in sorted((m for m in messages if not m.get("is_note")),
+                              key=lambda m: m["created_at"])
+            if not m.get("from_me") and is_real_media(m.get("media_type"))]
+
+
 def _comprobante_del_cliente(messages: list[dict]):
-    """Primer comprobante (imagen del CLIENTE) de la sesion. None si no hay."""
-    for m in sorted((m for m in messages if not m.get("is_note")),
-                    key=lambda m: m["created_at"]):
-        if not m.get("from_me") and is_real_media(m.get("media_type")):
-            return m
-    return None
+    """El ULTIMO comprobante de la sesion: el que elige la interaccion a juzgar. None si no hay.
+# EL ANCLA ELIGE LA ULTIMA VISITA. Antes tomaba la PRIMERA y una sesion mergea todos los
+    # episodios del ticket: MEDIDO el 2026-08-12 sobre 1.180 sesiones con 2+ interacciones
+    # calificables, la primera y la ultima estan separadas por una mediana de 8,6 h, un p90 de
+    # 285 h (12 dias) y un maximo de 266 dias. Juzgar la primera es describir la visita mas vieja.
+    # Era ademas el SEGUNDO CRITERIO MAS DURO de los seis medidos (3,42 estrellas contra 3,55 del
+    # ultimo; 620 sesiones en 2 o menos contra 499).
+    # Y lo decisivo: el 82% de esas sesiones tienen MAS DE UN OPERADOR (hasta 10). Con la primera,
+    # la nota se le cargaba al que atendio la visita vieja -- cambiar a la ultima reatribuye 494 de
+    # las 600 notas que se mueven. Por eso tampoco se PROMEDIA entre interacciones: seria mezclar
+    # el trabajo de dos personas y ponerselo a una sola.
+    """
+    comps = _comprobantes_del_cliente(messages)
+    return comps[-1] if comps else None
 
 
 def es_transaccion(messages: list[dict]) -> bool:
@@ -183,6 +198,10 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
     ventana = interaccion_de(messages, comprobante)
     reales = sorted((m for m in ventana if not m.get("is_note")),
                     key=lambda m: m["created_at"])
+    # DENTRO de la ventana el reloj arranca en el PRIMER comprobante de ESA visita. El ancla
+    # elige la interaccion (la ultima); el reloj mide la espera completa. Si el cliente manda
+    # tres imagenes seguidas, contar desde la ultima esconderia la demora.
+    comprobante = _comprobantes_del_cliente(reales)[0]
     # El reloj arranca en el COMPROBANTE, no en el primer mensaje: la charla previa
     # no es tiempo que el operador le deba al cliente.
     respuesta = next(

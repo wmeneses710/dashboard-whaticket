@@ -181,14 +181,18 @@ def _cierre(minutos, quien="Mario"):
 
 
 def test_la_acreditacion_de_OTRA_interaccion_no_cuenta():
-    # El comprobante de la primera interaccion queda sin respuesta y el operador cierra.
-    # Dias despues hay otra recarga, esa si acreditada. La primera vale 1, no 2.
-    msgs = [_cli(0, "les mando el comprobante de la recarga"), _comprobante(0), _cierre(5),
-            _cli(2880, "otra recarga"), _comprobante(2880),
-            _op(2881, "Gracias por tu recarga, tu saldo ya esta disponible"), _cierre(2882)]
+    # FIXTURE INVERTIDO el 2026-08-12 al pasar el ancla a la ULTIMA visita. El invariante que
+    # este test protege es el mismo -- la evidencia NO se cruza entre interacciones -- pero
+    # ahora la ventana juzgada es la ultima, asi que la acreditacion que no debe filtrarse es
+    # la ANTERIOR. Antes el fixture probaba la direccion opuesta y por eso exigia 1★ sobre la
+    # primera visita: esa expectativa quedo obsoleta, el invariante no.
+    # Primera visita: recarga acreditada. Dias despues: comprobante que nadie contesta.
+    msgs = [_cli(0, "les mando el comprobante de la recarga"), _comprobante(0),
+            _op(1, "Gracias por tu recarga, tu saldo ya esta disponible"), _cierre(5),
+            _cli(2880, "otra recarga"), _comprobante(2880), _cierre(2882)]
     d = calificar_deposito(msgs)
     assert d is not None
-    assert d.acredito is False, "la acreditacion del 2do dia no puede acreditar el 1er comprobante"
+    assert d.acredito is False, "la acreditacion del 1er dia no puede acreditar el 2do comprobante"
     assert d.stars == 1, f"{d.stars}★ {d.rationale}"
     assert "39" not in d.rationale and "hora" not in d.rationale.lower()
 
@@ -283,3 +287,51 @@ def test_el_rechazo_ANTES_del_comprobante_no_cuenta():
         _op(6, "ahi lo reviso"),
     ], _cierre(20))
     assert r.stars == 2, r.rationale
+
+
+# --- SE JUZGA LA ULTIMA VISITA, NO LA PRIMERA ---------------------------------------
+# El ancla tomaba el PRIMER comprobante de la sesion, o sea la visita MAS VIEJA. Y una sesion
+# mergea todos los episodios del ticket: MEDIDO el 2026-08-12 sobre 1.180 sesiones con 2+
+# interacciones calificables, la primera y la ultima estan separadas por una mediana de 8,6 h,
+# un p90 de 285 h (12 dias) y un maximo de 266 dias.
+# El criterio viejo era ademas el SEGUNDO MAS DURO de los seis que se midieron (3,42★ contra
+# 3,55★ del ultimo; 620 sesiones en 2★ o menos contra 499).
+# Y lo decisivo: **82% de esas sesiones tienen mas de un operador** (hasta 10). Con el primero,
+# la nota se le cargaba al que atendio la visita vieja: cambiar a la ultima reatribuye 494 de
+# las 600 notas que se mueven. Por eso NO se promedia entre interacciones -- seria mezclar el
+# trabajo de dos personas y ponerselo a una.
+
+def _cierre(minutos, quien="Ana"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación",
+            "media_type": "chat"}
+
+
+def test_se_juzga_la_ULTIMA_visita_no_la_primera():
+    # Visita 1: comprobante que nadie contesto (seria 1★). Visita 2, dos dias despues:
+    # comprobante acreditado en un minuto (4★). La nota describe la SEGUNDA.
+    msgs = [_comprobante(0), _cierre(30),
+            _comprobante(2880), _op(2881, ACREDITA), _cierre(2882)]
+    d = calificar_deposito(msgs)
+    assert d.stars == 4, d.rationale
+    assert d.acredito is True
+
+
+def test_el_reloj_arranca_en_el_PRIMER_comprobante_de_la_ventana():
+    # El ancla elige la INTERACCION (la ultima), pero adentro el reloj arranca en el primer
+    # comprobante de ESA visita: si el cliente manda tres imagenes seguidas, la espera se
+    # cuenta desde la primera. Tomar la ultima del tramo escondería la demora.
+    msgs = [_comprobante(0), _cierre(10),
+            _comprobante(100), _comprobante(101), _comprobante(102),
+            _op(110, ACREDITA), _cierre(111)]
+    d = calificar_deposito(msgs)
+    # 10 min desde el primer comprobante de la visita, no 8 desde el ultimo
+    assert d.espera is not None and 9.5 <= d.espera.total_seconds() / 60 <= 10.5, d.espera
+
+
+def test_sin_cierres_sigue_siendo_UNA_sola_interaccion():
+    # El 96,3% de las sesiones son una interaccion: ahi primero y ultimo son lo mismo y no
+    # puede cambiar nada.
+    msgs = [_comprobante(0), _op(1, ACUSE), _op(3, ACREDITA)]
+    d = calificar_deposito(msgs)
+    assert d.stars == 4, d.rationale

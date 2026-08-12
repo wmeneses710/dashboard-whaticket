@@ -470,10 +470,11 @@ def test_los_tiempos_persistidos_describen_la_interaccion_juzgada(monkeypatch):
     sess["resolved_at"] = _T0 + timedelta(seconds=180095)
     score_session_and_store(conn, sess, llm=None, op_map={})
     params = _params_of_upsert(conn)
-    # La interaccion juzgada es la PRIMERA (el ancla es el primer comprobante): duro 22 s
-    # y nadie contesto. Nada de 50 horas ni de una primera respuesta a las 50 h.
-    assert params["resolution_seconds"] == 22.0
-    assert params["first_response_seconds"] is None
+    # La interaccion juzgada es la ULTIMA (el ancla paso al ultimo comprobante el 2026-08-12,
+    # ver src/deposito): arranca a los 180.000 s, el operador contesta 30 s despues y cierra a
+    # los 95 s. Nada de las 50 horas del ENVASE, que es lo que este test protege.
+    assert params["resolution_seconds"] == 95.0
+    assert params["first_response_seconds"] == 30.0
 
 
 def test_el_desenlace_del_cliente_se_PERSISTE_en_todas_las_filas(monkeypatch):
@@ -502,7 +503,8 @@ def test_se_persiste_DONDE_arranca_la_interaccion_juzgada(monkeypatch):
     conn = _CtxConn()
     score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
     dims = _params_of_upsert(conn)["dimensions"].obj
-    assert dims["interaccion_juzgada_desde"] == _T0.isoformat()
+    # La ULTIMA interaccion, no la primera: arranca a los 180.000 s del inicio de la sesion.
+    assert dims["interaccion_juzgada_desde"] == (_T0 + timedelta(seconds=180000)).isoformat()
 
 
 def test_sin_ancla_NO_se_persiste_ninguna_interaccion(monkeypatch):

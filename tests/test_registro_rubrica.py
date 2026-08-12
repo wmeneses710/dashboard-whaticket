@@ -172,13 +172,16 @@ def _cierre(minutos, quien="Mario"):
 
 
 def test_no_empareja_los_datos_de_un_alta_con_las_credenciales_de_otra():
-    # Interaccion 1: el cliente pasa los datos y nadie le entrega nada -> 2 estrellas.
-    # Interaccion 2, tres dias despues: otra alta que si se completa.
-    msgs = [_cli(0, DATOS_CLIENTE), _op(3, "ahi te reviso"), _cierre(10),
-            _cli(4320, DATOS_CLIENTE), _op(4322, CREDENCIALES), _cierre(4330)]
+    # FIXTURE INVERTIDO el 2026-08-12 al pasar el ancla a la ULTIMA visita. El invariante que
+    # este test protege es el MISMO -- la evidencia no se cruza entre interacciones -- pero
+    # ahora la ventana juzgada es la ultima, asi que lo que no debe filtrarse es lo ANTERIOR.
+    # Interaccion 1: alta completa. Interaccion 2, tres dias despues: el cliente pasa los
+    # datos y nadie le entrega nada -> 2 estrellas, y las credenciales de la 1ra no la salvan.
+    msgs = [_cli(0, DATOS_CLIENTE), _op(2, CREDENCIALES), _cierre(10),
+            _cli(4320, DATOS_CLIENTE), _op(4322, "ahi te reviso"), _cierre(4330)]
     r = calificar_registro(msgs)
     assert r is not None
-    # Sin ventaneo, `cred` de la 2da tapaba el fracaso de la 1ra y daba 3 o 4.
+    # Sin ventaneo, `cred` de la 1ra tapaba el fracaso de la 2da y daba 3 o 4.
     assert r.stars == 2, r.rationale
 
 
@@ -205,8 +208,10 @@ def test_interaccion_juzgada_expone_la_ventana_del_alta():
     ventana = interaccion_juzgada(msgs)
     assert ventana is not None
     reales = [m for m in ventana if not m["is_note"]]
-    assert reales[0]["created_at"] == BASE          # ancla = el PRIMER traspaso de datos
-    assert all(m["created_at"] < BASE + timedelta(minutes=4000) for m in ventana)
+    # ancla = el ULTIMO traspaso de datos
+    assert reales[0]["created_at"] == BASE + timedelta(minutes=4320)
+    # y la ventana NO arrastra nada de la visita anterior
+    assert all(m["created_at"] >= BASE + timedelta(minutes=4000) for m in ventana)
 
 
 def test_interaccion_juzgada_es_None_si_no_hubo_alta():
@@ -324,3 +329,30 @@ def test_el_coaching_del_rechazo_no_habla_de_cuando_la_va_a_tener():
     assert "cuándo la va a tener" not in bajo and "cuando la va a tener" not in bajo, \
         s.recomendacion
     assert "avis" in bajo or "deriv" in bajo, s.recomendacion
+
+
+# --- SE JUZGA LA ULTIMA VISITA, NO LA PRIMERA ---------------------------------------
+# Mismo cambio que en `deposito` y `retiro` (2026-08-12): el ancla tomaba el PRIMER traspaso
+# de datos. Ver tests/test_deposito_rubrica.py para los numeros.
+
+def _cierre_g(minutos, quien="Ana"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación",
+            "media_type": "chat"}
+
+
+def test_registro_se_juzga_la_ULTIMA_visita():
+    # Visita 1: datos entregados y nadie respondio (1★). Visita 2: alta creada en 2 min (4★).
+    msgs = [_cli(0, DATOS_CLIENTE), _cierre_g(30),
+            _cli(2880, DATOS_CLIENTE), _op(2882, CREDENCIALES), _cierre_g(2883)]
+    r = calificar_registro(msgs)
+    assert r.stars == 4, f"{r.stars}★ {r.rationale}"
+    assert r.entrego is True
+
+
+def test_registro_el_reloj_arranca_en_el_PRIMER_traspaso_de_la_ventana():
+    msgs = [_cli(0, DATOS_CLIENTE), _cierre_g(10),
+            _cli(100, DATOS_CLIENTE), _cli(101, "y mi cedula es 0951964055"),
+            _op(110, CREDENCIALES), _cierre_g(111)]
+    r = calificar_registro(msgs)
+    assert r.espera is not None and 9.5 <= r.espera.total_seconds() / 60 <= 10.5, r.espera

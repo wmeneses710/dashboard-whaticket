@@ -173,7 +173,27 @@ from src.segments import segment_for_queue
 #   - `ahorita`/`ahora mismo` al guard de futuro: faltaba el futuro inmediato mas ecuatoriano;
 #   - el INFINITIVO fuera de `acredit\w*`: "para acreditar necesito el comprobante" es el
 #     operador PIDIENDO (183 mensajes) y "voy a acreditar" es intencion. Ninguno confirma nada.
-SCORING_VERSION = "2026.08-rubricas-v11"
+#
+# 2026.08-rubricas-v12 (2026-08-12). EL ANCLA ELIGE LA ULTIMA VISITA, en los tres motivos
+# deterministas. Tomaba la PRIMERA -- el primer comprobante, el primer pedido, el primer
+# traspaso de datos -- y una sesion mergea TODOS los episodios del ticket.
+#   - MEDIDO sobre 1.180 sesiones con 2+ interacciones calificables: la primera y la ultima
+#     estan separadas por una mediana de 8,6 h, un p90 de 285 h (12 dias) y un maximo de 266
+#     dias. La nota describia la visita mas vieja y las demas se ignoraban (hay sesiones de
+#     105 interacciones).
+#   - LO QUE LO DECIDE es la ATRIBUCION, no la nota: **el 82% de esas sesiones tienen mas de
+#     un operador** (hasta 10 distintos). Con la primera, la nota se le cargaba al que atendio
+#     la visita vieja mientras el que atendio la ultima no aparecia. Cambiar de ancla mueve
+#     600 notas de deposito y en 494 cambia TAMBIEN el operador responsable.
+#   - EN LAS NOTAS EL CAMBIO ES NEUTRO, y conviene decirlo: deposito 3,34 -> 3,35 (383 bajan,
+#     399 suben), retiro 3,44 -> 3,52, registro 2,68 -> 2,66. No se hace para aflojar la vara.
+#   - NO SE PROMEDIA entre interacciones aunque castigue menos (2★ de 74 a 25 en las de 3+):
+#     con 82% de sesiones multi-operador seria ponerle a una persona el trabajo de otra, y el
+#     rationale dejaria de poder citar un tiempo verificable, que es como se audita.
+#   - DOS PASOS, no uno: el ancla elige la INTERACCION (la ultima), y DENTRO de esa ventana el
+#     reloj arranca en el PRIMER comprobante/pedido/traspaso de ESA visita. Si el cliente manda
+#     tres imagenes seguidas, medir desde la ultima esconderia la demora.
+SCORING_VERSION = "2026.08-rubricas-v12"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
