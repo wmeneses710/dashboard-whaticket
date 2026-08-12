@@ -875,7 +875,49 @@ def filter_options(cur, account: str, ambiente: str = "todos") -> dict:
             "motivos": motivos}
 
 
-def _transcript(msgs: list[dict]) -> list[dict]:
+def _juzgada_desde(dimensions):
+    """El arranque de la interaccion juzgada, si la fila lo trae. Tolerante a proposito: las
+    filas de antes de v9 no lo tienen y una fecha ilegible no puede tumbar el modal."""
+    from datetime import datetime
+    crudo = (dimensions or {}).get("interaccion_juzgada_desde") if isinstance(dimensions, dict) else None
+    if not crudo:
+        return None
+    try:
+        return datetime.fromisoformat(crudo)
+    except (TypeError, ValueError):
+        return None
+
+
+def _transcript(msgs: list[dict], juzgada_desde=None) -> list[dict]:
+    """El chat del modal, con cada mensaje ubicado en SU interaccion.
+
+    Una sesion mergea todos los episodios del ticket y en el 10,2% de las de `jugador` son
+    VARIAS atenciones seguidas -- medido el 2026-08-12: una sesion con 17, y saltos de 51
+    horas entre una y la siguiente. El modal las mostraba como un solo chat corrido, asi que
+    quien auditaba leia una nota de 2 estrellas al lado de un tramo que habia salido bien y
+    concluia que el sistema se equivocaba. La nota describe UNA interaccion, no la sesion.
+
+    `juzgada_desde` = el arranque de la interaccion que la rubrica miro. No hace falta
+    guardarlo: el worker ya sobreescribe `conversation_created_at` de la fila con ese
+    instante cuando hay ancla determinista (deposito/retiro/registro). Sin ancla -- el
+    fall-through, donde el LLM lee la sesion COMPLETA -- no se marca ninguna en particular:
+    todas quedan juzgadas, porque elegir una seria decidir por el negocio cual representa la
+    nota. La frontera es la de `src/interacciones.py`, la MISMA que usa el scoring; si el
+    front dibujara la suya, el corte que se ve y el que se califica podrian no coincidir.
+    """
+    from src.interacciones import partir_en_interacciones
+    idx_de = {}
+    total = 0
+    juzgadas = set()
+    if all(m.get("created_at") is not None for m in msgs):
+        for n, interaccion in enumerate(partir_en_interacciones(msgs), 1):
+            total = n
+            arranca = min(m["created_at"] for m in interaccion)
+            termina = max(m["created_at"] for m in interaccion)
+            if juzgada_desde is None or arranca <= juzgada_desde <= termina:
+                juzgadas.add(n)
+            for m in interaccion:
+                idx_de[id(m)] = n
     out = []
     for m in msgs:
         if m.get("is_note"):
@@ -888,8 +930,11 @@ def _transcript(msgs: list[dict]) -> list[dict]:
         # pedido y la respuesta no se lee en ningun KPI. Va en ISO y el front la formatea en
         # hora de Ecuador (la operacion corre 06:00-23:59 alla).
         at = m.get("created_at")
+        n = idx_de.get(id(m), 1)
         out.append({"role": role, "text": (m.get("body") or "[media]").strip()[:800],
-                    "at": at.isoformat() if at is not None else None})
+                    "at": at.isoformat() if at is not None else None,
+                    "interaccion": n, "interacciones": total or 1,
+                    "juzgada": n in juzgadas if juzgadas else True})
     return out
 
 
@@ -1513,7 +1558,12 @@ def conversation_detail(cur, conversation_id: str) -> dict | None:
     if row:
         cols = [d.name for d in cur.description]
         d = {c: _coerce(v) for c, v in zip(cols, row)}
-        d["transcript"] = _transcript(fetch_messages(cur, conversation_id))
+        # CUAL interaccion se califico. Sale de `dimensions`, no de `conversation_created_at`:
+        # cuando el ancla elige la primera, ese campo queda identico a no tener ancla, y los
+        # dos casos piden marcados opuestos (ver src/worker.py). Las filas anteriores a v9 no
+        # lo traen -> no se senala ninguna, que es lo honesto: no sabemos cual fue.
+        d["transcript"] = _transcript(fetch_messages(cur, conversation_id),
+                                      juzgada_desde=_juzgada_desde(d.get("dimensions")))
         return d
     transcript = _transcript(fetch_messages(cur, conversation_id))
     if not transcript:

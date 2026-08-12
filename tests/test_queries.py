@@ -1119,6 +1119,55 @@ def test_el_transcript_tolera_mensajes_sin_hora():
     assert out[0]["at"] is None
 
 
+def _msg(minuto, from_me, body="hola", nota=False):
+    from datetime import datetime, timezone
+    return {"from_me": from_me, "is_note": nota, "body": body, "media_type": "chat",
+            "created_at": datetime(2026, 8, 12, 10, minuto, tzinfo=timezone.utc)}
+
+
+def test_el_transcript_numera_la_interaccion_de_cada_mensaje():
+    # El modal mostraba la sesion entera como un solo chat. En el 10,2% de las de `jugador`
+    # eso son VARIAS atenciones seguidas -- una de ellas de hace 51 horas -- y quien lee la
+    # nota no tiene forma de saber donde termina una y arranca la otra.
+    from src.queries import _transcript
+    msgs = [_msg(0, False, "quiero depositar"), _msg(1, True, "dale"),
+            _msg(2, True, "Ana *resuelto* la conversación", nota=True),
+            _msg(40, False, "hola de nuevo"), _msg(41, True, "te ayudo")]
+    out = _transcript(msgs)
+    assert [m["interaccion"] for m in out] == [1, 1, 2, 2], "no numera por interaccion"
+    assert all(m["interacciones"] == 2 for m in out), "falta el total, no hay contra que leer"
+
+
+def test_una_sesion_de_una_sola_interaccion_no_se_anota():
+    # El 96,3% de las sesiones son UNA interaccion. Ahi el separador seria ruido: no hay dos
+    # tramos que distinguir, y marcar "1 de 1" en cada mensaje es peor que no decir nada.
+    from src.queries import _transcript
+    out = _transcript([_msg(0, False), _msg(1, True)])
+    assert all(m["interacciones"] == 1 for m in out)
+    assert all(m["juzgada"] for m in out), "con una sola, la juzgada es esa"
+
+
+def test_el_transcript_marca_CUAL_interaccion_se_califico():
+    # La nota describe UNA interaccion, no la sesion. Sin marcarla, el que audita lee una
+    # calificacion de 2 estrellas al lado de un tramo que salio bien y concluye que el
+    # sistema se equivoco -- que es exactamente lo que paso en la revision del 2026-08-12.
+    # El inicio de la ventana juzgada es `conversation_created_at` de la fila: el worker lo
+    # sobreescribe con el arranque de esa interaccion (ver src/worker.py), asi que no hace
+    # falta guardar nada nuevo.
+    from datetime import datetime, timezone
+
+    from src.queries import _transcript
+    msgs = [_msg(0, False, "quiero depositar"), _msg(1, True, "dale"),
+            _msg(2, True, "Ana *resuelto* la conversación", nota=True),
+            _msg(40, False, "hola de nuevo"), _msg(41, True, "te ayudo")]
+    juzgada_desde = datetime(2026, 8, 12, 10, 40, tzinfo=timezone.utc)
+    out = _transcript(msgs, juzgada_desde=juzgada_desde)
+    assert [m["juzgada"] for m in out] == [False, False, True, True]
+    # Sin ventana (el fall-through al LLM, que lee la sesion COMPLETA) se juzga todo: marcar
+    # una sola seria decidir por el negocio cual representa la nota.
+    assert all(m["juzgada"] for m in _transcript(msgs))
+
+
 def test_las_opciones_de_los_desplegables_respetan_el_ambiente():
     # AUDITADO el 2026-08-07: `filter_options` ofrecia los 7 motivos incluso en `agente`,
     # donde las sesiones se califican con agilidad y el motivo es NULL. Elegir "Depósito"

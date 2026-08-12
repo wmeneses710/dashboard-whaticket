@@ -93,6 +93,7 @@ from src.segments import segment_for_queue
 # NO se cambio el transcript: se probo darle tiempos y fronteras al modelo y NO mejora
 # (26/28 sin tiempos contra 25/28 con), asi que `format_transcript(con_tiempos=)` queda
 # apagado. Ver el docstring de esa funcion.
+#
 # 2026.08-rubricas-v8 (2026-08-12). Sale de auditar los 1★ y 2★ de una copia fresca con v7
 # corriendo: de 7 leidos en detalle, 2 estaban bien puestos y 5 no. Lo que cambio contra v7:
 #   - VOCABULARIO DE ACREDITACION, tercera ronda y la mas grande. El patron se escribio
@@ -113,7 +114,19 @@ from src.segments import segment_for_queue
 # (0 de mas de 24 h, 0 visitas pegadas, las largas son el cliente demorando dentro de un mismo
 # pedido o el operador esperando antes de cerrar). Ver el docstring de src/interacciones.py.
 #
-SCORING_VERSION = "2026.08-rubricas-v8"
+# 2026.08-rubricas-v9 (2026-08-12). NO cambia ninguna nota: agrega un dato para poder
+# AUDITARLAS. `dimensions.interaccion_juzgada_desde` guarda donde arranca la interaccion que
+# la rubrica miro, y se bumpea porque `dimensions` es parte de la nota persistida.
+#   - POR QUE no se deduce de la fila: cuando el ancla elige la PRIMERA interaccion,
+#     `conversation_created_at` queda IDENTICO a cuando no hay ancla, y los dos casos piden
+#     marcados opuestos en el chat (senalar una, o no senalar ninguna). MEDIDO sobre la copia:
+#     de 31 sesiones multi-interaccion muestreadas, 28 caian en esa ambiguedad.
+#   - PARA QUE: el modal mostraba la sesion entera como un chat corrido, y una sesion mergea
+#     todos los episodios del ticket -- hay de 41, 33 y 20 interacciones. Quien auditaba leia
+#     una nota de 2★ al lado de un tramo que habia salido bien y concluia que el sistema se
+#     equivocaba. La nota describe UNA interaccion, no la sesion. Ahora el chat lo dice.
+#   - Las filas de v8 y anteriores no lo traen: ahi no se senala ninguna, que es lo honesto.
+SCORING_VERSION = "2026.08-rubricas-v9"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

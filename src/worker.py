@@ -261,6 +261,16 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     # (deposito/retiro/registro/promo/soporte/info/agilidad) devuelven su propio
     # ScoreResult sin pasar por ahi — el 63,2% de las sesiones. Sin esto el chip del front
     # aparecia en un tercio de los casos y el que mira no tenia forma de saber por que.
+    # DONDE ARRANCA LA INTERACCION QUE SE JUZGO. Se guarda porque desde la fila NO se puede
+    # deducir: si el ancla elige la PRIMERA interaccion, `conversation_created_at` queda
+    # exactamente igual que si no hubiera ancla, y los dos casos piden marcados OPUESTOS en
+    # el chat (senalar una, o no senalar ninguna). MEDIDO el 2026-08-12 sobre la copia: de 31
+    # sesiones multi-interaccion muestreadas, 28 caian en esa ambiguedad. Sin el dato, el
+    # modal senalaba la interaccion 1 como "la calificada" en sesiones donde el LLM habia
+    # leido las 41. Ausente = no hay UNA interaccion que senalar (el fall-through leyo todo).
+    if isinstance(record.get("dimensions"), dict) and ventana_juzgada:
+        arranca = min(m["created_at"] for m in ventana_juzgada)
+        record["dimensions"]["interaccion_juzgada_desde"] = arranca.isoformat()
     if isinstance(record.get("dimensions"), dict):
         record["dimensions"].setdefault(
             "cliente_abandono", cliente_abandono_tras_pedido(msgs))

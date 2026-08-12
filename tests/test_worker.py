@@ -476,6 +476,50 @@ def test_los_tiempos_persistidos_describen_la_interaccion_juzgada(monkeypatch):
     assert params["first_response_seconds"] is None
 
 
+def test_el_desenlace_del_cliente_se_PERSISTE_en_todas_las_filas(monkeypatch):
+    # El desenlace se agrega en `dimensions` DESPUES de armar el record, y ese bloque es
+    # facil de dejar mal ubicado: si cae dentro de un docstring sigue siendo Python valido,
+    # los tests siguen verdes y la feature no persiste NADA. Paso el 2026-08-12 al partir el
+    # arbol en commits, y no habia ni un test que lo cubriera. Ahora si.
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_de_deposito())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    dims = _params_of_upsert(conn)["dimensions"].obj
+    assert "cliente_desenlace" in dims, "el desenlace no llego a la fila"
+    assert "cliente_abandono" in dims, "el booleano viejo tampoco"
+
+
+def test_se_persiste_DONDE_arranca_la_interaccion_juzgada(monkeypatch):
+    # El front tiene que poder senalar CUAL de las interacciones se califico, y desde la fila
+    # eso NO se puede deducir: cuando el ancla elige la PRIMERA, `conversation_created_at`
+    # queda igual que si no hubiera ancla ninguna. Los dos casos son indistinguibles, y
+    # adivinar significa senalar un tramo que nadie juzgo. Asi que se guarda.
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_de_deposito())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    dims = _params_of_upsert(conn)["dimensions"].obj
+    assert dims["interaccion_juzgada_desde"] == _T0.isoformat()
+
+
+def test_sin_ancla_NO_se_persiste_ninguna_interaccion(monkeypatch):
+    # Sin ancla el LLM leyo la sesion COMPLETA: no hay UNA interaccion que senalar, y dejar
+    # el campo vacio es lo unico honesto. El front marca todas, que es lo que paso.
+    from src.scorer import ScoreResult
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_de_deposito())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: ScoreResult(
+        rubric="promo", dimensions={}, rating_label="buena", rating_rationale="ok",
+        stars=4, llm_model="fake", atencion=None, deposit_observed=None, motivo="promo"))
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    dims = _params_of_upsert(conn)["dimensions"].obj
+    assert dims.get("interaccion_juzgada_desde") is None
+
+
 def test_sin_ancla_determinista_los_tiempos_siguen_siendo_los_del_crm(monkeypatch):
     # Un motivo que pasa por LLM no tiene ancla: se degrada al comportamiento anterior.
     from src.scorer import ScoreResult
@@ -544,18 +588,3 @@ def test_el_cierre_de_una_sesion_completa_es_el_ULTIMO_no_el_primero():
     assert inicio == _T0
     assert primera_op == _T0 + timedelta(seconds=30)
     assert cierre == _T0 + timedelta(seconds=90060)
-
-
-def test_el_desenlace_del_cliente_se_PERSISTE_en_todas_las_filas(monkeypatch):
-    # El desenlace se agrega en `dimensions` DESPUES de armar el record, y ese bloque es
-    # facil de dejar mal ubicado: si cae dentro de un docstring sigue siendo Python valido,
-    # los tests siguen verdes y la feature no persiste NADA. Paso el 2026-08-12 al partir el
-    # arbol en commits, y no habia ni un test que lo cubriera. Ahora si.
-    monkeypatch.setattr(worker, "fetch_session_messages",
-                        lambda cur, sid: _dos_interacciones_de_deposito())
-    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
-    conn = _CtxConn()
-    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
-    dims = _params_of_upsert(conn)["dimensions"].obj
-    assert "cliente_desenlace" in dims, "el desenlace no llego a la fila"
-    assert "cliente_abandono" in dims, "el booleano viejo tampoco"
