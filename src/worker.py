@@ -12,7 +12,11 @@ import traceback
 
 from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
+from src.deposito import es_transaccion as es_transaccion_deposito
+from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
 from src.deposits import deposit_candidate_count
+from src.interacciones import tiempos_de
+from src.retiro import interaccion_juzgada as interaccion_juzgada_retiro
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
 from src.operators import build_operator_map, operator_name
@@ -141,6 +145,15 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
 """
 
 
+# Motivos cuya interaccion juzgada es ACOTABLE de forma determinista (la rubrica tiene un
+# ancla: el comprobante del cliente en deposito, el formulario del pedido en retiro). Los
+# demas pasan por el LLM sobre la sesion entera y todavia no tienen ancla.
+_ANCLA_POR_MOTIVO = {
+    "deposito": interaccion_juzgada_deposito,
+    "retiro": interaccion_juzgada_retiro,
+}
+
+
 def fetch_pending_sessions(cur, account: str, limit: int) -> list[dict]:
     """Sesiones CERRADAS de la cuenta que aun NO fueron scoreadas por sesion.
 
@@ -162,6 +175,11 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
         msgs = fetch_session_messages(cur, sess["session_id"])
     stats, rubric, eval_status, skip_reason = evaluate_session(msgs, lineas=lineas)
     deposit_count = deposit_candidate_count(msgs)  # gate determinista (indep. del eval_status)
+    # El gate de LAS DOS PUERTAS, solo para reconciliar `deposit_mismatch`. `deposit_count`
+    # sigue siendo el CONTADOR de volumen (lo suman los cuadros) y no se toca; lo que se
+    # arregla es con QUE se compara la observacion. Ver store._deposit_mismatch.
+    deposit_gate = es_transaccion_deposito(msgs)
+    ventana_juzgada = None  # la interaccion que la rubrica miro, si es acotable (ver abajo)
     operator_id = primary_operator(msgs)
     op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
     score = None
@@ -186,13 +204,51 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                 # de 5 min (regla del negocio). Sin el, el credito se mantiene.
                 cierre_at=sess.get("resolved_at"),
             )
+            if score is not None:
+                acotar = _ANCLA_POR_MOTIVO.get(score.motivo)
+                ventana_juzgada = acotar(msgs) if acotar else None
+    # LOS TIEMPOS Y EL OPERADOR DESCRIBEN LA INTERACCION QUE SE JUZGO, no el envase.
+    # Los campos del CRM son del ENVASE: MEDIDO el 2026-08-12 sobre `f9b31f4f` (17
+    # interacciones), `created_at` sale de la primera, `first_sent_message_at` de la segunda
+    # (51,5 h despues) y `resolved_at` de la ultima -- cuatro interacciones en una fila. A
+    # nivel poblacion: 1.208 sesiones de `jugador` (10,2%) con varias interacciones, con la
+    # resolucion mostrada saltando de 3,4 h a 88,5-271,3 h (p90 de 3.834x contra la ventana
+    # real). Y en 152 de 585 sesiones multi-interaccion de deposito/retiro (26,0%) la nota se
+    # le cargaba a un operador que ni aparece en la interaccion juzgada.
+    # LOS TIEMPOS SALEN DEL TRANSCRIPT, NUNCA DEL ENVASE. Si hay ancla determinista
+    # (deposito/retiro), de la interaccion juzgada; si NO hay -- el fall-through al LLM, que
+    # lee la sesion completa --, de la SESION entera. Medido en la corrida v6: el ventaneo
+    # tapaba el 100% del camino determinista (91 de 91) y el 0% del fall-through (10 de 10),
+    # donde los numeros volvian a los campos del CRM.
+    # NO se acota la ventana del fall-through a proposito: ahi el LLM juzgo la sesion
+    # completa, y elegir una interaccion seria decidir por el negocio cual representa la
+    # nota de la sesion -- que sigue abierto.
+    # Si NO hubo score (skipped) se dejan los campos del CRM: no hay nada juzgado que
+    # describir, y no se inventa un tiempo para una fila sin nota.
+    sess_medido, stats_medido = sess, stats
+    if score is not None:
+        ventana = ventana_juzgada or msgs
+        inicio, primera_op, cierre = tiempos_de(ventana)
+        if inicio is not None:
+            sess_medido = {**sess, "created_at": inicio,
+                           "first_sent_message_at": primera_op, "resolved_at": cierre}
+            stats_medido = message_stats(ventana)
+        # El operador se re-atribuye SOLO cuando hay ancla: acotar a la interaccion es lo que
+        # da derecho a cambiarlo. Y solo si esa interaccion tiene uno identificable -- dejar
+        # 'Operador sin identificar' seria cambiar una atribucion equivocada por ninguna.
+        if ventana_juzgada:
+            op_id_ventana = primary_operator(ventana_juzgada)
+            if op_id_ventana is not None:
+                operator_id = op_id_ventana
+                op_name = (op_map.get(str(op_id_ventana))
+                           or operator_name(ventana_juzgada, op_id_ventana) or op_name)
     # rubric queda como el legacy human/bot (satisface chk_rubric); el motivo del LLM
     # se persiste en su propia columna dentro de build_score_record (desde el score).
     record = build_score_record(
-        conversation=sess, stats=stats, rubric=rubric,
+        conversation=sess_medido, stats=stats_medido, rubric=rubric,
         eval_status=eval_status, skip_reason=skip_reason, score=score,
         operator_id=operator_id, operator_name=op_name, deposit_count=deposit_count,
-        session_id=sess["session_id"],
+        deposit_gate=deposit_gate, session_id=sess["session_id"],
     )
     # EL HECHO DEL ABANDONO VA EN TODAS LAS FILAS, no solo en las del camino LLM.
     # `score_by_motivo` lo mete en sus `dimensions`, pero las rubricas deterministas

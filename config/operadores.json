@@ -3,6 +3,7 @@
   "criterio": "estado de la tabla operator_status",
   "generado_en": "2026-08-04T19:08:10+00:00",
   "nota": "Solo se listan los operadores APAGADOS. Cualquiera que no esté acá está ACTIVO: es el default, para que alguien que entra a trabajar hoy aparezca solo. Generado por scripts/dump_operadores.py; editable a mano.",
+  "nota_sin_identificar": "OJO: 'Operador sin identificar' NO se apaga a propósito, y no hay que apagarlo. Es el cajón de los fallos NUESTROS de atribución (ni user_id ni firma) y tiene 640 sesiones donde un humano escribió y no lo pudimos nombrar: si se apaga, un bug futuro que rompa la identidad de alguien ACTIVO le esconde el trabajo sin que nadie se entere. El que sí se apaga es 'Operador borrado por Whaticket', que es la causa CONOCIDA y cerrada: 2 usuarios que el CRM borró, activos ene/feb/may 2026, cuyo nombre no se puede recuperar (0 de sus 745 mensajes trae la firma).",
   "apagados": {
     "datos": [
       {
@@ -12,6 +13,10 @@
       {
         "operador": "OnlySorti",
         "comentario": ""
+      },
+      {
+        "operador": "Operador borrado por Whaticket",
+        "comentario": "usuario que el CRM borró: el user_id no tiene fila en `users` y el nombre no es recuperable"
       }
     ],
     "sistemas": [
@@ -102,6 +107,10 @@
       {
         "operador": "Milena",
         "comentario": ""
+      },
+      {
+        "operador": "Operador borrado por Whaticket",
+        "comentario": "usuario que el CRM borró: el user_id no tiene fila en `users` y el nombre no es recuperable. 128 sesiones históricas de 2 personas (ene/feb/may 2026)"
       },
       {
         "operador": "Paola",

@@ -111,6 +111,19 @@ def es_transaccion(messages: list[dict]) -> bool:
     return _pedido_del_cliente(messages) is not None
 
 
+def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
+    """La ventana que `calificar_retiro` va a juzgar. None si no es una transaccion.
+
+    La rubrica ya acotaba su evidencia a la interaccion del pedido; esto lo DICE hacia
+    afuera para que los tiempos y el operador que se persisten describan ESA ventana.
+    MEDIDO el 2026-08-12: en 152 de 585 sesiones multi-interaccion de deposito/retiro
+    (26,0%) la nota se le cargaba a un operador que ni aparece en la interaccion juzgada,
+    y 25 de esas son notas de 1 o 2 estrellas -- una mala nota en el legajo de otro.
+    """
+    pedido = _pedido_del_cliente(messages) if es_transaccion(messages) else None
+    return None if pedido is None else interaccion_de(messages, pedido)
+
+
 def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     """Nota determinista de la sesion. None si no es una transaccion de retiro."""
     if not es_transaccion(messages):

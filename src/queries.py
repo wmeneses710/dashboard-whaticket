@@ -133,15 +133,38 @@ _RATING_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "m
 # translate() y NO unaccent(): unaccent es una EXTENSION que puede no estar instalada en la
 # base de produccion, y esto tiene que andar sin pedir superusuario.
 def _clave_sql(expr: str) -> str:
+    """Clave de comparacion de nombres: minusculas y sin acentos.
+
+    Las dos cadenas de `translate` TIENEN QUE MEDIR LO MISMO. Estaban en 23 contra 24 y
+    Postgres no se queja -- ignora el sobrante y DESPLAZA el mapeo desde el caracter 16:
+    `ñ` caia en 'a' en vez de 'n', asi que `Muñoz` NO matcheaba con `Munoz`, que es
+    justamente lo que esta funcion existe para resolver. Latente hasta el 2026-08-12
+    (cero nombres con ñ en `users`, `user_name` y `operator_status`), pero le pegaba al
+    primer Muñoz/Peña/Nuñez que entrara.
+    Las mayusculas acentuadas se sacaron: el `lower()` va ANTES del `translate`, asi que
+    nunca llegaban -- eran codigo muerto, y eran el origen del desalineo.
+    """
     return (f"translate(lower({expr}), "
-            "'áéíóúüàèìòùäëïöñÁÉÍÓÚÜÑ', 'aeiouuaeiouaeioanAEIOUUN')")
+            "'áéíóúüàèìòùäëïöñ', 'aeiouuaeiouaeion')")
 
 
 # Nombre del operador RESUELTO: el mismo con el que agrupan todos los cuadros. `users.name`
 # manda y la firma `*Nombre:*` guardada en `user_name` es el fallback (38 de 67 operadores
 # de `sistemas` no existen en `users`).
+# DOS CAUSAS, DOS ETIQUETAS. 'Operador sin identificar' colapsaba dos cosas distintas, y eso
+# es peligroso justamente porque la etiqueta se puede APAGAR: si un bug futuro rompe la
+# atribucion de alguien ACTIVO, su trabajo caeria en el mismo cajon apagado y desapareceria
+# sin que nadie se entere. MEDIDO el 2026-08-12 sobre 130.558 filas evaluadas:
+#   - 128 tienen `user_id` pero NO hay fila en `users` -> el CRM BORRO al usuario. Causa
+#     conocida y cerrada: son 2 personas, activas ene/feb/may 2026, y el nombre NO se puede
+#     recuperar (0 de sus 745 mensajes trae la firma `*Nombre:*`). Esa se APAGA.
+#   - 675 no tienen NI `user_id` NI firma -> el fallo es NUESTRO, no del CRM. De esas, **640
+#     tienen mensajes de un humano**: trabajo real sin nombre. Esa queda VISIBLE, para que un
+#     fallo nuevo se vea en vez de heredar el apagado del caso viejo.
 _OPERADOR_RESUELTO = ("coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
-                      "'Operador sin identificar')")
+                      "CASE WHEN cs.user_id IS NOT NULL AND u.id IS NULL "
+                      "THEN 'Operador borrado por Whaticket' "
+                      "ELSE 'Operador sin identificar' END)")
 
 # BAJA LÓGICA de operadores. Un operador apagado desaparece de TODO lo que sale de
 # conversation_scores — KPIs incluidos, no solo de los cuadros por operador: en `sistemas`
@@ -406,13 +429,17 @@ def _build_ops(rows) -> list[dict]:
     return out
 
 
-# Operadores: solo filas EVALUADAS y CON operador (user_name o user_id). Las filas
-# sin nombre pero con user_id caen en 'Operador sin identificar' (como opName).
-_OPS_SQL = """
-SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+# Operadores: solo filas EVALUADAS y con RASTRO de un operador. `agent_message_count > 0`
+# es la cuarta puerta y no es cosmetica: el guard viejo (u.name / user_name / user_id) tiraba
+# del cuadro, EN SILENCIO, 640 sesiones donde un humano escribio y no lo pudimos nombrar.
+# Que no sepamos quien fue no puede significar que el trabajo no exista. El solo-bot (35
+# sesiones, sin un mensaje humano) sigue afuera: ahi no hubo operador que evaluar.
+_OPS_SQL = f"""
+SELECT {_OPERADOR_RESUELTO} AS op,
        cs.rating_label, count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
    AND cs.eval_status = 'evaluated'
-   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
+   AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL
+        OR cs.user_id IS NOT NULL OR cs.agent_message_count > 0)
  GROUP BY 1, cs.rating_label"""
 
 
@@ -426,8 +453,8 @@ def operators_table(cur, account: str, **filters) -> list[dict]:
 # ★ por operador Y motivo (matriz): la vara JUSTA tras el refactor. El ★ global de un
 # operador mezcla motivos con pisos distintos (transaccional=3 vs soporte); segmentado
 # por motivo se compara peras con peras. Solo evaluadas y con operador.
-_OPS_MOTIVO_SQL = """
-SELECT coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+_OPS_MOTIVO_SQL = f"""
+SELECT {_OPERADOR_RESUELTO} AS op,
        coalesce(cs.motivo, 'sin_motivo') AS motivo,
        count(*) AS n, avg(cs.stars) AS avg_stars""" + _SCORES_JOINS + """
    AND cs.eval_status = 'evaluated'
@@ -515,9 +542,9 @@ def _build_quality_evolution(rows, top_n: int | None = None, min_conv: int = 5) 
     return {"months": months, "operators": operators}
 
 
-_QUALITY_SQL = """
+_QUALITY_SQL = f"""
 SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
-       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+       {_OPERADOR_RESUELTO} AS op,
        count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
    AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
    AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL OR cs.user_id IS NOT NULL)
@@ -595,10 +622,10 @@ def _build_quality_motivo(rows, top_n: int | None = None, op_min_conv: int = 3,
 # clasificacion de motivo (motivo NULL). En una tarjeta que compara la calidad ENTRE motivos
 # meterlas es comparar peras con la falta de peras, y en `sistemas` son el grupo mas grande:
 # arrastraban el promedio del cuadro. Decision del negocio, 2026-08-07.
-_QUALITY_MOTIVO_SQL = """
+_QUALITY_MOTIVO_SQL = f"""
 SELECT to_char(cs.conversation_created_at, 'YYYY-MM') AS mes,
        cs.motivo AS motivo,
-       coalesce(nullif(coalesce(u.name, cs.user_name), ''), 'Operador sin identificar') AS op,
+       {_OPERADOR_RESUELTO} AS op,
        count(*) AS n, sum(cs.stars) AS sum_stars""" + _SCORES_JOINS + """
    AND cs.eval_status = 'evaluated' AND cs.conversation_created_at IS NOT NULL
    AND cs.motivo IS NOT NULL
@@ -617,18 +644,33 @@ def quality_by_motivo_month(cur, account: str, **filters) -> dict:
 # Calidad por MOTIVO (v2). Clave tras el refactor: el ★ promedio GLOBAL mezcla motivos
 # con varas distintas (un depósito en su piso=3 y un info bien=3-4) y se aplana hacia 3
 # por el volumen transaccional. Segmentar por motivo devuelve una lectura honesta.
+# `sin_motivo` NO ENTRA, igual que en _QUALITY_MOTIVO_SQL: no es un motivo, es la AUSENCIA
+# de uno (decision del negocio, 2026-08-07). Esta tarjeta se habia quedado afuera de ese
+# cambio y seguia con un `coalesce(cs.motivo,'sin_motivo')`.
+# PARECIA arreglado en `sistemas` de casualidad: ahi las filas sin motivo son casi todas del
+# segmento `agente` (6.158 de 6.687) y el filtro de AMBIENTE ya las barria. En `datos`, que
+# no tiene agente, las 712 filas son sesiones `jugador` SALTEADAS y el ambiente no las toca,
+# asi que la fila seguia a la vista — de ahi la impresion de que el arreglo era por cuenta.
+# Y el label mentia doble: de las 710 de `datos` solo 450 son `skip_reason='sin_motivo'`; las
+# otras 260 son customer_media_only (188), no_agent_reply (51), anomalous_size (12) y demas.
+# Era todo lo salteado en una bolsa con el nombre de una sola de sus causas.
 _MOTIVO_STATS_SQL = """
-SELECT coalesce(cs.motivo, 'sin_motivo') AS motivo,
+SELECT cs.motivo AS motivo,
        count(*) AS n,
        count(*) FILTER (WHERE cs.eval_status = 'evaluated') AS evaluadas,
        avg(cs.stars) FILTER (WHERE cs.eval_status = 'evaluated') AS avg_stars""" + _SCORES_JOINS + """
+   AND cs.motivo IS NOT NULL
  GROUP BY 1"""
 
 
 def _build_motivo_stats(rows) -> list[dict]:
-    """[{motivo, n, evaluadas, avg}] ordenado por volumen. avg None si no hay evaluadas."""
+    """[{motivo, n, evaluadas, avg}] ordenado por volumen. avg None si no hay evaluadas.
+
+    Guard en el builder ademas del SQL (mismo patron que _build_quality_motivo): si alguien
+    vuelve a meter el coalesce o saca el `IS NOT NULL`, la tarjeta no se rompe.
+    """
     out = [{"motivo": m, "n": int(n), "evaluadas": int(ev), "avg": _coerce(avg)}
-           for m, n, ev, avg in rows]
+           for m, n, ev, avg in rows if m and m != "sin_motivo"]
     out.sort(key=lambda x: -x["n"])
     return out
 
@@ -803,11 +845,13 @@ def filter_options(cur, account: str, ambiente: str = "todos") -> dict:
                 "WHERE cs.account = %(account)s AND t.channel IS NOT NULL" + amb
                 + " ORDER BY 1", params)
     channels = [r[0] for r in cur.fetchall()]
-    cur.execute("SELECT DISTINCT coalesce(nullif(coalesce(u.name, cs.user_name), ''), "
-                "'Operador sin identificar') AS op FROM conversation_scores cs "
+    # Mismo criterio que _OPS_SQL: el desplegable ofrece lo que los cuadros muestran. Si
+    # divergen, el filtro no puede llegar a filas que igual estan en el promedio.
+    cur.execute(f"SELECT DISTINCT {_OPERADOR_RESUELTO} AS op FROM conversation_scores cs "
                 "LEFT JOIN users u ON u.id = cs.user_id WHERE cs.account = %(account)s "
                 "AND (u.name IS NOT NULL OR nullif(cs.user_name, '') IS NOT NULL "
-                "OR cs.user_id IS NOT NULL)" + amb + " ORDER BY 1", params)
+                "OR cs.user_id IS NOT NULL OR cs.agent_message_count > 0)"
+                + amb + " ORDER BY 1", params)
     operators = [r[0] for r in cur.fetchall()]
     cur.execute("SELECT DISTINCT cs.motivo FROM conversation_scores cs "
                 "WHERE cs.account = %(account)s AND cs.motivo IS NOT NULL" + amb

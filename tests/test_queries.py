@@ -346,12 +346,48 @@ def test_build_motivo_stats_ordena_por_volumen_y_avg_none_sin_evaluadas():
     rows = [
         ("info", 5, 4, 3.5),
         ("deposito", 20, 20, 3.0),
-        ("sin_motivo", 2, 0, None),
+        ("promo", 2, 0, None),
     ]
     out = _build_motivo_stats(rows)
-    assert [o["motivo"] for o in out] == ["deposito", "info", "sin_motivo"]
+    assert [o["motivo"] for o in out] == ["deposito", "info", "promo"]
     assert out[0] == {"motivo": "deposito", "n": 20, "evaluadas": 20, "avg": 3.0}
     assert out[2]["avg"] is None
+
+
+# `sin_motivo` NO es un motivo, es la AUSENCIA de uno — la misma decision del negocio del
+# 2026-08-07 que ya rige en _QUALITY_MOTIVO_SQL, que hasta ahora NO se habia aplicado a esta
+# tarjeta (seguia con el `coalesce(cs.motivo,'sin_motivo')`). Parecia arreglado en `sistemas`
+# de casualidad: ahi las filas sin motivo son casi todas del segmento `agente` (6.158 de
+# 6.687) y el filtro de AMBIENTE ya las barria. En `datos`, que no tiene agente, sus 712
+# filas son sesiones `jugador` SALTEADAS y el ambiente no las toca -> la fila quedaba visible.
+# Y el label mentia doble: de las 710 de `datos`, solo 450 son `skip_reason='sin_motivo'`;
+# las otras 260 son customer_media_only (188), no_agent_reply (51), anomalous_size (12) y
+# demas — todo lo salteado metido en una bolsa con el nombre equivocado.
+
+def test_build_motivo_stats_descarta_sin_motivo_en_cualquier_cuenta():
+    rows = [
+        ("deposito", 20, 20, 3.0),
+        ("sin_motivo", 712, 0, None),   # `datos`: salteadas de jugador
+        ("info", 5, 4, 3.5),
+    ]
+    out = _build_motivo_stats(rows)
+    assert [o["motivo"] for o in out] == ["deposito", "info"]
+
+
+def test_build_motivo_stats_descarta_el_motivo_nulo():
+    # Guard en el builder ademas del SQL: si alguien vuelve a meter el coalesce -o saca el
+    # `IS NOT NULL`- la tarjeta no se rompe. Mismo patron que _build_quality_motivo.
+    out = _build_motivo_stats([("deposito", 3, 3, 4.0), (None, 9, 0, None)])
+    assert [o["motivo"] for o in out] == ["deposito"]
+
+
+def test_quality_motivo_sql_y_motivo_stats_sql_coinciden_en_excluir_sin_motivo():
+    # Las dos tarjetas de motivo tienen que contar la MISMA poblacion: si una incluye la
+    # ausencia de motivo y la otra no, los totales no cierran entre cuadros.
+    from src.queries import _MOTIVO_STATS_SQL, _QUALITY_MOTIVO_SQL
+    for sql in (_MOTIVO_STATS_SQL, _QUALITY_MOTIVO_SQL):
+        assert "cs.motivo IS NOT NULL" in sql
+        assert "sin_motivo" not in sql
 
 
 def test_build_ops_motivo_matriz_top_y_celdas():
@@ -1125,3 +1161,74 @@ def test_sin_mapa_los_cuadros_siguen_andando():
     query, params = cur.executed[-1]
     assert params["sig_ids"] == [] and params["sig_names"] == []
     assert "'Operador sin identificar'" in query
+
+
+# La normalizacion de acentos de `_clave_sql` tenia las dos cadenas de translate con LARGOS
+# DISTINTOS (23 contra 24). Postgres no se queja: ignora el sobrante y DESPLAZA el mapeo
+# desde el caracter 16 en adelante, asi que `ñ` terminaba en 'a' en vez de 'n' y
+# `Muñoz` NO matcheaba con `Munoz` — exactamente lo que la funcion existe para resolver.
+# Hallado el 2026-08-12 armando el roster. Hoy no hay ni un nombre con ñ en `users`,
+# `conversation_scores.user_name` ni `operator_status`, asi que estaba LATENTE: le pega al
+# primer Muñoz/Peña/Nuñez que entre a trabajar.
+# La mitad MAYUSCULA del mapeo era codigo muerto: `_clave_sql` aplica `lower()` antes de
+# `translate`, asi que ninguna mayuscula acentuada llega nunca.
+
+def test_clave_sql_normaliza_la_enie():
+    from src.queries import _clave_sql
+    sql = _clave_sql("x")
+    desde = sql.split("'")[1]
+    hacia = sql.split("'")[3]
+    assert len(desde) == len(hacia), f"translate desalineado: {len(desde)} vs {len(hacia)}"
+    assert hacia[desde.index("ñ")] == "n"
+
+
+def test_clave_sql_no_arrastra_mayusculas_acentuadas():
+    # Codigo muerto: el lower() va antes. Si estan, tienen que estar BIEN alineadas.
+    from src.queries import _clave_sql
+    sql = _clave_sql("x")
+    desde = sql.split("'")[1]
+    hacia = sql.split("'")[3]
+    for i, c in enumerate(desde):
+        assert hacia[i].islower() or not c.isalpha(), (
+            f"{c!r} -> {hacia[i]!r}: el lower() ya paso, no deberia haber mayusculas")
+
+
+# --- DOS CAUSAS, DOS ETIQUETAS -----------------------------------------------------
+# 'Operador sin identificar' colapsaba DOS cosas distintas, y eso es peligroso cuando la
+# etiqueta se puede APAGAR: si un bug futuro rompe la atribucion de alguien ACTIVO, su
+# trabajo caeria en el mismo cajon apagado y desapareceria sin que nadie se entere.
+# MEDIDO el 2026-08-12 sobre 130.558 filas evaluadas:
+#   - 128 tienen `user_id` PERO no hay fila en `users` -> el CRM BORRO al usuario. Causa
+#     conocida, historica (ene/feb/may 2026), no se puede recuperar el nombre: se APAGA.
+#   - 675 no tienen NI `user_id` NI firma -> nosotros no lo pudimos atribuir. De esas, **640
+#     tienen mensajes de un humano**: trabajo real sin nombre. Esa tiene que quedar VISIBLE.
+#   - las otras 35 son solo-bot y estan bien excluidas (no hubo operador humano).
+
+def test_operador_resuelto_separa_borrado_de_no_atribuido():
+    from src.queries import _OPERADOR_RESUELTO
+    assert "Operador borrado por Whaticket" in _OPERADOR_RESUELTO
+    assert "Operador sin identificar" in _OPERADOR_RESUELTO
+    # La causa se distingue por el JOIN al catalogo: user_id que NO resuelve = borrado.
+    assert "u.id IS NULL" in _OPERADOR_RESUELTO
+    assert "cs.user_id IS NOT NULL" in _OPERADOR_RESUELTO
+
+
+def test_todas_las_consultas_por_operador_usan_LA_MISMA_expresion():
+    # La expresion estaba INLINE y duplicada en 5 consultas, con `_OPERADOR_RESUELTO`
+    # usado solo por la lista negra. Cinco copias de una regla de identidad es cinco
+    # lugares donde puede divergir: si una dice 'borrado' y otra 'sin identificar', el
+    # apagado se aplica en un cuadro y no en el otro.
+    from src.queries import (_OPERADOR_RESUELTO, _OPS_MOTIVO_SQL, _OPS_SQL,
+                             _QUALITY_MOTIVO_SQL, _QUALITY_SQL)
+    for nombre, sql in (("_OPS_SQL", _OPS_SQL), ("_OPS_MOTIVO_SQL", _OPS_MOTIVO_SQL),
+                        ("_QUALITY_SQL", _QUALITY_SQL),
+                        ("_QUALITY_MOTIVO_SQL", _QUALITY_MOTIVO_SQL)):
+        assert _OPERADOR_RESUELTO in sql, f"{nombre} no usa _OPERADOR_RESUELTO"
+
+
+def test_el_cuadro_de_operadores_no_esconde_el_trabajo_humano_sin_atribuir():
+    # El guard viejo era (u.name OR user_name OR user_id): una fila sin NINGUNO de los tres
+    # se caia del cuadro en silencio, y son 640 sesiones con mensajes de un humano. Ahora
+    # entra tambien por `agent_message_count > 0` -> el fallo se VE. El solo-bot sigue afuera.
+    from src.queries import _OPS_SQL
+    assert "cs.agent_message_count > 0" in _OPS_SQL

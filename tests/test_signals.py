@@ -121,6 +121,37 @@ def test_acreditacion_por_saldo_disponible():
         assert operator_acreditacion([_agent(texto)]) is True, texto
 
 
+# Hallado el 2026-08-12 auditando el rescore v5: la plantilla personal de una operadora
+# no matcheaba NINGUN patron de acreditacion. No tiene 'disponible' cerca de 'saldo', no
+# cae en _ACREDITA_FUERTE_RE, y su "Listo" viene pegado al signo de exclamacion asi que
+# _LISTO_RE (anclado en ^) tampoco lo agarra. El sistema la trataba como si nunca hubiera
+# confirmado la acreditacion.
+# TAMAÑO MEDIDO: 106 sesiones de `deposito` en 2 estrellas "nunca confirmo", y CONCENTRADAS
+# en una sola persona -- 122 de sus 296 sesiones en 2 estrellas (41,2%) contra el 10,1% y
+# el 11,0% de sus pares. Su tasa real de "nunca confirmo" es ~5,7%: el hueco de vocabulario
+# le estaba construyendo un desempeño que no era el suyo.
+
+def test_acreditacion_por_saldo_que_ya_se_puede_usar():
+    for texto in ("¡Listo! 🎉✨ Ya puedes disfrutar tu saldo. Mucha suerte 🍀",
+                  "Ya puedes usar tu saldo",
+                  "ya puede utilizar su saldo, mucha suerte"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_poder_usar_algo_que_NO_es_el_saldo_no_acredita():
+    # El mismo cuidado que ya se tuvo con 'disponible': el verbo solo vale si habla del
+    # SALDO, no de la app ni de una promo.
+    for texto in ("ya puedes usar la app sin problema",
+                  "ya puedes disfrutar de todas las promociones"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_prometer_que_va_a_poder_usar_el_saldo_no_acredita():
+    # Espeja _FUTURO_RE: la promesa es ACUSE, no acreditacion.
+    assert operator_acreditacion(
+        [_agent("en breve ya puedes disfrutar tu saldo")]) is False
+
+
 def test_disponible_SIN_saldo_no_es_acreditacion():
     # Falsos positivos REALES del dataset: 'disponible' habla de la app o de una promo.
     for texto in ("Por el momento puedes usarla por la web ya que la app aún no está "

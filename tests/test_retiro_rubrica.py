@@ -18,7 +18,12 @@ los 15 min del pedido.
 """
 from datetime import datetime, timedelta, timezone
 
-from src.retiro import calificar_retiro, es_transaccion, score_retiro
+from src.retiro import (
+    calificar_retiro,
+    es_transaccion,
+    interaccion_juzgada,
+    score_retiro,
+)
 
 BASE = datetime(2026, 3, 10, 20, 0, 0, tzinfo=timezone.utc)
 
@@ -197,3 +202,30 @@ def test_sin_cierres_la_ventana_sigue_siendo_toda_la_sesion():
             _op(2, "acá tienes", media="image")]
     r = calificar_retiro(msgs)
     assert r is not None and r.entrega is not None
+
+
+# --- LA INTERACCION QUE SE JUZGO, EXPUESTA PARA LOS TIEMPOS -------------------------
+# La rubrica ya acota su evidencia a la interaccion del pedido; lo que faltaba era DECIRLO
+# hacia afuera, para que los tiempos y el operador que se guardan describan ESA ventana y
+# no la conversacion entera. MEDIDO el 2026-08-12: en 152 de 585 sesiones multi-interaccion
+# de deposito/retiro (26,0%) la nota se le cargaba a un operador que no aparece en la
+# interaccion juzgada, y 25 de esas son notas de 1 o 2 estrellas.
+
+def _cierre(minutos, quien="Mario"):
+    return {"created_at": BASE + timedelta(minutes=minutos), "from_me": True,
+            "is_note": True, "body": f"{quien} *resuelto* la conversación"}
+
+
+def test_interaccion_juzgada_devuelve_la_ventana_del_pedido():
+    msgs = [_cli(0, FORMULARIO), _op(1, ACUSE), _comprobante_op(3), _cierre(4),
+            _cli(600, FORMULARIO), _op(601, ACUSE), _comprobante_op(603), _cierre(604)]
+    ventana = interaccion_juzgada(msgs)
+    assert ventana is not None
+    reales = [m for m in ventana if not m["is_note"]]
+    # El ancla es el PRIMER pedido, asi que la ventana es la primera interaccion.
+    assert reales[0]["created_at"] == BASE
+    assert all(m["created_at"] < BASE + timedelta(minutes=500) for m in ventana)
+
+
+def test_interaccion_juzgada_es_None_si_no_es_transaccion():
+    assert interaccion_juzgada([_cli(0, "cuanto tarda un retiro?"), _op(1, "5 min")]) is None

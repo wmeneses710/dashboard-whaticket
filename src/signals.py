@@ -57,9 +57,14 @@ _ACREDITA_FUERTE_RE = re.compile(
     r"cargad[oa]s?|carg[oó]|ingresad[oa]s?|ingres[óo]s?\b(?!\s+con)|ing|ingr)\b",
     re.IGNORECASE)
 # 'disponible' solo vale si habla del SALDO, no de la app ni de una promo.
+# 'ya puedes usar/disfrutar TU SALDO' es la misma idea que 'tu saldo ya esta disponible':
+# la plata esta ahi y el cliente puede tocarla. Exige el saldo por la misma razon que
+# 'disponible' lo exige -- "ya puedes usar la app" o "ya puedes disfrutar de todas las
+# promociones" no acreditan nada.
 _ACREDITA_SALDO_RE = re.compile(
     r"(saldo\w*[^.!?\n]{0,40}disponible|disponible[^.!?\n]{0,25}saldo|"
-    r"recarga (exitosa|acreditada|realizada)|gracias por tu recarga)",
+    r"recarga (exitosa|acreditada|realizada)|gracias por tu recarga|"
+    r"ya (puedes|puede) (disfrutar|usar|utilizar) (de )?(tu|su) saldo)",
     re.IGNORECASE)
 # Un "listo" seco confirma; un "listo" seguido de otra instruccion, no.
 _LISTO_RE = re.compile(r"^\s*listo\b", re.IGNORECASE)
@@ -579,7 +584,16 @@ _PEDIDO_PENDIENTE_PATTERN = (
     r"te creo (un |tu )?(usuario|cuenta)|creo tu (usuario|cuenta)|"
     r"te (ayudo a )?registr|te registro|te abro (la|tu) cuenta|"
     # pedir datos o una accion al cliente
-    r"pasame|pásame|mandame|mándame|env[ií]ame|env[ií]a\w* (tus|los|el)|"
+    # OJO con la forma de `env[ií]a`: va el IMPERATIVO dirigido al cliente ("envia tus
+    # datos", "enviar el comprobante"), NO la promesa del operador en primera persona
+    # ("te ENVIAREMOS el comprobante"), que es la plantilla con la que se CONFIRMA un
+    # retiro. Un `\w*` suelto se comia las dos y no distinguia "te pedi algo" de "yo te
+    # prometo algo". MEDIDO el 2026-08-12 sobre el rescore v5: era el 99,0% de los
+    # abandonos de `retiro` (101 de 102) y el 90,7% de los de agilidad en 5 estrellas
+    # (342 de 377). El lookahead corta futuro (enviare/enviaremos), presente en primera
+    # persona plural (enviamos) y condicional (enviaria/enviariamos).
+    r"pasame|pásame|mandame|mándame|env[ií]ame|"
+    r"env[ií]a(?!r[eé]|mos\b|r[ií]a)\w* (tus|los|el)|"
     r"indicame|indícame|compartime|dame (tu|los|el)|"
     r"necesito (tus|los|el|que)|nos falta|confirmame|confírmame|adjunta|"
     # proponer y quedar esperando el si

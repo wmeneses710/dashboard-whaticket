@@ -39,7 +39,31 @@ from src.segments import segment_for_queue
 # Medido sobre 1.020 sesiones con el modelo de produccion: el promedio va de 4,03 a 3,97,
 # pero el 93,8% de las notas NO se mueve — el movimiento se concentra en `deposito` (-0,35),
 # `registro` (-0,14) y `soporte_cuenta` (+0,14).
-SCORING_VERSION = "2026.08-rubricas-v5"
+#
+# 2026.08-rubricas-v6 (2026-08-12). Sale de la auditoria de 5 frentes sobre los datos del
+# rescore v5. Lo que cambio contra v5:
+#   - CERRAR-Y-ADJUNTAR ES UN SOLO GESTO: la interaccion absorbe los mensajes del operador
+#     que llegan hasta 2 min despues de la nota `*resuelto*`. El flujo real del retiro es
+#     cerrar y mandar el comprobante con una MEDIANA DE 1,1 SEGUNDOS de diferencia, y ese
+#     comprobante caia en la interaccion siguiente -> "nunca envio el comprobante".
+#     VALIDADO re-corriendo la rubrica real: 132 de 139 retiros en 2 estrellas SUBEN
+#     (113 a 4, 19 a 3), y ninguna de las 136 imagenes recuperadas es un broadcast
+#     (`campaign_id` nulo en todas);
+#   - un `*resuelto*` que se `*reabierto*` en el acto, sin que nadie hablara en el medio, no
+#     es una frontera: es el CRM rebotando (7.406 pares, mediana 58,5 s);
+#   - la PROMESA del operador ya no se lee como un PEDIDO: "te enviaremos el comprobante"
+#     matcheaba el patron de abandono, y era el 99,0% de los abandonos de `retiro` y el
+#     90,7% de los de agilidad en 5 estrellas;
+#   - "ya puedes disfrutar tu saldo" ACREDITA: eran 106 sesiones en 2 estrellas y estaban
+#     concentradas en una sola operadora (41,2% de sus notas contra el 10-11% de sus pares);
+#   - los TIEMPOS y el OPERADOR describen la interaccion JUZGADA y no la conversacion, en
+#     `deposito` y `retiro`: la resolucion mostrada baja de 118,5 h a 6,2 min de mediana en
+#     324 sesiones, y se corrigen 150 de las 152 notas que se le cargaban a un operador que
+#     ni aparecia en la interaccion juzgada;
+#   - `deposit_mismatch` reconcilia contra LAS DOS PUERTAS del gate: 840 de 889 filas que
+#     marcaban discrepancia no tenian ninguna (quedan las 49 del camino con LLM, que es
+#     donde el flag significa algo).
+SCORING_VERSION = "2026.08-rubricas-v6"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
@@ -227,6 +251,7 @@ def build_score_record(
     operator_id=None,
     operator_name: str | None = None,
     deposit_count: int = 0,
+    deposit_gate: bool | None = None,
     session_id=None,
     scoring_version: str = SCORING_VERSION,
 ) -> dict[str, Any]:
@@ -277,7 +302,7 @@ def build_score_record(
         # llena el paso 2). atencion/deposit_observed solo si hubo score.
         "atencion": None,
         "deposit_observed": None,
-        "deposit_mismatch": _deposit_mismatch(deposit_count, score),
+        "deposit_mismatch": _deposit_mismatch(deposit_count, score, deposit_gate),
         "session_id": session_id,
         # Motivo v2: lo llena el score (score_by_motivo). None en skipped / pase viejo.
         "motivo": None,
@@ -308,16 +333,27 @@ def build_score_record(
     return record
 
 
-def _deposit_mismatch(deposit_count: int, score: ScoreResult | None) -> bool | None:
-    """Reconciliacion determinista vs LLM del deposito (senal de calidad de dato).
+def _deposit_mismatch(deposit_count: int, score: ScoreResult | None,
+                      deposit_gate: bool | None = None) -> bool | None:
+    """Reconciliacion determinista vs observacion del deposito (senal de calidad de dato).
 
-    None si no se puede reconciliar (sin score o el LLM no observo el deposito).
-    Si no: True cuando el gate determinista (deposit_count>0) y la observacion del
-    LLM discrepan. El determinista manda; el flag solo marca la discrepancia.
+    None si no se puede reconciliar (sin score o sin observacion del deposito).
+    Si no: True cuando el gate determinista y la observacion discrepan. El determinista
+    manda; el flag solo marca la discrepancia.
+
+    `deposit_gate` = la respuesta de LAS DOS PUERTAS de `deposito.es_transaccion`. HAY QUE
+    COMPARAR LA MISMA PUERTA: `deposit_count` sale de `deposit_candidate_count`, que exige
+    que el CLIENTE escriba una palabra de recarga -- justo lo que la puerta 2 (el operador
+    acusa el comprobante) existe para NO exigir. Sin esto, todo deposito que entra por la
+    puerta 2 tiene `deposit_count=0` por construccion y el flag disparaba SIEMPRE.
+    MEDIDO el 2026-08-12: 889 de 2.200 filas de `deposito` (40,4%), el 100% con
+    `deposit_count=0`. La nota estaba bien; el indicador del dashboard mentia.
+    None -> se degrada al criterio viejo, para no cambiar el path por conversacion.
     """
     if score is None or score.deposit_observed is None:
         return None
-    return (deposit_count > 0) != score.deposit_observed
+    determinista = (deposit_count > 0) if deposit_gate is None else deposit_gate
+    return determinista != score.deposit_observed
 
 
 # Columnas JSONB que hay que envolver para psycopg.

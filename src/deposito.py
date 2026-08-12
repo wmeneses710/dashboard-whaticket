@@ -129,6 +129,17 @@ def es_transaccion(messages: list[dict]) -> bool:
             or operator_acuso_comprobante(messages, desde=comprobante["created_at"]))
 
 
+def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
+    """La ventana que `calificar_deposito` va a juzgar. None si no es una transaccion.
+
+    Espejo de `retiro.interaccion_juzgada` — el ancla aca es el COMPROBANTE del cliente.
+    Existe para que los tiempos y el operador persistidos describan la interaccion juzgada
+    y no la conversacion entera (ver src/interacciones.tiempos_de).
+    """
+    comprobante = _comprobante_del_cliente(messages) if es_transaccion(messages) else None
+    return None if comprobante is None else interaccion_de(messages, comprobante)
+
+
 def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
     """Nota determinista de la sesion. None si no es una transaccion de deposito."""
     if not es_transaccion(messages):

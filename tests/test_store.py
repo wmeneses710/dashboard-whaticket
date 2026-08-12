@@ -161,6 +161,35 @@ def test_deposit_mismatch_det_si_llm_si_es_false():
     assert r["deposit_mismatch"] is False
 
 
+# LA RECONCILIACION TIENE QUE COMPARAR LA MISMA PUERTA. Hallado el 2026-08-12 auditando el
+# rescore v5: `deposit_count` sale de `deposit_candidate_count`, que exige que el CLIENTE
+# escriba una palabra de recarga -- exactamente lo que la puerta 2 de `es_transaccion`
+# (el operador acusa el comprobante) existe para NO exigir. Asi que todo deposito que entra
+# por la puerta 2 tiene `deposit_count=0` por construccion y el flag de discrepancia
+# disparaba SIEMPRE, sin que hubiera discrepancia real.
+# TAMAÑO MEDIDO: 889 de 2.200 filas de `deposito` (40,4%), y el 100% de ellas con
+# `deposit_count=0`. La NOTA estaba bien; el indicador del dashboard mentia.
+# `deposit_gate` deja pasar la respuesta de las DOS puertas; sin el, se degrada al criterio
+# viejo (`deposit_count > 0`) para no romper el path por conversacion.
+
+def test_deposit_mismatch_usa_el_gate_de_las_dos_puertas():
+    # Puerta 2: el cliente manda la imagen sin texto y el operador acusa el comprobante.
+    # deposit_count=0 pero el deposito EXISTE -> no hay discrepancia que reportar.
+    r = _record(score=_score(deposit_observed=True), deposit_count=0, deposit_gate=True)
+    assert r["deposit_mismatch"] is False
+
+
+def test_deposit_mismatch_con_gate_sigue_marcando_la_discrepancia_real():
+    # El gate dice que no hay deposito y el LLM dice que si: eso SI es para revisar.
+    r = _record(score=_score(deposit_observed=True), deposit_count=0, deposit_gate=False)
+    assert r["deposit_mismatch"] is True
+
+
+def test_sin_gate_se_degrada_al_criterio_viejo():
+    r = _record(score=_score(deposit_observed=True), deposit_count=0)
+    assert r["deposit_mismatch"] is True
+
+
 def test_deposit_mismatch_sin_score_es_none():
     r = _record(score=None, deposit_count=2)
     assert r["deposit_mismatch"] is None

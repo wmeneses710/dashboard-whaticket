@@ -109,11 +109,18 @@ def test_fetch_pending_sessions_devuelve_dicts_con_session_id():
 
 
 def _evaluated_session_messages():
-    """Transcript minimo que decide_eligibility marca como 'evaluated'."""
+    """Transcript minimo que decide_eligibility marca como 'evaluated'.
+
+    `created_at` viaja en CADA mensaje porque la consulta real siempre lo trae (el contrato
+    lo fija tests/test_context.py) y los tiempos se derivan del transcript, no de los campos
+    del CRM. Un fixture sin el no representa lo que ve produccion.
+    """
     return [
-        {"from_me": False, "is_note": False, "body": "me ayudas con una recarga?", "sent_from": None,
+        {"created_at": _T0, "from_me": False, "is_note": False,
+         "body": "me ayudas con una recarga?", "sent_from": None,
          "user_id": None, "media_type": None},
-        {"from_me": True, "is_note": False, "body": "buenas, te ayudo", "sent_from": "OP",
+        {"created_at": _T0 + timedelta(seconds=40), "from_me": True, "is_note": False,
+         "body": "buenas, te ayudo", "sent_from": "OP",
          "user_id": "op1", "media_type": None},
     ]
 
@@ -365,11 +372,14 @@ def test_sesion_de_agente_sin_pedidos_medibles_queda_sin_nota(monkeypatch):
 # produccion, que es la unica parte que importa.
 
 def _redireccion_session_messages():
+    # `created_at` en cada mensaje: la consulta real siempre lo trae (contrato en
+    # tests/test_context.py) y los tiempos se derivan del transcript.
     return [
-        {"from_me": False, "is_note": False, "body": "Buenas para recargar 5",
+        {"created_at": _T0, "from_me": False, "is_note": False,
+         "body": "Buenas para recargar 5",
          "sent_from": None, "user_id": None, "media_type": "chat"},
-        {"from_me": True, "is_note": False, "media_type": "chat", "user_id": "u1",
-         "sent_from": "OPERATOR",
+        {"created_at": _T0 + timedelta(seconds=25), "from_me": True, "is_note": False,
+         "media_type": "chat", "user_id": "u1", "sent_from": "OPERATOR",
          "body": "A partir de ahora te estaremos atendiendo desde el 0991194133"},
     ]
 
@@ -413,3 +423,124 @@ def test_score_sessions_batch_construye_el_mapa_de_lineas_si_no_lo_recibe(monkey
     monkeypatch.setattr(worker, "score_session_and_store", spy)
     score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10)
     assert vistos["lineas"] == {"991194133": "CONNECTED"}
+
+
+# --- LOS TIEMPOS Y EL OPERADOR SE ACOTAN A LA INTERACCION JUZGADA -------------------
+# MEDIDO el 2026-08-12 sobre el rescore v5: los campos del CRM describen el ENVASE. En el
+# caso `f9b31f4f` (17 interacciones) `created_at` sale de la primera, `first_sent_message_at`
+# de la segunda (51,5 h despues) y `resolved_at` de la ultima. Y peor: en 152 de 585 sesiones
+# multi-interaccion de deposito/retiro (26,0%) la nota se le cargaba a un operador que ni
+# aparece en la interaccion juzgada -- 25 de ellas con 1 o 2 estrellas.
+# Solo aplica a `deposito` y `retiro`, que tienen ancla determinista. Los motivos que pasan
+# por LLM no tienen ancla y siguen midiendo la sesion entera, a la espera de la definicion
+# del negocio sobre cual interaccion representa la nota.
+from datetime import datetime, timedelta, timezone  # noqa: E402
+
+_T0 = datetime(2026, 8, 3, 22, 0, tzinfo=timezone.utc)
+
+
+def _m(seg, from_me, body="", note=False, media="chat"):
+    return {"created_at": _T0 + timedelta(seconds=seg), "from_me": from_me,
+            "is_note": note, "body": body, "media_type": media,
+            "sent_from": "OPERATOR" if from_me else None}
+
+
+def _dos_interacciones_de_deposito():
+    """Primera interaccion: comprobante que nadie contesta. Segunda, dos dias despues."""
+    return [
+        _m(0, False, "les mando el comprobante de la recarga", media="image"),
+        _m(1, True, "*Mel:* ", note=True),
+        _m(22, True, "Mel *resuelto* la conversación", note=True),
+        _m(180000, False, "buenas me recarga", media="image"),
+        _m(180030, True, "*Arturo:* Estamos verificando tu comprobante"),
+        _m(180090, True, "*Arturo:* tu saldo ya está disponible"),
+        _m(180095, True, "Arturo *resuelto* la conversación", note=True),
+    ]
+
+
+def test_los_tiempos_persistidos_describen_la_interaccion_juzgada(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_de_deposito())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    # El CRM dice: arranco en la primera y se resolvio en la ULTIMA (50 h de ventana).
+    sess["created_at"] = _T0
+    sess["first_sent_message_at"] = _T0 + timedelta(seconds=180030)
+    sess["resolved_at"] = _T0 + timedelta(seconds=180095)
+    score_session_and_store(conn, sess, llm=None, op_map={})
+    params = _params_of_upsert(conn)
+    # La interaccion juzgada es la PRIMERA (el ancla es el primer comprobante): duro 22 s
+    # y nadie contesto. Nada de 50 horas ni de una primera respuesta a las 50 h.
+    assert params["resolution_seconds"] == 22.0
+    assert params["first_response_seconds"] is None
+
+
+def test_sin_ancla_determinista_los_tiempos_siguen_siendo_los_del_crm(monkeypatch):
+    # Un motivo que pasa por LLM no tiene ancla: se degrada al comportamiento anterior.
+    from src.scorer import ScoreResult
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_de_deposito())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: ScoreResult(
+        rubric="promo", dimensions={}, rating_label="buena", rating_rationale="ok",
+        stars=4, llm_model="fake", atencion=None, deposit_observed=None, motivo="promo"))
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    sess["created_at"] = _T0
+    sess["first_sent_message_at"] = _T0 + timedelta(seconds=180030)
+    sess["resolved_at"] = _T0 + timedelta(seconds=180095)
+    score_session_and_store(conn, sess, llm=None, op_map={})
+    params = _params_of_upsert(conn)
+    assert params["resolution_seconds"] == 180095.0
+
+
+# --- LOS TIEMPOS SALEN DEL TRANSCRIPT, NUNCA DEL ENVASE DEL CRM ---------------------
+# Cerrado el 2026-08-12 tras medir la corrida v6: el ventaneo tapaba el 100% del camino
+# DETERMINISTA (91 de 91) y el 0% del fall-through al LLM (10 de 10 sin tocar), donde los
+# tiempos volvian a los campos del CRM. Y esos campos son del ENVASE: `first_sent_message_at`
+# puede ser de OTRA interaccion que `created_at` -- es el 51,5 h de `f9b31f4f`.
+# NO se acota la ventana del fall-through a proposito: ahi el LLM leyo la sesion COMPLETA, y
+# elegir una interaccion seria decidir por el negocio cual representa la nota (sigue abierto).
+# Lo que se corrige es de DONDE salen los numeros: del transcript que se juzgo, siempre.
+
+def _dos_interacciones_sin_ancla():
+    """Sesion de 2 interacciones sin transaccion: cae al LLM, no hay ancla determinista."""
+    return [
+        _m(0, False, "hola, una consulta sobre la promo"),
+        _m(30, True, "*Mel:* te cuento"),
+        _m(60, True, "Mel *resuelto* la conversación", note=True),
+        _m(90000, False, "otra cosa"),
+        _m(90030, True, "*Mel:* dale"),
+        _m(90060, True, "Mel *resuelto* la conversación", note=True),
+    ]
+
+
+def test_sin_ancla_los_tiempos_salen_del_transcript_no_del_crm(monkeypatch):
+    from src.scorer import ScoreResult
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _dos_interacciones_sin_ancla())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: ScoreResult(
+        rubric="promo", dimensions={}, rating_label="buena", rating_rationale="ok",
+        stars=4, llm_model="qwen3:14b", atencion=None, deposit_observed=None, motivo="promo"))
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    # El CRM miente en las dos puntas: created_at ANTES del primer mensaje, y
+    # first_sent_message_at de la SEGUNDA interaccion (25 h despues).
+    sess["created_at"] = _T0 - timedelta(hours=10)
+    sess["first_sent_message_at"] = _T0 + timedelta(seconds=90030)
+    sess["resolved_at"] = _T0 + timedelta(seconds=90060)
+    score_session_and_store(conn, sess, llm=None, op_map={})
+    params = _params_of_upsert(conn)
+    # La sesion entera: del primer mensaje real (0) al ULTIMO cierre (90060).
+    assert params["resolution_seconds"] == 90060.0
+    # Y la primera respuesta es la REAL (30 s), no la del campo del CRM (90.030 s).
+    assert params["first_response_seconds"] == 30.0
+
+
+def test_el_cierre_de_una_sesion_completa_es_el_ULTIMO_no_el_primero():
+    from src.interacciones import tiempos_de
+    msgs = _dos_interacciones_sin_ancla()
+    inicio, primera_op, cierre = tiempos_de(msgs)
+    assert inicio == _T0
+    assert primera_op == _T0 + timedelta(seconds=30)
+    assert cierre == _T0 + timedelta(seconds=90060)

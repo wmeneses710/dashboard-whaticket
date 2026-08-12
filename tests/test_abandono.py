@@ -51,6 +51,45 @@ def test_confirmar_una_transaccion_no_es_pedido():
     assert cliente_abandono_tras_pedido(msgs) is False
 
 
+# --- PROMETER NO ES PEDIR (el falso positivo de mayor volumen) --------------------
+# Hallado el 2026-08-12 auditando el rescore v5, y por DOS auditorias independientes que
+# llegaron al mismo regex desde motivos distintos. La rama `env[ií]a\w* (tus|los|el)` del
+# patron existe para cazar "enviame el comprobante" (el operador PIDE), pero `\w*` se come
+# tambien "te enviaremos el comprobante": la plantilla con la que el operador CONFIRMA un
+# retiro. El patron no distinguia "te pedi algo" de "yo te prometo algo".
+# TAMAÑO MEDIDO sobre la copia de produccion: 101 de 102 (99,0%) de los `retiro` con la
+# señal en true disparaban SOLO por esta frase, y 342 de 377 (90,7%) de los 5 estrellas de
+# agilidad. Eso explicaba entera la asimetria que arrastrabamos (24,9% de abandono en
+# retiro contra 1,9% en deposito): no era del negocio, era lexico.
+
+def test_prometer_enviar_el_comprobante_NO_es_un_pedido_pendiente():
+    # La plantilla real de acuse de retiro. El cliente no tiene nada que contestar: ya
+    # tiene su plata. Testigo: cbd2cf33-5504-4b3b-832f-93c051c6bdc7.
+    msgs = [_cli("Monto a retirar: $100"),
+            _op("Tu retiro está en proceso 🔄. En breve te enviaremos el comprobante de "
+                "pago y tu saldo será acreditado", ack=3)]
+    assert cliente_abandono_tras_pedido(msgs) is False
+
+
+def test_las_otras_formas_de_prometer_tampoco_piden():
+    for texto in ("te enviaré el comprobante en unos minutos",
+                  "le enviamos el comprobante por este medio",
+                  "ya le enviaremos los datos de la transferencia",
+                  "te enviaríamos el comprobante apenas salga"):
+        msgs = [_cli("hice el retiro"), _op(texto, ack=3)]
+        assert cliente_abandono_tras_pedido(msgs) is False, texto
+
+
+def test_pedir_en_imperativo_SIGUE_contando():
+    # No hay que perder la señal original: el imperativo dirigido al cliente sigue siendo
+    # un pedido pendiente. Es la mitad util de la rama que se acota.
+    for texto in ("envíame el comprobante para procesar tu recarga",
+                  "envía tus datos completos para crearte la cuenta",
+                  "enviar el comprobante correcto por favor"):
+        msgs = [_cli("quiero recargar"), _op(texto, ack=3)]
+        assert cliente_abandono_tras_pedido(msgs) is True, texto
+
+
 def test_si_el_cliente_SI_contesto_no_hay_abandono():
     msgs = [_cli("quiero una cuenta"),
             _op("¿te creo el usuario?"),
