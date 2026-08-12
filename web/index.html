@@ -361,6 +361,16 @@
   border:1px dashed var(--border)}
 /* Chip de ORIGEN: neutro, es procedencia y no una calificacion. */
 .chip.origen{background:color-mix(in srgb, var(--faint) 12%, transparent);color:var(--faint);font-weight:600}
+  .cobertura{margin-top:10px;padding-top:9px;border-top:1px solid var(--line);
+    color:var(--faint);font-size:11.5px;line-height:1.45;cursor:help}
+  .cobertura b{color:var(--ink);font-weight:600}
+  .corte{display:flex;align-items:center;gap:6px;margin:16px 0 8px;
+    font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--faint);cursor:help}
+  .corte::after{content:'';flex:1;height:1px;background:var(--line)}
+  .corte b{color:var(--accent);font-weight:700;letter-spacing:0}
+  /* Las interacciones que NO se calificaron son CONTEXTO: se leen, no compiten. */
+  .bub.ajena{opacity:.55}
 </style>
 <style>
 .tiempos{margin:10px 0;padding:9px 11px;border:1px solid var(--line);border-radius:8px}
@@ -547,6 +557,14 @@
             <span class="barrow"><span class="fill" :style="{width:(m.avg?m.avg/5*100:0)+'%', background:m.avg?starColor(m.avg):'var(--faint)'}"></span><span class="val num">{{ m.avg!=null ? m.avg.toFixed(2)+'★' : '—' }}</span></span>
           </div>
           <div v-if="!motivoStats.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
+          <!-- SOBRE QUE POBLACION promedia. Un promedio que no lo declara se lee como si
+               cubriera todo lo evaluado, y acá cubre el 29% en `sistemas`. Lo que falta no es
+               un agujero: es el segmento `agente`, que se califica por agilidad y no tiene
+               motivo. Se separan las dos causas porque solo una es un problema. -->
+          <div v-if="motivoCobertura.evaluadas" class="cobertura"
+               :title="'La tarjeta promedia únicamente las sesiones con motivo clasificado. Las del segmento agente no tienen motivo por diseño: se califican por agilidad de respuesta, no por rúbrica de motivo.'">
+            Promedia <b>{{ fmtN(motivoCobertura.con_motivo) }}</b> de {{ fmtN(motivoCobertura.evaluadas) }} evaluadas ({{ motivoCobertura.pct }}%)<template v-if="motivoCobertura.sin_motivo_agente">; {{ fmtN(motivoCobertura.sin_motivo_agente) }} del segmento agente no llevan motivo</template><template v-if="motivoCobertura.sin_motivo_otro">. <b style="color:var(--r-malo)">{{ fmtN(motivoCobertura.sin_motivo_otro) }} sin motivo y sin explicación</b></template>
+          </div>
         </div>
       </div>
   </div>
@@ -713,7 +731,9 @@
               <span class="chip skip" v-else :title="AYUDA.sin_evaluar">sin evaluar</span>
               <!-- Compacto a proposito: es un dato de CONTEXTO, no una nota. Un chip entero
                    por sesion sobrecargaria la fila, y pasa en 1 de cada 4. -->
-              <span class="chip ab-chip" v-if="cv.cliente_abandono" :title="AYUDA.abandono">↩ no contestó</span>
+              <span class="chip ab-chip" v-if="cv.cliente_desenlace"
+                    :title="DESENLACE_TIP[cv.cliente_desenlace]">{{ DESENLACE_CHIP[cv.cliente_desenlace] }}</span>
+              <span class="chip ab-chip" v-else-if="cv.cliente_abandono" :title="AYUDA.abandono">↩ no contestó</span>
             </span>
           </div>
         </div>
@@ -739,9 +759,18 @@
               <!-- El SALTO se muestra como separador y no como dato en la burbuja: la demora
                    es lo que pasa ENTRE dos mensajes, no una propiedad de uno. Umbral 5 min,
                    el mismo que usa la friccion. -->
+              <!-- FRONTERA DE INTERACCION. Una sesión mergea TODOS los episodios del ticket
+                   y hay de 41; el chat corrido hacía leer la nota de una atención al lado de
+                   otra que salió bien. El corte es el mismo que usa el scoring
+                   (src/interacciones.py): la nota «*resuelto*» del operador en el CRM. -->
+              <div class="corte" v-if="nuevaInteraccion(modal.detail.transcript, i)"
+                   :title="m.juzgada ? 'La calificación de esta sesión describe ESTA interacción.' : 'Esta interacción no es la que se calificó: se muestra como contexto.'">
+                <span>Interacción {{ m.interaccion }} de {{ m.interacciones }}</span>
+                <b v-if="m.juzgada && m.interacciones>1">· la calificada</b>
+              </div>
               <div class="gap" v-if="bubGap(modal.detail.transcript, i)">
                 ⏳ {{ bubGap(modal.detail.transcript, i) }} sin respuesta</div>
-              <div class="bub" :class="bubClass(m.role)">
+              <div class="bub" :class="[bubClass(m.role), {ajena: m.interacciones>1 && !m.juzgada}]">
                 <div class="au">{{ bubAuthor(m) }}<span class="hora" v-if="m.at">{{ horaEc(m.at) }}</span></div>{{ bubText(m) || '' }}<i v-if="!bubText(m)">[multimedia]</i>
               </div>
             </template>
@@ -1085,6 +1114,23 @@ const AYUDA = {
   sin_evaluar: "Esta sesión no lleva nota. Queda registrada para que la cobertura sea visible, sin ensuciar los promedios.",
   reloj:       "Cuánto tardó la primera respuesta del negocio desde que el cliente escribió.",
   convirtio:   "Esta persona escribía por primera vez y después volvió a interactuar. Es la señal de que el contacto no se perdió.",
+};
+// QUE PASO CON EL CLIENTE cuando quedo un pedido sin responder. "No contesto" a secas no
+// informa nada: si el motivo se resolvio es lo NATURAL. Estos cuatro finales SI informan, y
+// cada uno se acciona distinto. MEDIDO el 2026-08-12 sobre 252 sesiones: 39 no lo abrieron
+// (el balde mas grande, invisible hasta ahora), 23 lo leyeron y se fueron, 8 no lo recibieron,
+// 1 dijo que no. Y 37 de los 39 caen en `promo` y `registro`: el embudo de prospeccion.
+const DESENLACE_CHIP = {
+  se_fue:      "↩ lo leyó y se fue",
+  no_lo_abrio: "◌ no lo abrió",
+  no_le_llego: "⚠ no le llegó",
+  dijo_no:     "✕ dijo que no",
+};
+const DESENLACE_TIP = {
+  se_fue: "Quedó un pedido del operador sin responder: el cliente lo LEYÓ y no volvió a escribir. El trámite quedó abierto por el cliente, así que no cuenta como error del operador — pero sí es una fuga del embudo: vale mirar si el pedido era muy pesado.",
+  no_lo_abrio: "El pedido le LLEGÓ al cliente y nunca lo abrió. No depende del operador: es un lead frío, el canal no lo está alcanzando. Es el final más frecuente y hasta ahora no se veía.",
+  no_le_llego: "El pedido NO se entregó (número dado de baja, bloqueo, o falla de envío). No es del operador ni del cliente: revisar el número o la conexión.",
+  dijo_no: "El cliente SÍ contestó, y contestó que no. No es un abandono: es un lead perdido y no hay nada que corregirle al operador.",
 };
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
@@ -1504,6 +1550,7 @@ createApp({
     const depByChannel = computed(() => summary.deposit_by_channel||[]);
     const operators = computed(() => summary.operators||[]);
     const motivoStats = computed(() => summary.motivo_stats||[]);
+    const motivoCobertura = computed(() => summary.motivo_cobertura||{});
     const opsMotivo = computed(() => { const o = summary.ops_motivo||{}; return { motivos:o.motivos||[], operators:o.operators||[] }; });
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
@@ -1564,6 +1611,10 @@ createApp({
       if (!tr || i===0) return "";
       const a = tr[i-1], b = tr[i];
       if (!a.at || !b.at || a.role === b.role) return "";
+      // NO se mide cruzando el corte: ahí `a` es el último mensaje de una atención CERRADA y
+      // `b` el primero de la siguiente. El salto puede ser de días y no es una espera —
+      // nadie estaba esperando, el operador ya había cerrado.
+      if (a.interaccion !== b.interaccion) return "";
       const ms = new Date(b.at) - new Date(a.at);
       if (!(ms >= GAP_MIN_MS)) return "";
       const min = Math.round(ms/60000);
@@ -1609,6 +1660,13 @@ createApp({
       for (const [k, m] of Object.entries(HECHO_LABEL))
         if (dims && typeof dims[k] === "boolean" && dims[k] === cumplidos) out.push(m);
       return out;
+    }
+    // Primer mensaje de una interacción distinta a la del anterior. Solo dibuja el corte
+    // cuando hay MAS de una: en el 96,3% de las sesiones hay una sola y el separador sería
+    // ruido, y un "1 de 1" en cada chat es peor que no decir nada.
+    function nuevaInteraccion(t, i) {
+      const m = t && t[i]; if (!m || (m.interacciones||1) < 2) return false;
+      return i === 0 || t[i-1].interaccion !== m.interaccion;
     }
     function dimAciertos(dims) { return (dims&&dims.aciertos)||[]; }
     function dimRecom(dims) { return (dims&&dims.recomendacion)||""; }
@@ -1802,10 +1860,10 @@ createApp({
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
       loadingSummary, loadingTickets, loadingConversion, loadError, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, qualMotivoCanvases, convMonth, convPasvCanvases,
-      kpiTiles, distRows, depByChannel, operators, motivoStats, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
+      kpiTiles, distRows, depByChannel, operators, motivoStats, motivoCobertura, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
       OPS_CAP, expand, qualShown, convPasvShown, qualMotivoShown, hasPoints,
       convOps, convMaxPct, convByOp, convGlobal,
-      SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL,
+      SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL, DESENLACE_CHIP, DESENLACE_TIP,
       activeChips, isDirty, clearFilter, sinFiltrosNota,
       switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
@@ -1813,7 +1871,7 @@ createApp({
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
       fmtDur, dimTiempos, dimConteos, dimHechos,
-      dimClaridad, dimReinsistio, dimAbandono, metaGrid, AYUDA, AYUDA_TITULO,
+      dimClaridad, dimReinsistio, dimAbandono, nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,
       ayudaAbierta, ayudaModal, AMBIENTES, setAmbiente, horaEc, bubGap,
       CONTRAPARTE, contraparte, ambienteLbl, SEGMENT_LABEL,
       tagsDeLaSesion };
