@@ -260,3 +260,61 @@ fuerte. Análisis:
    degradación con el tiempo. **Fix recomendado:** conexión del worker en `autocommit=True`
    (o commitear las lecturas antes de llamar al LLM). Cambio chico, hygiene grande en una BD
    ocupada.
+
+---
+
+## 10. PENDIENTE — partir las sesiones que el CRM reabre (decisión del negocio, 2026-08-12)
+
+**El hecho.** 5.182 sesiones (3,9% de 133.348) contienen **varias interacciones**: el
+operador cierra con la nota `*resuelto*`, el cliente vuelve a escribir, y **Whaticket reabre
+la MISMA fila** de `conversations` en vez de crear una nueva. Verificado: las 5.302 sesiones
+con 2+ cierres abarcan **un solo episodio**, así que no las está pegando `assign_sessions`.
+
+Contienen 16.370 interacciones. Mitad y mitad:
+
+| | sesiones | |
+|---|---|---|
+| con **operadores distintos** | 2.564 (49%) | dos conversaciones verificables en una fila |
+| con el **mismo operador** | 2.517 (49%) | cerró y el cliente volvió |
+
+Span: mediana 2,6 h · **p90 191 h (8 días)** · máx **266 días**. Para comparar: el
+`SPAN_CAP` de `assign_sessions` son 12 h — pero **no aplica**, porque mide entre episodios.
+
+**Lo que llama a partirlas.** `assign_sessions` YA declara la regla: corta sesión nueva
+cuando cambia el operador dominante, cuando el silencio supera `GAP` (5 h) o cuando el span
+supera `SPAN_CAP`. Las tres reglas están acordadas; simplemente **no pueden ver adentro de un
+episodio**. Aplicadas a las fronteras de interacción darían 5.047 cortes por cambio de
+operador (+3,8% de filas) u 11.188 por toda frontera (+8,4%).
+
+**POR QUÉ NO SE HIZO (decisión del negocio, con la razón medida).** Partir deja pedazos
+sueltos, y eso ya pasó antes:
+
+```
+fragmentos de partir toda frontera                : 16.370
+  con 2 mensajes reales o menos ("gracias" suelto):  3.018  (18%)
+  que quedarían SIN EVALUAR                       :  2.878  (18%)
+     no_agent_reply        1.294
+     sin_motivo              839   <- el "gracias" del cliente, solo
+     customer_media_only     460   <- EL COMPROBANTE, solo
+     no_customer_reply       285
+  PAR ROTO: comprobante en un tramo y acreditación en el SIGUIENTE:  25 (en 24 sesiones)
+```
+
+El **par roto** es el caso grave: ahí partir le pondría 1★ o 2★ a un operador que **sí**
+acreditó, solo porque el cierre cayó en el medio. Son 25 hoy, pero es daño directo a una
+persona por un artefacto del CRM.
+
+**Lo que se hizo en cambio (v12).** El ancla juzga la **última** visita en los tres motivos
+deterministas. En las 2.517 del mismo operador es la respuesta correcta. En las 2.564 de
+operadores distintos sigue habiendo una fila que ignora la visita de otra persona: ese es el
+resto que queda pendiente.
+
+**Si algún día se retoma**, el diseño tiene que resolver primero:
+1. la **clave**: `conversation_scores` es `conversation_id uuid PRIMARY KEY`, una fila por
+   conversación. Partir exige `(conversation_id, interaccion_no)` o un id sintético, y eso
+   toca el upsert, el join de todas las consultas del tablero y el ETL de sesiones;
+2. **los fragmentos sin evidencia**: un tramo con solo el comprobante, o solo un "gracias",
+   no puede irse a `sin evaluar` y desaparecer del denominador;
+3. **el par roto**: la evidencia que cruza la frontera necesita una regla (¿se arrastra la
+   acreditación al tramo del comprobante, como ya hace `GRACIA_CIERRE_SEG` con el cierre
+   rebotado?), o se pega ese caso en vez de partirlo.
