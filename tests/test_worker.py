@@ -611,3 +611,44 @@ def test_el_nombre_de_las_NOTAS_rescata_al_operador_sin_user_id(monkeypatch):
     params = _params_of_upsert(conn)
     assert params["user_name"] == "Anggie Belén", params["user_name"]
     assert params["user_id"] is None, "no se inventa un user_id: solo el nombre"
+
+
+def test_la_ASIGNACION_del_crm_nombra_al_operador_cuando_no_hay_nada_mas(monkeypatch):
+    # SEXTA y ultima puerta. `conversations.user_id` es una FK real a `users`, pero apunta a
+    # quien TIENE la conversacion (se transfiere), no a quien la trabajo: medido contra la
+    # verdad conocida acierta el 91%, contra el 99% de la nota de cierre. Por eso va ULTIMA.
+    # Cierra el hueco exacto: de las 882 sesiones sin user_id ni firma, la nota rescata 860 y
+    # la asignacion nombra a los 22 restantes.
+    msgs = [
+        {"created_at": _T0, "from_me": False, "is_note": False, "body": "hola",
+         "media_type": "chat", "sent_from": None},
+        {"created_at": _T0 + timedelta(seconds=30), "from_me": True, "is_note": False,
+         "body": "te ayudo", "media_type": "chat", "sent_from": "OPERATOR"},
+    ]
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: msgs)
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    sess["user_id"] = "232fcb19-5dd2-4c22-af04-9074c086488e"   # asignado en el CRM
+    score_session_and_store(conn, sess, llm=None, op_map={sess["user_id"]: "Mario"})
+    assert _params_of_upsert(conn)["user_name"] == "Mario"
+
+
+def test_la_NOTA_le_gana_a_la_asignacion(monkeypatch):
+    # 99% contra 91%: si la nota nombra a alguien, esa manda. El caso real: asignada
+    # automaticamente a Michelle y resuelta por Anya Alexandra -- trabajo Anya.
+    msgs = [
+        {"created_at": _T0, "from_me": False, "is_note": False, "body": "hola",
+         "media_type": "chat", "sent_from": None},
+        {"created_at": _T0 + timedelta(seconds=30), "from_me": True, "is_note": False,
+         "body": "te ayudo", "media_type": "chat", "sent_from": "OPERATOR"},
+        {"created_at": _T0 + timedelta(seconds=60), "from_me": True, "is_note": True,
+         "body": "Anya Alexandra *resuelto* la conversación", "media_type": None},
+    ]
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: msgs)
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    sess["user_id"] = "abc"
+    score_session_and_store(conn, sess, llm=None, op_map={"abc": "Michelle"})
+    assert _params_of_upsert(conn)["user_name"] == "Anya Alexandra"

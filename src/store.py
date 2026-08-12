@@ -213,6 +213,12 @@ from src.segments import segment_for_queue
 #     de Cuentas" (28 sesiones) entraria como si fuera una persona.
 #   - Se lee de la VENTANA JUZGADA, no de la sesion: una conversacion reabierta tiene varios
 #     cierres y no son la misma persona (en el caso crudo, Michelle y Anya Alexandra).
+#   - SEXTA Y ULTIMA PUERTA: la ASIGNACION del CRM (`conversations.user_id`, FK real a
+#     `users`). Va ULTIMA y no primera aunque sea una FK: apunta a quien TIENE la conversacion
+#     -- se transfiere -- y no a quien la trabajo. Medida contra la misma verdad conocida
+#     acierta el **91%**, contra el 99% de la nota. Cierra el hueco exacto: de las 882 sesiones
+#     sin user_id ni firma, la nota nombra 860 y la asignacion los 22 restantes. **882 de 882,
+#     cero sesiones sin nombre.**
 #   - NO se inventa un `user_id`: solo el nombre. La atribucion por entidad sigue necesitando
 #     que el ETL la arregle.
 SCORING_VERSION = "2026.08-rubricas-v13"
