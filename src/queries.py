@@ -1346,6 +1346,8 @@ def new_vs_deposit_by_month(cur, account: str,
 # mes; la conversión es first-touch). NO usa estado/rating (no aplican al potencial).
 # Operador = user_id (entidad users); NULL = bot/sin asignar.
 # =====================================================================
+# `potential_clients` no guarda firma: si hay `user_id` y no hay fila en `users`, es un
+# usuario que el CRM borro, y esa es la etiqueta que corresponde (no "sin identificar").
 _CONV_OP_EXPR = ("CASE WHEN pc.user_id IS NULL THEN 'BOT / sin operador' "
                  f"ELSE {expr_resuelto(firma=None, user_id='pc.user_id')} END")
 
@@ -1433,8 +1435,6 @@ def conversion_by_operator(cur, account: str, **filters) -> dict:
 
 
 _CONV_BY_MONTH_SQL = """
-# `potential_clients` no guarda firma: si hay `user_id` y no hay fila en `users`, es un
-# usuario que el CRM borro, y esa es la etiqueta que corresponde (no "sin identificar").
 SELECT to_char(pc.first_at, 'YYYY-MM') AS mes,
        count(*) AS potential,
        count(*) FILTER (WHERE pc.deposited) AS converted,

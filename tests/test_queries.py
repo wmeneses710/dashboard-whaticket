@@ -1422,3 +1422,30 @@ def test_el_modal_y_los_cuadros_listan_el_MISMO_universo():
         # SQL viajaba con `{OPERADOR_RESUELTO}` como texto y Postgres reventaba.
         for ph in ("{OPERADOR_RESUELTO}", "{HAY_OPERADOR}", "{clave_sql", "{clave_os}"):
             assert ph not in sql, f"placeholder de identidad sin interpolar: {ph}"
+
+
+# --- NINGUN SQL PUEDE LLEVAR UN COMENTARIO DE PYTHON ---------------------------------
+# El 2026-08-12, al partir el arbol en commits, un comentario de Python quedo DENTRO del
+# string de `_CONV_BY_MONTH_SQL`. Postgres respondio `syntax error at or near "#"` y la
+# tarjeta de conversion por mes devolvia 500 -- y ademas abortaba la transaccion, asi que
+# TODO lo que venia despues en el mismo request moria con `InFailedSqlTransaction`.
+# Los tests de esas consultas miran el TEXTO (que contengan tal columna) y ninguno la
+# EJECUTA, asi que la suite entera seguia en verde. En SQL el comentario es `--`.
+
+def test_ningun_sql_lleva_comentarios_de_python():
+    import re
+
+    import src.queries as q
+    culpables = []
+    for nombre in dir(q):
+        if not nombre.endswith("_SQL"):
+            continue
+        sql = getattr(q, nombre)
+        if not isinstance(sql, str):
+            continue
+        for n, linea in enumerate(sql.splitlines(), 1):
+            # `#` al inicio de la linea: en SQL no existe. Dentro de un literal si podria
+            # aparecer (un `'#tag'`), asi que se exige que ARRANQUE la linea.
+            if re.match(r"\s*#", linea):
+                culpables.append(f"{nombre}:{n}: {linea.strip()[:70]}")
+    assert not culpables, "comentario de Python dentro de un SQL:\n  " + "\n  ".join(culpables)
