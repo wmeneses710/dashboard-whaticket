@@ -590,3 +590,24 @@ def test_el_cierre_de_una_sesion_completa_es_el_ULTIMO_no_el_primero():
     assert inicio == _T0
     assert primera_op == _T0 + timedelta(seconds=30)
     assert cierre == _T0 + timedelta(seconds=90060)
+
+
+def test_el_nombre_de_las_NOTAS_rescata_al_operador_sin_user_id(monkeypatch):
+    # 881 sesiones tienen mensajes humanos del negocio y NI user_id NI firma. El nombre estaba
+    # en la nota de cierre del CRM, que ya leiamos para cortar interacciones. Sin esto salen
+    # como "Operador sin identificar" y su trabajo queda sin dueño.
+    msgs = [
+        {"created_at": _T0, "from_me": False, "is_note": False, "body": "hola",
+         "media_type": "chat", "sent_from": None},
+        {"created_at": _T0 + timedelta(seconds=30), "from_me": True, "is_note": False,
+         "body": "te ayudo con eso", "media_type": "chat", "sent_from": "OPERATOR"},
+        {"created_at": _T0 + timedelta(seconds=60), "from_me": True, "is_note": True,
+         "body": "Anggie Belén *resuelto* la conversación", "media_type": None},
+    ]
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: msgs)
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    params = _params_of_upsert(conn)
+    assert params["user_name"] == "Anggie Belén", params["user_name"]
+    assert params["user_id"] is None, "no se inventa un user_id: solo el nombre"

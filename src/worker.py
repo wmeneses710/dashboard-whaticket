@@ -20,7 +20,7 @@ from src.registro import interaccion_juzgada as interaccion_juzgada_registro
 from src.retiro import interaccion_juzgada as interaccion_juzgada_retiro
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator
-from src.operators import build_operator_map, operator_name
+from src.operators import build_operator_map, nombre_de_notas, operator_name
 from src.redireccion import build_lineas_map
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
 from src.router import decide_eligibility, decide_rubric
@@ -65,7 +65,12 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
     stats = message_stats(msgs)
     deposit_count = deposit_candidate_count(msgs)  # gate determinista (independiente del eval_status)
     operator_id = primary_operator(msgs)
-    op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
+    # QUINTA PUERTA: si no hay user_id ni firma, el nombre vive en las NOTAS del CRM
+    # ("<Nombre> *resuelto* la conversación"), que ya leemos para cortar interacciones.
+    # Rescata 880 de las 881 sesiones sin nombre, con 99% de acierto. Ver src/operators.py.
+    op_name = ((op_map.get(str(operator_id)) if operator_id else None)
+               or operator_name(msgs, operator_id)
+               or nombre_de_notas(msgs))
     rubric = decide_rubric(
         operator_message_count=stats.operator_message_count,
         bot_message_count=stats.bot_message_count,
@@ -187,7 +192,12 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     deposit_gate = es_transaccion_deposito(msgs)
     ventana_juzgada = None  # la interaccion que la rubrica miro, si es acotable (ver abajo)
     operator_id = primary_operator(msgs)
-    op_name = (op_map.get(str(operator_id)) if operator_id else None) or operator_name(msgs, operator_id)
+    # QUINTA PUERTA: si no hay user_id ni firma, el nombre vive en las NOTAS del CRM
+    # ("<Nombre> *resuelto* la conversación"), que ya leemos para cortar interacciones.
+    # Rescata 880 de las 881 sesiones sin nombre, con 99% de acierto. Ver src/operators.py.
+    op_name = ((op_map.get(str(operator_id)) if operator_id else None)
+               or operator_name(msgs, operator_id)
+               or nombre_de_notas(msgs))
     score = None
     if eval_status == "evaluated":
         if segment_for_queue(sess.get("queue_name")) == "agente":
@@ -243,11 +253,15 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
         # da derecho a cambiarlo. Y solo si esa interaccion tiene uno identificable -- dejar
         # 'Operador sin identificar' seria cambiar una atribucion equivocada por ninguna.
         if ventana_juzgada:
+            # El nombre de la nota se toma de la VENTANA: una conversacion reabierta tiene
+            # varios cierres y no son la misma persona.
+            op_name = nombre_de_notas(ventana_juzgada) or op_name
             op_id_ventana = primary_operator(ventana_juzgada)
             if op_id_ventana is not None:
                 operator_id = op_id_ventana
                 op_name = (op_map.get(str(op_id_ventana))
-                           or operator_name(ventana_juzgada, op_id_ventana) or op_name)
+                           or operator_name(ventana_juzgada, op_id_ventana)
+                           or nombre_de_notas(ventana_juzgada) or op_name)
     # rubric queda como el legacy human/bot (satisface chk_rubric); el motivo del LLM
     # se persiste en su propia columna dentro de build_score_record (desde el score).
     record = build_score_record(

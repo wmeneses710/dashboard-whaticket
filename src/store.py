@@ -193,7 +193,29 @@ from src.segments import segment_for_queue
 #   - DOS PASOS, no uno: el ancla elige la INTERACCION (la ultima), y DENTRO de esa ventana el
 #     reloj arranca en el PRIMER comprobante/pedido/traspaso de ESA visita. Si el cliente manda
 #     tres imagenes seguidas, medir desde la ultima esconderia la demora.
-SCORING_VERSION = "2026.08-rubricas-v12"
+#
+# 2026.08-rubricas-v13 (2026-08-12). EL NOMBRE DEL OPERADOR VIVE EN LAS NOTAS DEL CRM, y es
+# la QUINTA puerta de la identidad. El negocio seguia viendo "Operador sin identificar"; al
+# abrir el objeto crudo aparecio que el dato estaba a la vista, en las notas internas que ya
+# parseabamos para cortar interacciones:
+#     *Asignado automáticamente* a Michelle
+#     Michelle *resuelto* la conversación
+# Usabamos la frontera y tirabamos el nombre. En esas conversaciones `conversations.user_id`,
+# `tickets.user_id` y `messages.user_id` son TODOS NULL y no hay firma `*Nombre:*`.
+#   - MEDIDO: de 127.898 sesiones con al menos un mensaje humano del negocio, 881 no tienen ni
+#     user_id ni firma. La nota rescata **859 (98%)**, con 38 operadores distintos que hasta
+#     hoy no existian en ningun cuadro.
+#   - PRECISION validada contra la verdad conocida (las sesiones con UNA firma clara en el
+#     cuerpo): la nota *resuelto* esta en 104.301 sesiones y el ultimo nombre acierta el 99%;
+#     *aceptado* el 98% sobre 5.765; *asignado* el 98% sobre 95.893. El orden es cierre >
+#     aceptacion > asignacion: de mas a menos evidencia de haber ATENDIDO.
+#   - El nombre pasa por el MISMO guard `es_nombre_de_persona` que la firma. Sin el, "Gerente
+#     de Cuentas" (28 sesiones) entraria como si fuera una persona.
+#   - Se lee de la VENTANA JUZGADA, no de la sesion: una conversacion reabierta tiene varios
+#     cierres y no son la misma persona (en el caso crudo, Michelle y Anya Alexandra).
+#   - NO se inventa un `user_id`: solo el nombre. La atribucion por entidad sigue necesitando
+#     que el ETL la arregle.
+SCORING_VERSION = "2026.08-rubricas-v13"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

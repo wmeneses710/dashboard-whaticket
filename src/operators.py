@@ -110,6 +110,52 @@ def operator_name(messages: list[dict], operator_id) -> str | None:
     return names.most_common(1)[0][0] if names else None
 
 
+# LAS NOTAS INTERNAS DEL CRM LLEVAN EL NOMBRE, y son la QUINTA puerta de la identidad. El
+# negocio seguia viendo "Operador sin identificar" y al abrir el objeto crudo aparecio que el
+# dato estaba a la vista, en las notas que ya parseamos para cortar interacciones:
+#     *Asignado automáticamente* a Michelle
+#     Michelle *resuelto* la conversación
+# Usabamos la frontera y tirabamos el nombre. En esas conversaciones `conversations.user_id`,
+# `tickets.user_id` y `messages.user_id` son TODOS NULL y no hay firma `*Nombre:*` en el cuerpo.
+#
+# MEDIDO el 2026-08-12: de 127.898 sesiones con al menos un mensaje humano del negocio, 881 no
+# tienen ni user_id ni firma, y **880 (el 100%) tienen el nombre en una nota**.
+# PRECISION contra la verdad conocida (sesiones con UNA firma clara en el cuerpo):
+#     nota *resuelto*  en 104.301 sesiones, el ultimo nombre acierta el 99%
+#     nota *aceptado*  en   5.765,                                        98%
+#     nota *asignado*  en  95.893,                                        98%
+# Gana `*resuelto*` por precision y por volumen; el orden es cierre > aceptacion > asignacion,
+# de mas a menos evidencia de haber ATENDIDO (a uno le asignan sin que trabaje).
+_NOTA_CIERRE_RE = re.compile(r"^(.{2,40}?)\s+\*resuelto\*", re.IGNORECASE)
+_NOTA_ACEPTA_RE = re.compile(r"^(.{2,40}?)\s+\*aceptado\*", re.IGNORECASE)
+_NOTA_ASIGNA_RE = re.compile(r"\*Asignado autom[aá]ticamente\*\s+a\s+(.{2,40})$", re.IGNORECASE)
+
+
+def nombre_de_notas(messages: list[dict]) -> str | None:
+    """Quien atendio, segun las NOTAS internas del CRM. None si ninguna nombra a una persona.
+
+    Se llama con la VENTANA JUZGADA, no con la sesion entera: una conversacion reabierta tiene
+    varios cierres y no son la misma persona (ver src/interacciones.py).
+
+    El nombre pasa por el MISMO guard que la firma (`es_nombre_de_persona`): sin el, "Gerente
+    de Cuentas" -- 28 sesiones -- entraria como si fuera un operador.
+    """
+    for rx, buscar in ((_NOTA_CIERRE_RE, "match"), (_NOTA_ACEPTA_RE, "match"),
+                       (_NOTA_ASIGNA_RE, "search")):
+        encontrados = []
+        for m in messages:
+            if not m.get("is_note"):
+                continue
+            hit = getattr(rx, buscar)((m.get("body") or "").strip())
+            if hit:
+                nombre = hit.group(1).strip()
+                if es_nombre_de_persona(nombre):
+                    encontrados.append(nombre)
+        if encontrados:
+            return encontrados[-1]
+    return None
+
+
 def build_operator_map(cur, account: str | None = None) -> dict[str, str]:
     """Mapa GLOBAL user_id -> nombre, leyendo la firma de TODOS los mensajes del operador.
 
