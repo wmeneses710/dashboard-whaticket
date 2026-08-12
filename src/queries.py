@@ -655,6 +655,43 @@ def motivo_stats(cur, account: str, **filters) -> list[dict]:
     return _build_motivo_stats(cur.fetchall())
 
 
+# COBERTURA de la tarjeta de motivo. La tarjeta promedia SOLO lo que tiene motivo, y en
+# `sistemas` eso es el 29% de lo evaluado (39 de 135 el 2026-08-12). Un promedio que no dice
+# sobre que poblacion se calculo se lee como si cubriera todo.
+# Y las dos causas de "sin motivo" van SEPARADAS porque no son lo mismo:
+#  - `agente`: el motivo es NULL POR DISEÑO (esas se califican por agilidad, sin LLM). Es una
+#    frontera, no una perdida. Hoy explica las 96.
+#  - cualquier otra: el clasificador no emitio motivo en una sesion que SI debia tenerlo. Eso
+#    es un bug, y por eso tiene su propio contador: mientras sea 0, no hay nada que buscar.
+_MOTIVO_COBERTURA_SQL = """
+SELECT count(*) FILTER (WHERE cs.eval_status = 'evaluated') AS evaluadas,
+       count(*) FILTER (WHERE cs.eval_status = 'evaluated'
+                          AND cs.motivo IS NOT NULL) AS con_motivo,
+       count(*) FILTER (WHERE cs.eval_status = 'evaluated'
+                          AND cs.motivo IS NULL AND cs.segment = 'agente') AS sin_agente,
+       count(*) FILTER (WHERE cs.eval_status = 'evaluated'
+                          AND cs.motivo IS NULL
+                          AND cs.segment IS DISTINCT FROM 'agente') AS sin_otro""" \
+    + _SCORES_JOINS
+
+
+def _build_motivo_cobertura(row) -> dict:
+    ev, con, sin_ag, sin_otro = (int(x or 0) for x in row)
+    if con + sin_ag + sin_otro != ev:
+        # Los tres cajones parten lo evaluado sin solaparse. Si dejan de cerrar es que alguien
+        # toco un FILTER, y entonces el porcentaje habla de una poblacion que ya no existe.
+        raise ValueError(f"la cobertura de motivo no cierra: {con}+{sin_ag}+{sin_otro} != {ev}")
+    return {"evaluadas": ev, "con_motivo": con, "sin_motivo_agente": sin_ag,
+            "sin_motivo_otro": sin_otro, "pct": round(100 * con / ev) if ev else 0}
+
+
+def motivo_cobertura(cur, account: str, **filters) -> dict:
+    """Sobre cuantas sesiones promedia la tarjeta de motivo, y por que las demas quedan afuera."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_MOTIVO_COBERTURA_SQL.format(where=where), params)
+    return _build_motivo_cobertura(cur.fetchone())
+
+
 def summary(cur, account: str, **filters) -> dict:
     """Todos los agregados de las tarjetas/cuadros filtro-aware en una llamada: KPIs,
     distribución, tabla de operadores, % depósito por canal, evolución de calidad y
@@ -666,6 +703,7 @@ def summary(cur, account: str, **filters) -> dict:
         "deposit_by_channel": deposit_by_channel(cur, account, **filters),
         "quality_evolution": quality_evolution(cur, account, **filters),
         "motivo_stats": motivo_stats(cur, account, **filters),
+        "motivo_cobertura": motivo_cobertura(cur, account, **filters),
         "ops_motivo": operators_by_motivo(cur, account, **filters),
         "quality_motivo": quality_by_motivo_month(cur, account, **filters),
     }

@@ -400,6 +400,37 @@ def test_quality_motivo_sql_y_motivo_stats_sql_coinciden_en_excluir_sin_motivo()
         assert "sin_motivo" not in sql
 
 
+def test_build_motivo_cobertura_separa_la_frontera_del_agujero():
+    # La tarjeta de motivo promedia SOLO las sesiones con motivo, y en `sistemas` esas son 39
+    # de 135 (medido el 2026-08-12). Sin declararlo, la tarjeta se lee como si cubriera todo.
+    # Pero el 71% que falta NO es un agujero: son las 96 del segmento `agente`, donde el
+    # motivo es NULL POR DISEÑO (se califican por agilidad, sin LLM). Las dos causas van
+    # separadas justamente para eso: si `sin_motivo_otro` sube de cero, ESO si es un bug.
+    from src.queries import _build_motivo_cobertura
+    out = _build_motivo_cobertura((135, 39, 96, 0))
+    assert out == {"evaluadas": 135, "con_motivo": 39, "sin_motivo_agente": 96,
+                   "sin_motivo_otro": 0, "pct": 29}
+    # cuenta sin segmento agente: cobertura total, nada que aclarar
+    assert _build_motivo_cobertura((117, 117, 0, 0))["pct"] == 100
+    # division por cero: una cuenta recien creada no puede tumbar la tarjeta
+    assert _build_motivo_cobertura((0, 0, 0, 0))["pct"] == 0
+
+
+def test_motivo_cobertura_cuenta_LA_MISMA_poblacion_que_la_tarjeta():
+    # Si la cobertura cuenta una poblacion distinta de la que promedia, el porcentaje miente.
+    from src.queries import _MOTIVO_COBERTURA_SQL, _MOTIVO_STATS_SQL, _build_motivo_cobertura
+    for sql in (_MOTIVO_COBERTURA_SQL, _MOTIVO_STATS_SQL):
+        assert "cs.eval_status = 'evaluated'" in sql or "eval_status = 'evaluated'" in sql
+    # La cobertura filtra por motivo dentro de los FILTER (ahi va), NUNCA en el WHERE: su
+    # trabajo es contar lo que queda AFUERA de la tarjeta.
+    assert "\n   AND cs.motivo IS NOT NULL" not in _MOTIVO_COBERTURA_SQL
+    # Y los tres cajones tienen que SUMAR lo evaluado. Si el SQL se toca y dejan de cerrar,
+    # el porcentaje miente sobre una poblacion que ya no existe: mejor que reviente aca.
+    import pytest
+    with pytest.raises(ValueError):
+        _build_motivo_cobertura((135, 39, 90, 0))
+
+
 def test_build_ops_motivo_matriz_top_y_celdas():
     # filas (op, motivo, n, avg_stars) -> matriz operador x motivo, top por volumen.
     rows = [
@@ -414,12 +445,21 @@ def test_build_ops_motivo_matriz_top_y_celdas():
     assert "retiro" not in ana["cells"]
 
 
+class _FakeCursorPorLargo(_FakeCursor):
+    """`fetchone` segun cuantas columnas pide la consulta: `summary` llama a DOS agregados de
+    una sola fila (KPIs de 6 columnas y cobertura de 4) y una tupla fija no sirve para ambas."""
+
+    def fetchone(self):
+        query = self.executed[-1][0] if self.executed else ""
+        return (0, 0, 0, 0) if "sin_agente" in query else (0, 0, None, 0, 0, 0)
+
+
 def test_summary_combina_las_secciones():
-    cur = _FakeCursor(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"],
-                      one=(0, 0, None, 0, 0, 0))
+    cur = _FakeCursorPorLargo(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"])
     out = summary(cur, "datos")
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel",
-                        "quality_evolution", "motivo_stats", "ops_motivo", "quality_motivo"}
+                        "quality_evolution", "motivo_stats", "motivo_cobertura",
+                        "ops_motivo", "quality_motivo"}
 
 
 def test_build_quality_evolution_top_n_avg_y_umbral_min():
