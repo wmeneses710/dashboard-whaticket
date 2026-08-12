@@ -152,7 +152,28 @@ from src.segments import segment_for_queue
 # NO se toco el bucket B de `redireccion` (el traspaso como UN mensaje dentro de una
 # conversacion real, 566 de 671 casos): ahi el motivo real sigue mandando. El caso que lo
 # disparo cae justamente ahi, y lo que lo arregla es la rama del rechazo, no el skip.
-SCORING_VERSION = "2026.08-rubricas-v10"
+#
+# 2026.08-rubricas-v11 (2026-08-12). Sale de un caso de produccion: el unico mensaje del
+# operador tras el comprobante fue "Ya le cargo mi amigo", y el analisis mostraba
+# «✓ le confirmó que el saldo ya estaba acreditado». Eso es FALSO, y una tilde falsa es peor
+# que una nota baja: le afirma al negocio una confirmacion que nunca existio.
+#   - "YA LE CARGO" ES UNA PROMESA, no una acreditacion. `_strip_accents` corre ANTES del
+#     match, asi que "cargó" (hecho) y "cargo" (yo lo cargo, ahora) quedaban identicos: el
+#     acento era la unica señal y el codigo la borra. LO DECIDE EL PRONOMBRE, y lo confirma la
+#     data -- vara: las 77.005 formas en pasado tienen una confirmacion posterior el 20% de las
+#     veces. `ya LE/TE cargo` (1a persona, 441 msjs) la tiene el **59%**, y `ya SE cargo`
+#     (= "se cargó", 47 msjs) el **11%**. O sea que los operadores MISMOS tratan la promesa y
+#     la confirmacion como dos actos distintos. `se lo/la cargo` tambien es 1a persona; `se
+#     cargo` a secas, no, y ESA sigue contando.
+#     MEDIDO sobre las 210 sesiones de deposito que dicen la frase: 2★ pasa de 34 a 61 y 4★ de
+#     143 a 118. Son 27 sesiones que bajan de "confirmó rápido" a "respondió pero nunca
+#     confirmó" -- el mismo criterio que el negocio ya acepto el 2026-08-11 para "en breve
+#     tendrás tu saldo" (103 sesiones). El caso que lo destapo se queda en 2★, pero con el
+#     rationale correcto y sin la tilde falsa;
+#   - `ahorita`/`ahora mismo` al guard de futuro: faltaba el futuro inmediato mas ecuatoriano;
+#   - el INFINITIVO fuera de `acredit\w*`: "para acreditar necesito el comprobante" es el
+#     operador PIDIENDO (183 mensajes) y "voy a acreditar" es intencion. Ninguno confirma nada.
+SCORING_VERSION = "2026.08-rubricas-v11"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

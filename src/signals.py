@@ -56,7 +56,9 @@ _ACREDITA_FUERTE_RE = re.compile(
     # `cargu[eé]`/`acredit` en PRIMERA PERSONA: "ya te lo cargué" se escapaba porque
     # `carg[oó]` agarra "cargo"/"cargó" y no la forma con -ué. Se exige el "ya" delante para
     # no morder el subjuntivo ("para que se cargue", que es pendiente, no hecho).
-    r"\b(acredit\w*|abonad[oa]s?|abon[oó]|reflejad[oa]s?|reflej[oó]|"
+    # `acredit(?!ar)`: el INFINITIVO no es una acreditacion -- "para acreditar necesito el
+    # comprobante" es el operador PIDIENDO (183 mensajes), y "voy a acreditar" es intencion.
+    r"\b(acredit(?!ar\b)\w*|abonad[oa]s?|abon[oó]|reflejad[oa]s?|reflej[oó]|"
     r"cargad[oa]s?|carg[oó]|ingresad[oa]s?|ingres[óo]s?\b(?!\s+con)|ing|ingr)\b"
     r"|ya\s+((te|le|se)\s+)?((lo|la)\s+)?(cargu[eé]|acredit[eé])\b",
     re.IGNORECASE)
@@ -97,7 +99,28 @@ _NEGACION_RE = re.compile(
 # 2026-08-11: 103 sesiones de `deposito` prometen y nunca confirman, y cobraban 3,89
 # estrellas cuando su nota es 2 ("nunca le confirmo que la plata habia entrado").
 _FUTURO_RE = re.compile(
-    r"\b(en breve|en un momento|en unos minutos|ya mismo|enseguida|en seguida)\b",
+    # `ahorita`/`ahora mismo`: el futuro inmediato mas ecuatoriano de todos, y faltaba.
+    r"\b(en breve|en un momento|en unos minutos|ya mismo|enseguida|en seguida"
+    r"|ahorita|ahora mismo)\b",
+    re.IGNORECASE)
+
+# LA PROMESA EN PRIMERA PERSONA. "Ya le cargo" es "yo lo cargo, ahora", no "esta cargado", y
+# `_strip_accents` corre ANTES del match: borra el acento que era la UNICA señal entre "cargó"
+# (hecho) y "cargo" (lo hago). El patron viejo asumia que "cargo" era taquigrafia de "cargado".
+#
+# LO DECIDE EL PRONOMBRE, y lo confirma la data (2026-08-12, vara = las 77.005 formas en
+# pasado, que tienen una confirmacion posterior el 20% de las veces):
+#   `ya LE/TE cargo`   1a persona    441 msjs   59% confirma DESPUES  -> PROMESA
+#   `ya SE cargo`      = "se cargó"   47 msjs   11% confirma despues  -> HECHO
+# O sea: los operadores mismos tratan la promesa y la confirmacion como dos actos distintos.
+# `se lo/la cargo` tambien es primera persona (dativo + acusativo); `se cargo` a secas, no.
+#
+# El caso que lo destapo mostraba «✓ le confirmó que el saldo ya estaba acreditado» cuando el
+# unico mensaje era "Ya le cargo mi amigo". Una tilde FALSA es peor que una nota baja: afirma
+# al negocio que hubo una confirmacion que nunca existio.
+_PROMESA_1A_RE = re.compile(
+    r"\bya\s+(le|te|les)\s+(cargo|acredito|abono|ingreso)\b"
+    r"|\bya\s+se\s+(lo|la)\s+(cargo|acredito|abono)\b",
     re.IGNORECASE)
 
 # ACUSE: el operador avisa que esta en eso. NO es que llego.
@@ -128,6 +151,8 @@ def operator_acreditacion(messages: list[dict]) -> bool:
             if _NEGACION_RE.search(frase) or _FUTURO_RE.search(frase):
                 continue
             sin_acentos = _strip_accents(frase)
+            if _PROMESA_1A_RE.search(sin_acentos):
+                continue
             if _ACREDITA_FUERTE_RE.search(sin_acentos):
                 return True
             if _ACREDITA_SALDO_RE.search(sin_acentos):

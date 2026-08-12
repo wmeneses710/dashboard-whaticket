@@ -412,3 +412,51 @@ def test_el_acuse_EN_CURSO_sigue_sin_ser_acreditacion():
     for texto in ("Tu solicitud de recarga está siendo procesada",
                   "ya se esta procesando amigo", "tu recarga está en proceso"):
         assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+# --- "YA LE CARGO" ES UNA PROMESA, NO UNA ACREDITACION -----------------------------
+# Hallado el 2026-08-12 en un caso de produccion: el unico mensaje del operador tras el
+# comprobante fue "Ya le cargo mi amigo", y el analisis mostraba «✓ le confirmó que el saldo
+# ya estaba acreditado». Eso es FALSO, y una tilde falsa es peor que una nota baja: le dice al
+# negocio que hubo una confirmacion que nunca existio.
+#
+# LA CAUSA: `_strip_accents` corre ANTES del match, asi que "cargó" (hecho) y "cargo" (yo lo
+# cargo, ahora) quedan identicos -- el acento era la unica señal y el codigo la borra. El
+# comentario del patron asumia que "cargo" era taquigrafia de "cargado".
+#
+# LO DECIDE EL PRONOMBRE, y lo confirma la data (sobre las 77.005 formas en pasado como vara):
+#   `ya LE/TE cargo`  1a persona   441 msjs   59% tiene una confirmacion POSTERIOR   -> PROMESA
+#   `ya SE cargo`     = "se cargó"  47 msjs   11% tiene una confirmacion posterior   -> HECHO
+#   pasado inequivoco             77.005      20%
+# Los operadores mismos tratan la promesa y la confirmacion como dos actos distintos: cuando
+# dicen "ya te cargo" vuelven a escribir "tu saldo ya esta disponible" el 59% de las veces.
+
+def _opm(body):
+    return [{"from_me": True, "is_note": False, "body": body, "sent_from": "OPERATOR"}]
+
+
+def test_ya_le_cargo_es_promesa_no_acreditacion():
+    from src.signals import operator_acreditacion
+    for promesa in ("Ya le cargo mi amigo", "ya te cargo", "Ya te cargo dame un momento",
+                    "ya les cargo", "ya se lo cargo", "ahorita le cargo",
+                    "le acredito ahora mismo"):
+        assert not operator_acreditacion(_opm(promesa)), promesa
+
+
+def test_ya_se_cargo_SI_es_acreditacion_es_el_pasado_reflexivo():
+    # El contraste que hace falta no romper: "ya se cargó" es un HECHO, y sin el acento se
+    # distingue de la promesa por el pronombre (`se` solo, sin `lo`/`la`).
+    from src.signals import operator_acreditacion
+    for hecho in ("ya se cargo", "amigo ya se cargo su comprobante", "ya le cargue",
+                  "ya te cargué el saldo", "ya esta cargado", "su saldo ya se acredito"):
+        assert operator_acreditacion(_opm(hecho)), hecho
+
+
+def test_el_infinitivo_acreditar_no_es_una_acreditacion():
+    # `acredit\w*` agarraba el INFINITIVO: "para acreditar necesito el comprobante" es el
+    # operador PIDIENDO, lo opuesto a confirmar. 183 mensajes lo dicen.
+    from src.signals import operator_acreditacion
+    for no_es in ("para acreditar necesito el comprobante",
+                  "voy a acreditar su recarga",
+                  "al acreditar le aviso"):
+        assert not operator_acreditacion(_opm(no_es)), no_es
