@@ -38,6 +38,7 @@ from datetime import timedelta
 
 from src.deposits import has_recharge_context
 from src.interacciones import interaccion_de
+from src.operators import inicio_del_reloj
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
@@ -98,7 +99,8 @@ _COACHING = {
     3: "Un primer mensaje corto —\"ya lo recibí, lo reviso\"— apenas entra el comprobante "
        "alcanza para que el cliente no quede en silencio mientras se procesa.",
     4: "Cerrar con \"¿te falta algo más?\" abre la puerta a la segunda duda, que en recargas "
-       "suele ser el bono o el próximo depósito.",
+       "suele ser el bono o el próximo depósito. Y conviene dar unos 5 minutos antes de "
+       "cerrar el ticket: preguntar y cerrar en el mismo acto no deja tiempo de contestar.",
 }
 _COACHING_2_SIN_ACREDITAR = (
     "Conviene confirmar que la plata entró con una línea al cierre: \"listo, ya tienes "
@@ -139,8 +141,29 @@ def _comprobante_del_cliente(messages: list[dict]):
     # las 600 notas que se mueven. Por eso tampoco se PROMEDIA entre interacciones: seria mezclar
     # el trabajo de dos personas y ponerselo a una sola.
     """
-    comps = _comprobantes_del_cliente(messages)
-    return comps[-1] if comps else None
+    # EL ANCLA TIENE QUE SER UN COMPROBANTE, NO LA ULTIMA IMAGEN QUE PASO. `es_transaccion`
+    # exige contexto de recarga pero lo mide sobre la SESION ENTERA, y la eleccion es de
+    # INTERACCION: alcanzaba con que hubiera habido un deposito real mas atras para que
+    # cualquier imagen posterior quedara habilitada como ancla, la ventana saltara a esa
+    # visita, y la rubrica preguntara "¿confirmo la acreditacion?" sobre una conversacion sin
+    # ningun deposito.
+    # TRES CASOS REALES (auditoria del 2026-08-13), los tres con 2 estrellas y el rationale
+    # "nunca le confirmo que la plata habia entrado":
+    #   `0a61513b`  el ancla eligio una imagen con caption VACIO cuya interaccion es
+    #               "Buenos días / ¿Hay algún problema con la página?" -- un problema de login.
+    #   `23ff3128`  100 imagenes candidatas; eligio "Buenos días ING presente en la finca
+    #               MARÍA MARÍA" -- una foto de una finca.
+    #   `1f53cdc6`  dos recargas confirmadas por OTROS dos operadores y, seis dias despues, una
+    #               imagen sobre apuestas: el 2 estrellas cayo sobre quien no tuvo deposito.
+    # Se corrobora con LAS MISMAS DOS PUERTAS que ya usa `es_transaccion`, pero acotadas a la
+    # interaccion de cada imagen. Si ninguna se corrobora no hay transaccion, y la sesion cede
+    # el turno al pase con LLM -- lo mismo que ya pasa cuando no hay comprobante.
+    for m in reversed(_comprobantes_del_cliente(messages)):
+        visita = interaccion_de(messages, m)
+        if (has_recharge_context(visita)
+                or operator_acuso_comprobante(visita, desde=m["created_at"])):
+            return m
+    return None
 
 
 def es_transaccion(messages: list[dict]) -> bool:
@@ -207,7 +230,21 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
     respuesta = next(
         (m for m in reales
          if _is_operator(m) and m["created_at"] > comprobante["created_at"]), None)
-    espera = espera_efectiva(comprobante["created_at"], respuesta["created_at"]) if respuesta else None
+    # EL RELOJ ARRANCA CUANDO EL OPERADOR PUEDE RESPONDER, o sea en el mas TARDIO entre el
+    # comprobante y la ENTREGA del ticket. Es la misma idea que ya rige en `espera_efectiva`,
+    # que descuenta el horario: no se cobra lo que el operador no controla.
+    # MEDIDO el 2026-08-13 sobre las 6 filas en 2 estrellas por "tardo en avisarle": en 5 de 6
+    # el reloj era casi todo COLA. Un caso: 308,7 minutos de reloj, 300,2 de cola y **8,5 de
+    # reaccion real**. Cuatro de esas cinco son de la misma operadora, que contesto entre 1,4 y
+    # 8,5 minutos y cobro 2 estrellas por "tardar" -- con el umbral en 5 minutos, la cola sola
+    # ya se los comia. El eje ya estaba medido desde el 2026-08-06 ("primer mensaje tras la
+    # asignacion sirve como eje, deposito 0,7 min de mediana") y no se habia usado aca.
+    # SIN NOTA DE ENTREGA NO SE DESCUENTA NADA: no se inventa una cola que no se puede probar.
+    # Se busca en la VENTANA y desde el comprobante: una entrega anterior significa que el
+    # operador YA tenia la conversacion, y ahi la demora es entera suya.
+    inicio = inicio_del_reloj(ventana, comprobante["created_at"])
+    espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
+              if respuesta else None)
     acredito = operator_acreditacion(reales)
     algo_mas = operator_asked_and_waited(reales, cierre_at)
 

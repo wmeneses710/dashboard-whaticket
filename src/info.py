@@ -40,6 +40,7 @@ from src.signals import _is_operator, operator_asked_and_waited, tiene_reloj
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
 from src.horario import espera_efectiva
+from src.operators import inicio_del_reloj
 
 MODELO_DETERMINISTA = "determinista/info-v1"
 
@@ -63,7 +64,8 @@ _COACHING = {
     3: "El objetivo son 2 minutos para la primera respuesta, aunque sea parcial: quien "
        "consulta está comparando y la demora se nota.",
     4: "Cerrar con \"¿te falta algo más?\" rinde acá: en una consulta suele quedar "
-       "una segunda duda sin plantear.",
+       "una segunda duda sin plantear. Conviene esperar unos 5 minutos antes de cerrar el "
+       "ticket: la pregunta solo sirve si el cliente alcanza a responderla.",
 }
 _COACHING_1 = ("El cliente preguntó y nadie le respondió. Conviene contestar aunque sea "
                "parcialmente: quien consulta todavía está decidiendo si se queda.")
@@ -84,7 +86,14 @@ def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:
     respuesta = next(
         (m for m in reales
          if _is_operator(m) and m["created_at"] >= planteo["created_at"]), None)
-    espera = espera_efectiva(planteo["created_at"], respuesta["created_at"]) if respuesta else None
+    # EL RELOJ ARRANCA CUANDO EL OPERADOR PUEDE RESPONDER (ver src/operators.inicio_del_reloj):
+    # la espera EN COLA no es suya. Caso real `7a08654d`: "respondio recien 11,3 minutos
+    # despues" cuando la operadora contesto en 44 SEGUNDOS y el resto fue cola.
+    # Se le pasa `messages` y NO `reales`: el helper busca las NOTAS del CRM, y `reales` las
+    # filtra. `info` no acota ventana, asi que la sesion entera es el alcance correcto.
+    inicio = inicio_del_reloj(messages, planteo["created_at"])
+    espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
+              if respuesta else None)
     algo_mas = operator_asked_and_waited(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:

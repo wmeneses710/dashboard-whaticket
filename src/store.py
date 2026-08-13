@@ -269,7 +269,84 @@ from src.segments import segment_for_queue
 # "acompañ" como prueba de que el texto decia COMO -- y esa palabra era la del REPROCHE. Se
 # cerraron los dos, mas un invariante nuevo que compara los dos campos de la MISMA fila con
 # n-gramas de 5 palabras (4 es el tema, 5 seguidas es la misma oracion dos veces).
-SCORING_VERSION = "2026.08-rubricas-v14"
+# 2026.08-rubricas-v15 (2026-08-13). EL RELOJ NO COBRA LA COLA. Las rubricas median desde el
+# mensaje del CLIENTE hasta la primera respuesta del operador, sin saber cuando el CRM le
+# ENTREGO la conversacion: todo lo que el ticket pasaba sin asignar se le cobraba a quien lo
+# levantaba. `rg "asignad|assign" src/deposito.py src/info.py` no devolvia NADA.
+#   - MEDIDO sobre las 6 filas de `deposito` en 2 estrellas por "tardo en avisarle": en 5 de 6
+#     el reloj era casi todo COLA.
+#         sesion     operador          reloj    cola    reaccion propia
+#         48c251a2   Anya Alexandra    308,7    300,2         8,5
+#         c324708f   Anya Alexandra    269,7    266,7         3,0
+#         cc996f57   Anya Alexandra    110,3    108,9         1,4
+#         347ffeac   Anya Alexandra     65,3     61,1         4,1
+#         13f5f9da   Maria Jose         33,8     33,4         0,4
+#     CUATRO DE LAS CINCO SON DE LA MISMA PERSONA: contesto entre 1,4 y 8,5 minutos y cobro 2
+#     estrellas por "tardar". Con el umbral en 5 minutos, la cola sola ya se los comia.
+#   - El mismo artefacto se confirmo en `info` (caso `7a08654d`: "respondio recien 11,3
+#     minutos despues" cuando la operadora contesto en 44 SEGUNDOS).
+#   - `src/operators.asignacion_at` lee `*Asignado automáticamente*` y `*aceptado*` (nunca
+#     `*resuelto*`, que es el final) e `inicio_del_reloj` devuelve el mas TARDIO entre el
+#     pedido y la entrega. Es la misma idea que ya rige en `espera_efectiva`, que descuenta el
+#     horario: no se cobra lo que el operador no controla. Y el eje ya estaba medido desde el
+#     2026-08-06 ("primer mensaje tras la asignacion sirve como eje, deposito 0,7 min de
+#     mediana"); simplemente no se habia usado.
+#   - SIN NOTA DE ENTREGA NO SE DESCUENTA NADA, y una entrega ANTERIOR al pedido tampoco: ahi
+#     el operador ya tenia la conversacion y la demora es entera suya. Los dos con test.
+#   - `soporte` queda AFUERA a proposito: califica con la MEDIANA de los turnos, no con un
+#     reloj unico, y la cola solo afecta al primero. Descontarla ahi seria inventar.
+#   - IMPACTO medido sobre las 199 filas deterministas de la copia: 180 sin cambio (90,5%),
+#     **17 suben** (info 2->4 seis veces, info 3->4 tres, deposito 2->4 dos, deposito 2->3 dos,
+#     info 2->3, deposito 3->4, retiro 3->4). Entre las que suben estan tres de las cuatro de
+#     Anya que motivaron el cambio.
+#
+# EL CONSEJO DEL 4 PIDE TAMBIEN LA ESPERA. `operator_asked_and_waited` exige DOS cosas para
+# dar el 5 -- preguntar "¿algo mas?" Y dejar una ventana antes de cerrar (que el cliente
+# conteste, o 5 minutos) -- y el coaching solo hablaba de la primera.
+#   - MEDIDO sobre 273 sesiones con el gate en False: 134 (49%) no dicen nada parecido, **58
+#     (21%) SI preguntaron y los rechazo la ESPERA**, y 81 (30%) dicen una DESPEDIDA
+#     ("escribeme cuando quieras"), que empuja al futuro en vez de retener la conversacion
+#     abierta -- no es el mismo acto y el gate hace bien en rechazarla.
+#   - Cumplimiento global: **8 de 122 (6,6%)**, y **78 de 122 (64%) estan en 4 estrellas
+#     EXCLUSIVAMENTE por esto**. En `info` no lo cumple nadie (0 de 21).
+#   - Los cuatro textos del 4 (`deposito`, `retiro`, `info`, `soporte`) conservan la razon
+#     propia de su motivo y suman los 5 minutos. Dos tests lo atan.
+#
+# Y CUATRO ARREGLOS MAS, todos de la misma auditoria y todos con el mismo patron: una señal
+# que decia que si cuando la respuesta era que no.
+#   3. EL ANCLA DE `deposito` TIENE QUE SER UN COMPROBANTE, no la ultima imagen que paso.
+#      `es_transaccion` exige contexto de recarga sobre la SESION y la eleccion es de
+#      INTERACCION, asi que cualquier imagen posterior quedaba habilitada como ancla. Tres
+#      casos reales, los tres con 2 estrellas y "nunca le confirmo": una imagen con caption
+#      vacio sobre un problema de login (`0a61513b`), una foto de una finca entre 100
+#      candidatas (`23ff3128`), y una pregunta de apuestas seis dias despues de dos recargas
+#      confirmadas por OTROS operadores (`1f53cdc6`). Ahora se corrobora cada imagen en SU
+#      interaccion con las dos puertas que la rubrica ya usa.
+#   4. LA EXENCION POR ABANDONO SE ACOTA A QUIEN SE OFRECIO. Desactivaba el techo ENTERO de
+#      `registro`: **45 filas del camino LLM con `cliente_abandono=true` llegaron a 5 estrellas,
+#      contra 0 de las 2.061 con abandono=false**. La decision del 2026-08-07 protege al
+#      operador que "ofrecio crear la cuenta y se quedo esperando -- hizo lo que podia", y ESO
+#      SE CONSERVA intacto (su test sigue verde); lo que sale es el que solo recito la
+#      plantilla de venta. Medido con el regex ya corregido: 37 de 45 ofrecieron de verdad y
+#      conservan su nota, 8 no ofrecieron nada.
+#   5. `_AL_PUNTO_RE` NO PUEDE LEER "TE REGISTRAS" COMO UNA OFERTA. El grupo de la ayuda era
+#      OPCIONAL y el patron colapsaba a `te registr` a secas, matcheando lo que hace el
+#      CLIENTE. Caso `9a83a433`: "...TE REGISTRAS, verificas tu cuenta y con tu primera carga
+#      accedes a una freebet..." se leia como "fue al punto" mientras el rationale del LLM
+#      decia -- con razon -- "no guio al cliente paso a paso ni le pidio los datos". Este
+#      falso positivo era el que inflaba el punto 4 (daba 41 de 45 en vez de 37).
+#   6. EL NUMERO SUELTO QUE CONTESTA UN PEDIDO BANCARIO. El arreglo de v14 miraba el
+#      vocabulario del banco DENTRO del mensaje del cliente, y dejaba afuera la variante mas
+#      comun: el operador pide los datos y el cliente escribe solo el numero. Caso `fda5a4f9`:
+#      credenciales entregadas el 28-jul, y doce dias despues un "2101059380" que contestaba
+#      "pasame nombre completos de titular, numero de cuenta, banco, cedula" se volvia el
+#      ancla -> 2 estrellas y "el alta quedo a medias", falso. Ahora se mira el mensaje
+#      ANTERIOR del operador.
+#   7. ENTREGAR CREDENCIALES ES RESOLVER. `operator_resolved` nunca consultaba
+#      `operator_sent_credentials`, que vive en el mismo modulo: un alta CERRADA se salteaba
+#      como `sin_motivo`/`customer_media_only` cuando el cliente solo decia "gracias" o mandaba
+#      un audio. 2 de 48 sesiones salteadas de la copia fresca.
+SCORING_VERSION = "2026.08-rubricas-v15"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

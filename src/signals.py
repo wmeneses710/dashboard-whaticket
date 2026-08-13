@@ -548,7 +548,13 @@ def operator_resolved(messages: list[dict]) -> bool:
     Senal combinada que usan el scorer (piso) y el router (no skipear un deposito
     estandar donde el cliente solo mando el comprobante).
     """
-    return operator_confirmation(messages) or operator_sent_media(messages)
+    # LAS CREDENCIALES TAMBIEN RESUELVEN (2026-08-13). Un alta cerrada es el hecho mas duro
+    # del motivo  y no estaba en la señal: si el cliente solo decia "gracias" o
+    # mandaba un audio,  (src/router.py) descartaba la sesion como
+    # / y el trabajo del operador desaparecia del denominador.
+    # MEDIDO sobre la copia fresca: 2 de 48 sesiones salteadas eran exactamente eso.
+    return (operator_confirmation(messages) or operator_sent_media(messages)
+            or operator_sent_credentials(messages))
 
 
 # Empuje comercial del operador (eje 'atencion'=empujo): manda un LINK (registro/

@@ -396,3 +396,40 @@ def test_el_consejo_no_es_la_PARAFRASIS_del_reproche():
             f"{nombre}: el consejo repite el reproche {sorted(compartidos)!r}\n"
             f"  rationale: {s.rating_rationale}\n"
             f"  consejo  : {s.recomendacion}")
+
+
+# --- EL CONSEJO DEL 4 TIENE QUE PEDIR LAS DOS COSAS ---------------------------------
+# `operator_asked_and_waited` exige DOS condiciones para dar el 5: que el operador pregunte
+# "¿algo más?" Y que deje una ventana real antes de cerrar el ticket (que el cliente conteste,
+# o que pasen 5 minutos). El coaching solo hablaba de la primera.
+#
+# MEDIDO el 2026-08-13 sobre 273 sesiones donde el gate dio False:
+#   134 (49%)  no dijeron nada parecido a una pregunta de cierre
+#    58 (21%)  SI preguntaron y los rechazo la ESPERA, no el vocabulario
+#    81 (30%)  dijeron una DESPEDIDA ("escríbeme cuando quieras"), que empuja al futuro
+#              en vez de retener la conversacion abierta -- no es el mismo acto
+# Ese 21% pregunta, cierra el ticket en el mismo acto, y nunca va a entender por que no llega
+# al 5 si el consejo no le dice que espere. Cumplimiento global: 8 de 122 (6,6%).
+
+_MODULOS_CON_CIERRE = ("deposito", "retiro", "info", "soporte")
+
+
+def _coaching_del_cuatro():
+    import importlib
+    for nombre in _MODULOS_CON_CIERRE:
+        mod = importlib.import_module(f"src.{nombre}")
+        yield nombre, mod._COACHING[4]
+
+
+def test_el_consejo_del_4_pide_LA_PREGUNTA():
+    for nombre, texto in _coaching_del_cuatro():
+        assert "algo más" in texto.lower(), f"{nombre}: no nombra la pregunta de cierre: {texto}"
+
+
+def test_el_consejo_del_4_pide_TAMBIEN_LA_ESPERA():
+    # La mitad que faltaba: sin esto, el operador pregunta y cierra en el mismo acto.
+    for nombre, texto in _coaching_del_cuatro():
+        bajo = texto.lower()
+        assert "5 minutos" in bajo, f"{nombre}: no dice cuánto esperar: {texto}"
+        assert any(p in bajo for p in ("antes de cerrar", "sin cerrar", "no cerrar")), \
+            f"{nombre}: no dice que la espera es ANTES de cerrar: {texto}"

@@ -120,3 +120,52 @@ def test_un_alta_que_de_verdad_quedo_a_medias_sigue_bajando():
     assert r is not None
     assert r.dimensions["entrego_credenciales"] is False
     assert r.stars <= 2, r.rating_rationale
+
+
+# --- EL NUMERO SUELTO QUE CONTESTA UN PEDIDO BANCARIO -------------------------------
+# El arreglo de arriba mira el vocabulario bancario DENTRO del mensaje del cliente, y eso deja
+# afuera la variante mas comun: el OPERADOR pide los datos y el cliente contesta SOLO el
+# numero. CASO REAL `fda5a4f9` (encontrado el 2026-08-13 auditando el propio arreglo):
+#     2026-07-28  OPERADOR: "Estas son tus credenciales / Usuario: alexis478 / Clave: 12345"
+#     ... doce dias despues, misma sesion mergeada ...
+#     2026-08-09  OPERADOR: "pasame nombre completos de titular, numero de cuenta, banco, cedula"
+#     2026-08-09  OPERADOR: "numero de cedula"
+#     2026-08-09  CLIENTE : "2101059380"        <- el ancla salta ACA
+# La ventana juzgada se recorta al retiro, no ve la entrega de credenciales del 28-jul, y la
+# fila sale 2 estrellas con "el alta quedó a medias" -- falso.
+# El contexto vive en el mensaje ANTERIOR del operador, asi que hay que mirarlo.
+
+PIDE_DATOS_BANCARIOS = "pasame nombre completos de titular, numero de cuenta, banco, cedula"
+
+SESION_NUMERO_SUELTO = [
+    _cli(10, "quiero registrarme"),
+    _cli(60, DATOS_SOLO_CEDULA),
+    _op(120, CREDENCIALES),
+    _nota(180, "Arturo *resuelto* la conversación"),
+    # doce días después, un retiro en la misma sesión mergeada
+    _cli(12 * 24 * 3600, "quiero retirar"),
+    _op(12 * 24 * 3600 + 60, PIDE_DATOS_BANCARIOS),
+    _cli(12 * 24 * 3600 + 120, "2101059380"),
+    _op(12 * 24 * 3600 + 180, "listo, en proceso"),
+]
+
+
+def test_el_numero_suelto_que_contesta_un_pedido_bancario_no_ancla_el_alta():
+    r = score_registro(SESION_NUMERO_SUELTO)
+    assert r is not None
+    assert r.dimensions["entrego_credenciales"] is True, r.rating_rationale
+    assert "nunca recibió" not in r.rating_rationale
+
+
+def test_el_numero_suelto_SIN_pedido_bancario_delante_sigue_anclando():
+    # EL GUARD: el camino normal es el cliente pasando su cédula porque le pidieron los datos
+    # del ALTA. Eso no se toca.
+    msgs = [
+        _cli(10, "quiero registrarme"),
+        _op(30, "pasame tus datos para crearte la cuenta"),
+        _cli(60, "0802930271"),
+        _op(120, CREDENCIALES),
+    ]
+    r = score_registro(msgs)
+    assert r is not None and r.dimensions["entrego_credenciales"] is True
+    assert r.stars >= 4, r.rating_rationale

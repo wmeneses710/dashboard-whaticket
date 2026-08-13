@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from src.interacciones import interaccion_de
+from src.operators import inicio_del_reloj
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
 from src.signals import (
@@ -81,7 +82,8 @@ _COACHING = {
     3: "El objetivo son 2 minutos para acusar el pedido y 15 para tener el comprobante "
        "arriba. Acusar primero y entregar después cumple las dos cosas.",
     4: "Cerrar con \"¿te falta algo más?\" es la diferencia entre entregar y acompañar: en "
-       "retiro el agente suele tener una segunda operación en camino.",
+       "retiro el agente suele tener una segunda operación en camino. Conviene dejar unos "
+       "5 minutos antes de cerrar el ticket, para que llegue a pedirla.",
 }
 _COACHING_2_SIN_COMPROBANTE = (
     "Enviar el comprobante siempre, incluso si el agente no lo pidió: es el único respaldo "
@@ -163,8 +165,13 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     comprobante = next(
         (m for m in posteriores
          if _is_operator(m) and is_real_media(m.get("media_type"))), None)
-    espera = espera_efectiva(pedido["created_at"], respuesta["created_at"]) if respuesta else None
-    entrega = espera_efectiva(pedido["created_at"], comprobante["created_at"]) if comprobante else None
+    # EL RELOJ ARRANCA CUANDO EL OPERADOR PUEDE RESPONDER (ver src/operators.inicio_del_reloj):
+    # la espera EN COLA no es suya. Los dos relojes del motivo arrancan en el mismo punto.
+    inicio = inicio_del_reloj(ventana, pedido["created_at"])
+    espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
+              if respuesta else None)
+    entrega = (espera_efectiva(inicio, max(comprobante["created_at"], inicio))
+               if comprobante else None)
     algo_mas = operator_asked_and_waited(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:

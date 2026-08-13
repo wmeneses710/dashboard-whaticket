@@ -124,7 +124,8 @@ _COACHING = {
     3: "En soporte el cliente ya viene trabado y cada espera pesa doble. Un mensaje "
        "corto entre paso y paso alcanza para que no sienta que quedó solo.",
     4: "Cerrar con \"¿te falta algo más?\" es el motivo donde más rinde, porque el "
-       "problema de cuenta suele volver si quedó un paso a medias.",
+       "problema de cuenta suele volver si quedó un paso a medias. Conviene esperar unos "
+       "5 minutos antes de cerrar el ticket, que es cuando aparece ese paso.",
 }
 _COACHING_2_SIN_INTENTO = (
     "El cliente no se llevó ningún paso a seguir. Aunque el desbloqueo dependa de otra "

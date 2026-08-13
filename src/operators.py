@@ -131,6 +131,45 @@ _NOTA_ACEPTA_RE = re.compile(r"^(.{2,40}?)\s+\*aceptado\*", re.IGNORECASE)
 _NOTA_ASIGNA_RE = re.compile(r"\*Asignado autom[aá]ticamente\*\s+a\s+(.{2,40})$", re.IGNORECASE)
 
 
+def asignacion_at(messages: list[dict], desde=None):
+    """Cuando el CRM le ENTREGO la conversacion al operador. None si no dejo la nota.
+
+    Las dos notas que marcan la entrega son `*Asignado automáticamente* a <nombre>` y
+    `<nombre> *aceptado* la conversación`; `*resuelto*` NO cuenta, es el final.
+
+    EXISTE PARA QUE EL RELOJ NO COBRE LA COLA. Las rubricas median desde el mensaje del
+    CLIENTE hasta la primera respuesta del operador, sin saber cuando el operador pudo
+    contestar por primera vez: todo lo que el ticket pasaba SIN ASIGNAR se le cobraba a quien
+    lo levantaba. MEDIDO el 2026-08-13 sobre las 6 filas de `deposito` en 2 estrellas por
+    "tardo en avisarle": en 5 de 6 el reloj era casi todo cola. Un caso: 308,7 minutos de
+    reloj, de los cuales 300,2 fueron cola y **8,5 la reaccion real de la operadora**. Cuatro
+    de esas cinco son de la misma persona.
+
+    `desde` acota la busqueda a la ventana juzgada; se devuelve la PRIMERA nota de entrega,
+    que es la que habilita al operador a responder.
+    """
+    for m in sorted((m for m in messages if m.get("is_note")),
+                    key=lambda m: m["created_at"]):
+        if desde is not None and m["created_at"] < desde:
+            continue
+        cuerpo = (m.get("body") or "").strip()
+        if _NOTA_ACEPTA_RE.match(cuerpo) or _NOTA_ASIGNA_RE.search(cuerpo):
+            return m["created_at"]
+    return None
+
+
+def inicio_del_reloj(ventana: list[dict], desde):
+    """Desde cuando se le puede cobrar la espera al operador: el mas TARDIO entre el pedido
+    del cliente (`desde`) y la ENTREGA del ticket.
+
+    Sin nota de entrega, o con una entrega anterior al pedido (el operador ya tenia la
+    conversacion), devuelve `desde` sin tocar: no se descuenta una cola que no se puede
+    probar. Ver `asignacion_at` para los numeros que lo motivaron.
+    """
+    entrega = asignacion_at(ventana, desde=desde)
+    return entrega if entrega is not None and entrega > desde else desde
+
+
 def nombre_de_notas(messages: list[dict]) -> str | None:
     """Quien atendio, segun las NOTAS internas del CRM. None si ninguna nombra a una persona.
 

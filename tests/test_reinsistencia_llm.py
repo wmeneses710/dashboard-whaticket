@@ -112,3 +112,113 @@ def test_la_baja_queda_marcada_como_ajuste_determinista():
     r = score_by_motivo(target_messages=SIN_RESOLVER, thread_context="",
                         llm=FakeLLM(_resp(cliente_reinsistio=True)))
     assert r.rating_rationale.startswith("[ajuste determinista de hechos]")
+
+
+# --- EL ABANDONO NO HABILITA EL MEJOR ESCENARIO DE `registro` -----------------------
+# `src/scorer.py` desactivaba el techo ENTERO de `registro` cuando el cliente abandonaba, y
+# eso incluía la parte que no habla de culpa sino de un HECHO: llegar al fall-through con
+# motivo `registro` prueba que el alta NO se cerró, y el mejor escenario del motivo es —
+# textual en src/rubrics.py — "cierra el alta y encamina el primer depósito".
+#
+# MEDIDO el 2026-08-13: **45 filas de `registro` por el camino LLM con `cliente_abandono=true`
+# en 5 estrellas**, contra 0 de las 2.061 con abandono=false (ahí el techo funciona perfecto).
+# Cuatro de ellas, verbatim, son una campaña de broadcast de la misma operadora con este
+# rationale y `rating_label='excelente'`:
+#     "El operador atendió el motivo de registro al explicar el proceso, pero NO GUIO AL
+#      CLIENTE PASO A PASO NI LE PIDIÓ LOS DATOS NECESARIOS PARA CREAR LA CUENTA."
+# La nota máxima de la escala con un texto que la desmiente.
+#
+# POR QUE NO ALCANZABA CON EXIGIR SEÑAL DURA: de esas 45, **41 tienen `pushed=True`** (mencionan
+# el bono o mandan el link), así que un guard sobre `resolved or pushed` habría atrapado 1 sola.
+# Lo que SI es universal: **`se_creo_la_cuenta` da False en las 45**.
+#
+# QUE SE CONSERVA de la corrección del 2026-08-07: esa decisión existe para no capear a
+# 'aceptable' al operador "que ofreció crear la cuenta y se quedó esperando una respuesta que
+# nunca llegó -- el segundo hizo lo que podía". Eso sigue igual: con abandono NO se lo baja a
+# 'aceptable'. Lo único que se le saca es el 'excelente', que nunca fue suyo.
+
+def _resp_registro(**over):
+    resp = _resp(motivo="registro")
+    resp["hizo_accion_extra"] = True
+    resp["cortesia_destacada"] = True
+    resp.update(over)
+    return resp
+
+
+# El cliente pide, el operador ofrece el bono y el link (pushed) y le PREGUNTA, y el cliente
+# no vuelve: eso es `cliente_abandono_tras_pedido`. El ultimo mensaje del negocio tiene que
+# ser un PEDIDO (`_es_pedido`) para que el desenlace sea "se_fue" -- sin eso el test pasa por
+# la razon equivocada, que fue exactamente lo que paso al escribirlo.
+# El que SOLO RECITA LA PLANTILLA: describe lo que tiene que hacer el cliente ("te
+# registras") y le pasa su numero personal. Nunca ofrecio hacer el alta. Es el caso `9a83a433`.
+ABANDONO_SIN_OFERTA = [
+    _cli("¿Cómo accedo a sortiGo para recibir los beneficios.?"),
+    _op("Pana te cuento es muy sencillo, trabajo para Sorti365. Te registras, verificas tu "
+        "cuenta y con tu primera carga accedes a una freebet de $5 y 10 giros gratis"),
+    _op("panita te paso mi número, 0991701676, ¿lo agregas?"),
+]
+# El que SE OFRECIO y se quedo esperando: el caso que el negocio protegio el 2026-08-07.
+ABANDONO_CON_OFERTA = [
+    _cli("Quiero registrarme y recibir mi Bono de $5"),
+    _op("Trabajo como agente de Sorti365 y por tu primera recarga tengo una Freebet de $5"),
+    _op("¿Te creo un usuario para que juegues?"),
+]
+
+
+def test_el_caso_de_prueba_de_verdad_tiene_abandono():
+    # EL GUARD DEL GUARD: sin esto el test de abajo pasaria aunque el techo nunca se
+    # desactivara, y no probaria nada.
+    from src.registro import fue_al_punto
+    from src.signals import cliente_abandono_tras_pedido
+    for msgs in (ABANDONO_SIN_OFERTA, ABANDONO_CON_OFERTA):
+        assert cliente_abandono_tras_pedido(msgs) is True
+    assert fue_al_punto(ABANDONO_SIN_OFERTA) is False, "recitar la plantilla no es ofrecer"
+    assert fue_al_punto(ABANDONO_CON_OFERTA) is True
+
+
+def test_recitar_la_plantilla_no_alcanza_para_el_mejor_escenario():
+    r = score_by_motivo(target_messages=ABANDONO_SIN_OFERTA, thread_context="",
+                        llm=FakeLLM(_resp_registro()))
+    assert r.motivo == "registro"
+    assert r.stars < 5, r.rating_rationale
+
+
+def test_el_que_SE_OFRECIO_y_el_cliente_se_fue_CONSERVA_su_nota():
+    # LO QUE SE CONSERVA, textual, de la decisión del 2026-08-07: "el segundo hizo lo que
+    # podía". Ofreció crear la cuenta y el cliente nunca volvió: la nota no se toca.
+    r = score_by_motivo(target_messages=ABANDONO_CON_OFERTA, thread_context="",
+                        llm=FakeLLM(_resp_registro()))
+    assert r.rating_label == "excelente" and r.stars == 5, r.rating_rationale
+
+
+# --- "TE REGISTRAS" NO ES UNA OFERTA DEL OPERADOR ----------------------------------
+# `_AL_PUNTO_RE` tenia el grupo de la ayuda OPCIONAL --  `te (ayudo (a |con (el|tu|mi) )?)?registr`
+# -- asi que colapsaba a `te registr` a secas y matcheaba "TE REGISTRAS", que es lo que hace el
+# CLIENTE, no lo que ofrece el operador.
+# CASO REAL `9a83a433` (Salome Ramirez), el mensaje entero del operador:
+#     "Pana te cuento es muy sencillo, trabajo para Sorti365... TE REGISTRAS, verificas tu
+#      cuenta y con tu primera carga accedes a una freebet de $5 y 10 giros gratis"
+#     y despues: "panita te paso mi número, 0991701676"
+# El regex lo leia como "fue al punto"; el rationale del LLM decia "no guio al cliente paso a
+# paso ni le pidio los datos". **El rationale tenia razon y el regex no.**
+# Se conservan las dos formas que el patron queria: "te ayudo a registrarte" / "te ayudo con el
+# registro" (la segunda se agrego el 2026-08-07 por el caso `ec84aae1`) y la primera persona
+# "te registro". Lo que sale es la segunda persona del cliente.
+
+def test_te_registras_no_es_una_oferta_del_operador():
+    from src.registro import _AL_PUNTO_RE
+    for texto in ("Te registras, verificas tu cuenta y con tu primera carga accedes a una freebet",
+                  "te registras en la web y listo",
+                  "primero te registras vos"):
+        assert not _AL_PUNTO_RE.search(texto), texto
+
+
+def test_las_ofertas_REALES_siguen_reconociendose():
+    from src.registro import _AL_PUNTO_RE
+    for texto in ("¿Te creo un usuario para que juegues?",   # el caso del 2026-08-07
+                  "te ayudo a registrarte",
+                  "te ayudo con el registro",                 # caso ec84aae1
+                  "te registro yo ahora mismo",
+                  "pasame tus datos",
+                  "quieres que te cree la cuenta"):
+        assert _AL_PUNTO_RE.search(texto), texto

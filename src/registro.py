@@ -161,10 +161,28 @@ def _datos_del_cliente(messages: list[dict]):
 
 
 def _traspasos_del_cliente(messages: list[dict]) -> list[dict]:
-    """Mensajes del CLIENTE con datos personales de alta, en orden cronologico."""
+    """Mensajes del CLIENTE con datos personales de alta, en orden cronologico.
+
+    EL CONTEXTO ES EL MENSAJE ANTERIOR DEL OPERADOR (2026-08-13). Mirar solo el cuerpo del
+    cliente cierra el caso del formulario bancario COMPLETO pero no el mas comun: el operador
+    pide los datos del banco y el cliente contesta SOLO el numero. Caso `fda5a4f9`, encontrado
+    auditando este mismo arreglo: el operador entrego credenciales el 28-jul; doce dias despues
+    pidio "nombre completos de titular, numero de cuenta, banco, cedula" y el cliente escribio
+    "2101059380". El ancla saltaba a ese numero, la ventana se recortaba al retiro, y la fila
+    salia 2 estrellas con "el alta quedo a medias" -- falso.
+    """
     out = []
+    ultimo_op = ""
     for m in sorted((m for m in messages if not m.get("is_note")),
                     key=lambda m: m["created_at"]):
+        if _is_operator(m):
+            ultimo_op = m.get("body") or ""
+            continue
+        # El operador venia pidiendo datos BANCARIOS: el numero suelto los contesta a ellos,
+        # no al alta. El email sigue ganando (lo resuelve `_es_traspaso_de_datos`).
+        if (_FORM_BANCARIO_RE.search(ultimo_op)
+                and not _EMAIL_RE.search(m.get("body") or "")):
+            continue
         if m.get("from_me"):
             continue
         body = m.get("body") or ""
@@ -393,13 +411,31 @@ _AL_PUNTO_RE = re.compile(
     # "te ayudo A registrarte" y "te ayudo CON EL registro" son la MISMA oferta. El patron
     # solo tenia la primera, asi que la PIEZA 6 castigaba con 2 estrellas al operador que se
     # ofrecio con la otra preposicion (caso `ec84aae1`, hallado el mismo dia que se escribio).
-    r"te (ayudo (a |con (el|tu|mi) )?)?registr|te abro (la|tu) cuenta|"
+    # EL GRUPO DE LA AYUDA YA NO ES OPCIONAL (2026-08-13). Con `(ayudo ...)?` el patron
+    # colapsaba a `te registr` a secas y matcheaba **"te registras"**, que es lo que hace el
+    # CLIENTE y no lo que ofrece el operador. Caso `9a83a433`: "...TE REGISTRAS, verificas tu
+    # cuenta y con tu primera carga accedes a una freebet..." se leia como "fue al punto",
+    # mientras el rationale del LLM decia -- con razon -- "no guio al cliente paso a paso ni le
+    # pidio los datos". Se conservan las dos formas de ayuda y se agrega la primera persona
+    # ("te registro yo"), que SI es una oferta.
+    r"te ayudo (a |con (el|tu|mi) )?registr|te registro\b|te abro (la|tu) cuenta|"
     r"quieres que te (ayude|cree|registre)|queres que te (ayude|cree|registre)|"
     r"me ayudas con (estos |los )?datos|pasame (tus |los )?datos|"
     r"(nombre de usuario|correo electr[oó]nico|numero de celular|n[uú]mero de celular)|"
     r"necesito (tus|los) datos|env[ií]ame (tus|los) datos|ayudame con (estos |los )?datos",
     re.IGNORECASE,
 )
+
+
+def fue_al_punto(messages: list[dict]) -> bool:
+    """El operador PIDIO LOS DATOS u OFRECIO CREAR LA CUENTA: el mecanismo real del alta.
+
+    Es la mitad util de `nunca_pidio_los_datos` expuesta sola, porque el techo de `registro`
+    necesita distinguir al operador que se ofrecio y se quedo esperando -- al que la decision
+    del 2026-08-07 protege -- del que solo recito la plantilla de venta.
+    """
+    return any(_is_operator(m) and _AL_PUNTO_RE.search(m.get("body") or "")
+               for m in messages if not m.get("is_note"))
 
 
 def nunca_pidio_los_datos(messages: list[dict]) -> bool:

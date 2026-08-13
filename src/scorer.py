@@ -327,22 +327,47 @@ def score_by_motivo(
     # OJO: esto NO es la hipotesis de la verbosidad, que se midio y se descarto (ver
     # src/registro.py). Va ANTES del techo generico porque es la señal mas fuerte.
     if motivo == "registro":
-        from src.registro import nunca_pidio_los_datos
+        from src.registro import fue_al_punto, nunca_pidio_los_datos
 
         if nunca_pidio_los_datos(target_messages) and label in (
                 "buena", "excelente", "aceptable"):
             label, override = "aceptable", True
-    if motivo == "registro" and not abandono:
-        if not (resolved or pushed):
-            # Ni link/invitacion concreta ni entrega: el piso de la rubrica -"guia el alta
-            # de la cuenta paso a paso"- no esta corroborado por NINGUNA señal dura, el
-            # 'atendio' es solo palabra del modelo. Techo en aceptable (falto algo), no
-            # castigo: bajarlo mas seria inventar en la direccion contraria.
+    # EL ABANDONO EXIME DEL CASTIGO, NO DEL HECHO (corregido el 2026-08-13). La exencion del
+    # 2026-08-07 desactivaba el techo ENTERO, y el techo tiene DOS mitades que no son lo mismo:
+    #   - bajar a 'aceptable' cuando no hay señal dura es un JUICIO sobre por que no se cerro
+    #     el alta, y ahi la exencion es correcta: el operador "que ofrecio crear la cuenta y se
+    #     quedo esperando una respuesta que nunca llego hizo lo que podia". Eso NO se toca.
+    #   - bajar 'excelente' a 'buena' es un HECHO: llegar hasta aca con motivo `registro` prueba
+    #     que `score_registro` devolvio None, o sea que el alta NO se cerro, y el mejor escenario
+    #     de la rubrica es textualmente "cierra el alta y encamina el primer deposito". Que el
+    #     cliente se haya ido no cierra el alta.
+    # MEDIDO el 2026-08-13: **45 filas de `registro` por el camino LLM con `cliente_abandono=true`
+    # llegaron a 5 estrellas**, contra **0 de las 2.061 con abandono=false**. Cuatro son una
+    # campaña de broadcast con este rationale y `rating_label='excelente'`: "atendió el motivo de
+    # registro al explicar el proceso, PERO NO GUIO AL CLIENTE PASO A PASO NI LE PIDIO LOS DATOS
+    # NECESARIOS PARA CREAR LA CUENTA". La nota maxima con el texto que la desmiente.
+    # POR QUE NO ALCANZABA CON EXIGIR SEÑAL DURA: 41 de esas 45 tienen `pushed=True` (mencionan
+    # el bono o mandan el link), asi que un guard sobre `resolved or pushed` habria atrapado 1.
+    # Lo universal es otro hecho: `se_creo_la_cuenta` da False en las 45.
+    if motivo == "registro":
+        if not abandono and not (resolved or pushed):
+            # EL JUICIO, y de esto SI exime el abandono. Ni link/invitacion concreta ni
+            # entrega: el piso de la rubrica -"guia el alta de la cuenta paso a paso"- no
+            # esta corroborado por NINGUNA señal dura, el 'atendio' es solo palabra del
+            # modelo. Techo en aceptable (falto algo), no castigo.
             if label in ("buena", "excelente"):
                 label, override = "aceptable", True
-        elif label == "excelente":
-            # Guio de verdad (hay empuje o entrega) pero el alta no se cerro -> "se hizo
-            # bien" (4), que es lo que efectivamente paso, no el mejor escenario.
+        elif label == "excelente" and not (abandono and fue_al_punto(target_messages)):
+            # EL ALTA NO SE CERRO, y llegar hasta aca lo prueba. El mejor escenario de la
+            # rubrica es textualmente "cierra el alta y encamina el primer deposito".
+            # LA EXENCION DEL 2026-08-07 SE CONSERVA, PERO ACOTADA A QUIEN SE OFRECIO: esa
+            # decision protege al operador que "ofrecio crear la cuenta y se quedo esperando
+            # una respuesta que nunca llego -- hizo lo que podia". El que solo recito la
+            # plantilla de venta no hizo lo que podia.
+            # MEDIDO el 2026-08-13 sobre las 45 filas en 5 estrellas con abandono: **37
+            # ofrecieron de verdad y conservan su nota; 8 no ofrecieron nada**. (La primera
+            # medicion daba 41 y 4, por el falso positivo de `_AL_PUNTO_RE` con "te registras"
+            # -- ver src/registro.py.)
             label, override = "buena", True
     # PIEZA 5 - UN 5 NO CONVIVE CON UN ERROR DETECTADO. Si el modelo listo algo que falto, la
     # sesion no fue el MEJOR ESCENARIO, que es lo que significa la nota maxima en la escala v4.

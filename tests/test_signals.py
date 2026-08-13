@@ -548,3 +548,25 @@ def test_un_listo_de_cortesia_sigue_sin_acreditar():
                   "listo bro, si necesitas ayuda en algo me dices",
                   "Listo amiga, le dejare enviado los terminos y condiciones del bono"):
         assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+# --- UN ALTA CONSUMADA ES UNA RESOLUCION -------------------------------------------
+# `operator_resolved` era `operator_confirmation or operator_sent_media` y NUNCA consultaba
+# `operator_sent_credentials`, que vive en el mismo modulo. Consecuencia medida: un alta
+# CERRADA -- el operador entrego usuario y clave -- se salteaba como `sin_motivo` o
+# `customer_media_only` cuando el cliente solo decia "gracias" o mandaba un audio, porque
+# `decide_eligibility` (src/router.py) exige `operator_resolved` para no descartar esos casos.
+# MEDIDO el 2026-08-13 sobre la copia fresca: **2 de 48 sesiones salteadas** eran esto, con el
+# operador mandando "usuario: johannavalencia / Contraseña: Sorti123." y el cliente
+# contestando "esta bien, muchas gracias". Antes fueron 5 sobre un corpus mayor.
+
+def test_entregar_credenciales_cuenta_como_resolucion():
+    from src.signals import operator_resolved
+    msgs = [_agent("Estas son tus credenciales Usuario: nancy593 Clave: 12345")]
+    assert operator_resolved(msgs) is True
+
+
+def test_operator_resolved_no_se_dispara_con_cualquier_cosa():
+    # EL GUARD: sigue exigiendo una señal real, no la plantilla de venta.
+    from src.signals import operator_resolved
+    assert operator_resolved([_agent("hola, ¿te ayudo a crear tu cuenta?")]) is False
