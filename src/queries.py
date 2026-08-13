@@ -692,6 +692,74 @@ def motivo_cobertura(cur, account: str, **filters) -> dict:
     return _build_motivo_cobertura(cur.fetchone())
 
 
+# DESGLOSE DE "SIN EVALUAR" POR CAUSA. El KPI de arriba dice CUANTAS no se evaluaron; esta
+# tarjeta dice POR QUE. Es el mismo arreglo que ya se le hizo al promedio por motivo (ver
+# _MOTIVO_STATS_SQL): "era todo lo salteado en una bolsa con el nombre de una sola de sus
+# causas". Sin el desglose, las causas no son comparables entre si -- 313 sesiones donde el
+# NEGOCIO nunca contesto y 228 donde el cliente solo mando una imagen se leen igual, y son
+# problemas de dueño distinto.
+# Lo pidio el negocio el 2026-08-13 despues de encontrar que `redireccion` no se veia: la fila
+# estaba, pero para contar cuantas eran habia que filtrar la lista y contar a ojo.
+# LA POBLACION ES LA MISMA QUE LA DEL KPI (`eval_status <> 'evaluated'`) a proposito: si la
+# tarjeta sumara distinto que el numero que tiene arriba, el lector no sabria a cual creerle.
+# LA COLUMNA `jugador` ES LA ALERTA. Pedida por el negocio el 2026-08-13: "si son internos
+# esta bien, pero si es de canal de jugador si quiero que haya una alerta ahi".
+# MEDIDO: de las 313 sesiones `no_agent_reply`, **160 son GRUPOS de WhatsApp** (segmento
+# `interno`, numero de 18 digitos tipo `120363433857149469`, 129 mensajes de media de gente
+# charlando entre si) y ahi nadie del negocio tiene que contestar. Pero **102 son del segmento
+# `jugador`**: 50 en `Jugadores 🍀`, 32 en `OnlySorti`, 13 en `ModoSorti`, 7 en `sortiGO`, con
+# 1 o 2 mensajes, CERO grupos y 7 a 12 dias de antiguedad. Personas que escribieron y nadie
+# les contesto nunca, escondidas en el mismo renglon que los grupos.
+# SE CUELGA DE `jugador` Y NO DE "no es interno" a proposito: `segment_for_queue` devuelve
+# 'interno' cuando la cola es NULL o vacia (src/segments.py:51-52), asi que 'interno' no es
+# una clasificacion positiva sino "sin cola". `jugador` SI se afirma por nombre de cola.
+# Y se cuenta por SEGMENTO, no por cuenta: `jugador` vive en las dos (50 en `sistemas` + 52 en
+# `datos`), y partirlo por cuenta haria que ninguna mitad se viera grave.
+_SKIP_STATS_SQL = """
+SELECT cs.skip_reason AS skip_reason,
+       count(*) AS n,
+       count(*) FILTER (WHERE cs.segment = 'jugador') AS jugador""" + _SCORES_JOINS + """
+   AND cs.eval_status <> 'evaluated'
+ GROUP BY 1"""
+
+
+def _build_skip_stats(rows) -> list[dict]:
+    """[{skip_reason, n, pct, jugador}] ordenado por volumen. `pct` sobre el TOTAL SALTEADO.
+
+    La pregunta que contesta la tarjeta es "de lo que no se evaluo, cuanto es cada cosa",
+    asi que el denominador es lo salteado y no la poblacion entera.
+
+    `jugador` es el subconjunto que el negocio quiere ver aparte: una sesion salteada de un
+    grupo interno no le debe nada a nadie, y una de un jugador que escribio y no recibio
+    respuesta es una persona esperando.
+
+    Una fila `skipped` sin `skip_reason` seria un bug del worker, y se muestra como
+    `sin_causa` en vez de descartarse: desaparecerla lo esconderia Y romperia el cierre
+    contra el KPI, que es lo unico que avisaria del problema.
+    """
+    total = sum(int(n) for _, n, _ in rows)
+    if not total:
+        return []
+    out = []
+    for r, n, jug in rows:
+        n, jug = int(n), int(jug or 0)
+        if jug > n:
+            # El subconjunto no puede ser mayor que el conjunto. Si pasa, alguien toco el
+            # FILTER y la alerta estaria hablando de una poblacion que no existe.
+            raise ValueError(f"{r!r}: {jug} de jugador sobre {n} sesiones")
+        out.append({"skip_reason": r or "sin_causa", "n": n,
+                    "pct": round(100 * n / total, 1), "jugador": jug})
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
+def skip_stats(cur, account: str, **filters) -> list[dict]:
+    """Por que quedaron sin evaluar las sesiones salteadas (respeta filtros)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_SKIP_STATS_SQL.format(where=where), params)
+    return _build_skip_stats(cur.fetchall())
+
+
 def summary(cur, account: str, **filters) -> dict:
     """Todos los agregados de las tarjetas/cuadros filtro-aware en una llamada: KPIs,
     distribución, tabla de operadores, % depósito por canal, evolución de calidad y
@@ -704,6 +772,7 @@ def summary(cur, account: str, **filters) -> dict:
         "quality_evolution": quality_evolution(cur, account, **filters),
         "motivo_stats": motivo_stats(cur, account, **filters),
         "motivo_cobertura": motivo_cobertura(cur, account, **filters),
+        "skip_stats": skip_stats(cur, account, **filters),
         "ops_motivo": operators_by_motivo(cur, account, **filters),
         "quality_motivo": quality_by_motivo_month(cur, account, **filters),
     }

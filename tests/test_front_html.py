@@ -289,3 +289,102 @@ def test_el_modal_solo_muestra_las_notas_en_prosa_conocidas():
         assert interna not in bloque, f"{interna} no es una nota en prosa para mostrar"
     # y que sea una ALLOW-list: la funcion tiene que consultar el mapa, no negarlo
     assert "_NON_DIM" not in bloque, "sigue siendo deny-list: cada clave nueva se filtra sola"
+
+
+# --- TODO skip_reason QUE EL CODIGO EMITE TIENE QUE TENER ETIQUETA EN EL FRONT -------
+# El negocio reporto el 2026-08-13 que "la info de redireccion no se muestra en el dashboard".
+# No era el scoring: `redireccion` dispara bien (7 de 9 candidatos del bucket C). Era que
+# `SKIP_LABEL` no lo tenia, y el front cae a `SKIP_LABEL[x] || x` -> mostraba el string crudo
+# `redireccion` en el snippet de la fila y en el modal, en vez de una frase legible.
+#
+# Es el mismo tipo de agujero que los dos de tests/test_coaching.py: la etiqueta se agrego a
+# mano, nada ataba la lista del front a lo que el codigo REALMENTE puede escribir en la
+# columna, y por eso un motivo nuevo (`redireccion`, del 2026-08-07) entro sin su etiqueta y
+# nadie se entero hasta que alguien lo vio en pantalla.
+
+def _skip_reasons_del_codigo() -> set[str]:
+    """Los `skip_reason` que las fuentes pueden persistir, leidos del codigo."""
+    encontrados: set[str] = set()
+    for modulo in ("router.py", "sessions.py"):
+        texto = (HTML.parents[1] / "src" / modulo).read_text(encoding="utf-8")
+        # Se emite de DOS formas: `return "skipped", "<motivo>"` (router, 2 valores) y
+        # `return stats, rubric, "skipped", "<motivo>"` (sessions, 4 valores). Anclar en
+        # `return` solo veia la primera y el test pasaba en verde con el bug adentro --
+        # justamente el agujero que este test viene a cerrar.
+        encontrados |= set(re.findall(r'"skipped",\s*"(\w+)"', texto))
+    return encontrados
+
+
+def test_todo_skip_reason_del_codigo_tiene_etiqueta_en_el_front():
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const SKIP_LABEL = {")
+    bloque = html[i:html.index("};", i)]
+    etiquetados = set(re.findall(r'(\w+)\s*:\s*"', bloque))
+    delcodigo = _skip_reasons_del_codigo()
+    assert delcodigo, "no se pudo leer ningun skip_reason del codigo"
+    faltan = delcodigo - etiquetados
+    assert not faltan, (
+        f"estos skip_reason se persisten y el front los muestra crudos: {sorted(faltan)}")
+
+
+def test_las_etiquetas_de_skip_explican_y_no_repiten_la_clave():
+    # Una etiqueta que repite la clave ("redireccion" -> "redireccion") no agrega nada: el
+    # lector del tablero no sabe que significa. Tiene que ser una frase.
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const SKIP_LABEL = {")
+    bloque = html[i:html.index("};", i)]
+    for clave, texto in re.findall(r'(\w+)\s*:\s*"([^"]*)"', bloque):
+        assert len(texto) >= 12, f"la etiqueta de {clave!r} es demasiado corta: {texto!r}"
+        assert texto.lower() != clave.lower().replace("_", " "), \
+            f"la etiqueta de {clave!r} repite la clave: {texto!r}"
+
+
+# --- LA TARJETA DE "SIN EVALUAR POR CAUSA" ------------------------------------------
+# Pedida por el negocio el 2026-08-13. El KPI decia CUANTAS quedaron sin evaluar y no habia
+# forma de ver POR QUE: para contar las derivadas habia que filtrar la lista a ojo.
+
+def test_la_tarjeta_de_sin_evaluar_por_causa_existe_y_usa_el_payload():
+    html = HTML.read_text(encoding="utf-8")
+    assert "Sin evaluar, por causa" in html, "falta el titulo de la tarjeta"
+    assert "summary.skip_stats" in html, "la tarjeta no lee skip_stats del summary"
+    assert "skipStats, skipTotal" in html, "skipStats/skipTotal no se exponen al template"
+
+
+def test_la_tarjeta_de_skip_traduce_la_causa_en_vez_de_mostrar_la_clave():
+    # El bug original era exactamente este: mostrar `redireccion` crudo.
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("Sin evaluar, por causa")
+    bloque = html[i:i + 2200]
+    assert "SKIP_LABEL[s.skip_reason]" in bloque, "la tarjeta no pasa por SKIP_LABEL"
+
+
+def test_la_tarjeta_de_skip_NO_es_clicable():
+    # El filtro de estado es Todas/Evaluadas/Sin evaluar y no sabe de causas: un clic
+    # mostraria TODO lo salteado y no la fila apretada. Prometer un filtro que no existe es
+    # peor que no ofrecerlo.
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("Sin evaluar, por causa")
+    bloque = html[i:i + 2200]
+    assert "@click" not in bloque, "la tarjeta de skip no deberia ser clicable"
+    assert "distrow static" in bloque, "las filas deberian ser estaticas"
+
+
+def test_la_alerta_de_jugador_sin_respuesta_solo_mira_no_agent_reply():
+    # En `datos` casi todo lo salteado es del segmento jugador (429 de 431 en sin_motivo), asi
+    # que marcarlo en cada renglon seria ruido. La alerta significa algo distinto: un jugador
+    # escribio y NADIE contesto. Medido: 102 de las 313 `no_agent_reply` son personas en colas
+    # de jugador; las otras 160 son grupos de WhatsApp, donde nadie debe contestar.
+    html = HTML.read_text(encoding="utf-8")
+    assert "jugadorSinRespuesta" in html
+    m = re.search(r"const jugadorSinRespuesta = computed\((.*?)\);", html, re.S)
+    assert m, "cambio la forma de jugadorSinRespuesta, revisar este test"
+    assert "'no_agent_reply'" in m.group(1), \
+        "la alerta tiene que colgarse SOLO de no_agent_reply"
+
+
+def test_la_alerta_de_jugador_se_pinta_como_problema():
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("Sin evaluar, por causa")
+    bloque = html[i:i + 3500]
+    assert "v-if=\"jugadorSinRespuesta\"" in bloque, "la alerta no esta en la tarjeta"
+    assert "var(--r-malo)" in bloque, "la alerta tiene que leerse como un problema, no como un dato"

@@ -567,6 +567,41 @@
           </div>
         </div>
       </div>
+      <!-- SIN EVALUAR, POR CAUSA. El KPI de arriba dice CUANTAS; esta tarjeta dice POR QUE.
+           Sin el desglose, causas de dueño distinto se leen igual: "el negocio nunca
+           contestó" es un problema de operación, y "el cliente no planteó nada" no es un
+           problema de nadie. Medido el 2026-08-13: en `sistemas` el 51,5% de lo salteado es
+           sin respuesta del negocio, y en `datos` el 62,4% es el cliente que no planteó nada.
+           Dos perfiles opuestos que hoy se leían como un solo número.
+           NO es clicable a proposito: el filtro de estado es Todas/Evaluadas/Sin evaluar y no
+           sabe de causas, asi que un clic mostraría TODO lo salteado y no la fila apretada. -->
+      <div class="card">
+        <h2>Sin evaluar, por causa <small>· por qué quedaron fuera de la estadística · respeta filtros</small></h2>
+        <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 4" :key="n" :style="{width:(90-n*12)+'%'}"></div></div>
+        <div v-else>
+          <div v-for="s in skipStats" :key="s.skip_reason" class="distrow static tip"
+               :data-tip="fmtN(s.n)+' de '+fmtN(skipTotal)+' sesiones sin evaluar ('+s.pct+'%) por esta causa. No entran en el ★ promedio ni en la calidad por motivo.'">
+            <span class="lbl">{{ SKIP_LABEL[s.skip_reason]||s.skip_reason }} <span style="color:var(--faint)">{{ fmtN(s.n) }}</span></span>
+            <span class="barrow"><span class="fill" :style="{width:s.pct+'%', background:'var(--faint)'}"></span><span class="val num">{{ s.pct }}%</span></span>
+          </div>
+          <div v-if="!skipStats.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">No hay sesiones sin evaluar en este filtro.</div>
+          <!-- LA ALERTA DEL JUGADOR SIN RESPUESTA. Va SOLO en `no_agent_reply` y no en cada
+               renglón: en `datos` casi todo es jugador (429 de 431 en sin_motivo), así que
+               marcarlo en todos sería ruido. Acá significa algo distinto — no es que la
+               sesión sea de un jugador, es que un jugador escribió y NADIE le contestó.
+               MEDIDO el 2026-08-13: de 313 `no_agent_reply`, 160 son GRUPOS de WhatsApp
+               (nadie debe contestar ahí) y 102 son personas en las colas de jugador, con 1 o
+               2 mensajes y 7 a 12 días esperando. El número escondía a los dos juntos. -->
+          <div v-if="jugadorSinRespuesta" class="cobertura"
+               :title="'Sesiones del segmento jugador donde el cliente escribió y el negocio nunca respondió. No es lo mismo que un grupo interno sin responder: acá hay una persona esperando. No entran en el ★ promedio, así que no aparecen en ninguna otra tarjeta.'">
+            <b style="color:var(--r-malo)">⚠ {{ fmtN(jugadorSinRespuesta) }} de canal jugador sin respuesta del negocio</b>
+          </div>
+          <div v-if="skipTotal" class="cobertura"
+               :title="'Suma exactamente el KPI de sin evaluar. Una sesión salteada queda registrada para explicar la cobertura, pero no ensucia el promedio.'">
+            <b>{{ fmtN(skipTotal) }}</b> sesiones sin evaluar, repartidas en {{ skipStats.length }} {{ skipStats.length===1?'causa':'causas' }}
+          </div>
+        </div>
+      </div>
   </div>
 
   <div class="cols">
@@ -1132,7 +1167,7 @@ const DESENLACE_TIP = {
   no_le_llego: "El pedido NO se entregó (número dado de baja, bloqueo, o falla de envío). No es del operador ni del cliente: revisar el número o la conexión.",
   dijo_no: "El cliente SÍ contestó, y contestó que no. No es un abandono: es un lead perdido y no hay nada que corregirle al operador.",
 };
-const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada" };
+const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada", redireccion:"derivada a otra línea nuestra" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
 const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", sin_motivo:"Sin motivo" };
 // El SEGMENTO dice QUIÉN está del otro lado del chat, no quién atiende. "Agente" es el
@@ -1551,6 +1586,11 @@ createApp({
     const operators = computed(() => summary.operators||[]);
     const motivoStats = computed(() => summary.motivo_stats||[]);
     const motivoCobertura = computed(() => summary.motivo_cobertura||{});
+    const skipStats = computed(() => summary.skip_stats||[]);
+    const skipTotal = computed(() => skipStats.value.reduce((a,r) => a+r.n, 0));
+    // Solo `no_agent_reply`: es la unica causa donde "de jugador" significa una falla nuestra.
+    const jugadorSinRespuesta = computed(() =>
+      (skipStats.value.find(r => r.skip_reason === 'no_agent_reply')||{}).jugador || 0);
     const opsMotivo = computed(() => { const o = summary.ops_motivo||{}; return { motivos:o.motivos||[], operators:o.operators||[] }; });
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
@@ -1864,7 +1904,7 @@ createApp({
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
       loadingSummary, loadingTickets, loadingConversion, loadError, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, qualMotivoCanvases, convMonth, convPasvCanvases,
-      kpiTiles, distRows, depByChannel, operators, motivoStats, motivoCobertura, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
+      kpiTiles, distRows, depByChannel, operators, motivoStats, motivoCobertura, skipStats, skipTotal, jugadorSinRespuesta, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
       OPS_CAP, expand, qualShown, convPasvShown, qualMotivoShown, hasPoints,
       convOps, convMaxPct, convByOp, convGlobal,
       SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL, DESENLACE_CHIP, DESENLACE_TIP,

@@ -459,7 +459,7 @@ def test_summary_combina_las_secciones():
     out = summary(cur, "datos")
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel",
                         "quality_evolution", "motivo_stats", "motivo_cobertura",
-                        "ops_motivo", "quality_motivo"}
+                        "skip_stats", "ops_motivo", "quality_motivo"}
 
 
 def test_build_quality_evolution_top_n_avg_y_umbral_min():
@@ -1449,3 +1449,93 @@ def test_ningun_sql_lleva_comentarios_de_python():
             if re.match(r"\s*#", linea):
                 culpables.append(f"{nombre}:{n}: {linea.strip()[:70]}")
     assert not culpables, "comentario de Python dentro de un SQL:\n  " + "\n  ".join(culpables)
+
+
+# --- DESGLOSE DE "SIN EVALUAR" POR CAUSA -------------------------------------------
+# El tablero mostraba "sin evaluar" como UN numero (`summary_kpis.no_evaluadas`) y no habia
+# forma de saber por que. Es el mismo problema que ya arreglo `_MOTIVO_STATS_SQL` para el
+# promedio por motivo -- ahi el docstring lo dice textual: "Era todo lo salteado en una bolsa
+# con el nombre de una sola de sus causas". Esta tarjeta le pone nombre a cada causa.
+#
+# Lo pidio el negocio el 2026-08-13 despues de descubrir que `redireccion` no se veia en el
+# tablero: la fila existia, pero para contar cuantas eran habia que filtrar la lista a ojo.
+
+def test_build_skip_stats_ordena_por_volumen_y_saca_porcentaje():
+    from src.queries import _build_skip_stats
+    out = _build_skip_stats([("sin_motivo", 560, 0), ("no_agent_reply", 313, 102),
+                             ("customer_media_only", 228, 0)])
+    assert [r["skip_reason"] for r in out] == [
+        "sin_motivo", "no_agent_reply", "customer_media_only"]
+    assert out[0]["n"] == 560
+    assert sum(r["n"] for r in out) == 1101
+    # el porcentaje es sobre EL TOTAL SALTEADO, no sobre la poblacion entera: la pregunta
+    # de la tarjeta es "de lo que no se evaluo, cuanto es cada cosa".
+    assert out[0]["pct"] == round(100 * 560 / 1101, 1)
+
+
+def test_build_skip_stats_con_cero_filas_no_divide_por_cero():
+    from src.queries import _build_skip_stats
+    assert _build_skip_stats([]) == []
+
+
+def test_build_skip_stats_nombra_la_causa_faltante_en_vez_de_perderla():
+    # Una fila `skipped` sin `skip_reason` es un bug del worker, pero desaparecerla del
+    # desglose lo esconde: el total dejaria de cerrar contra el KPI.
+    from src.queries import _build_skip_stats
+    out = _build_skip_stats([("sin_motivo", 5, 0), (None, 2, 0)])
+    claves = [r["skip_reason"] for r in out]
+    assert "sin_causa" in claves, claves
+    assert sum(r["n"] for r in out) == 7
+
+
+def test_el_desglose_cuenta_LA_MISMA_poblacion_que_el_KPI_de_sin_evaluar():
+    # El KPI usa `eval_status <> 'evaluated'`; el desglose tiene que usar EXACTAMENTE eso,
+    # o la tarjeta suma distinto que el numero que esta arriba de ella.
+    from src.queries import _SKIP_STATS_SQL, _SUMMARY_KPIS_SQL
+    assert "eval_status <> 'evaluated'" in _SKIP_STATS_SQL
+    assert "eval_status <> 'evaluated'" in _SUMMARY_KPIS_SQL
+
+
+def test_skip_stats_esta_en_el_summary():
+    import inspect
+    from src.queries import summary
+    assert "skip_stats" in inspect.getsource(summary)
+
+
+# --- LA ALERTA DEL JUGADOR SIN RESPUESTA -------------------------------------------
+# Pedida por el negocio el 2026-08-13: "si son internos está bien, pero si es de canal de
+# jugador sí quiero que haya una alerta ahí".
+#
+# LO QUE LO MOTIVO, medido: de las 313 sesiones `no_agent_reply`, **160 son GRUPOS de
+# WhatsApp** (segmento `interno`, numero de 18 digitos tipo `120363433857149469`, 129
+# mensajes de media de gente charlando entre si) y ahi nadie del negocio tiene que contestar.
+# Pero **102 son del segmento `jugador`** -- 50 en `Jugadores 🍀`, 32 en `OnlySorti`, 13 en
+# `ModoSorti`, 7 en `sortiGO` --, con 1 o 2 mensajes, CERO grupos y 7 a 12 dias de antiguedad.
+# Son personas que escribieron y nadie les contesto nunca. Ese numero no puede estar
+# escondido dentro del mismo renglon que los grupos.
+#
+# OJO CON EL FALLBACK DE SEGMENTO: `segment_for_queue` devuelve 'interno' cuando la cola es
+# NULL o vacia (src/segments.py:51-52), asi que 'interno' NO es una clasificacion positiva,
+# es "sin cola". Por eso la alerta se cuelga de `jugador`, que SI se afirma por nombre de
+# cola, y no de "no es interno".
+
+def test_build_skip_stats_separa_las_de_jugador():
+    from src.queries import _build_skip_stats
+    out = _build_skip_stats([("no_agent_reply", 313, 102), ("sin_motivo", 560, 0)])
+    por_causa = {r["skip_reason"]: r for r in out}
+    assert por_causa["no_agent_reply"]["jugador"] == 102
+    assert por_causa["sin_motivo"]["jugador"] == 0
+
+
+def test_el_desglose_cuenta_jugador_por_SEGMENTO_no_por_cuenta():
+    # `jugador` vive en las DOS cuentas (50 en sistemas + 52 en datos): contar por cuenta
+    # partiria la alerta en dos y ninguna de las dos mitades se veria grave.
+    from src.queries import _SKIP_STATS_SQL
+    assert "cs.segment = 'jugador'" in _SKIP_STATS_SQL
+
+
+def test_build_skip_stats_nunca_reporta_mas_jugadores_que_sesiones():
+    from src.queries import _build_skip_stats
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        _build_skip_stats([("no_agent_reply", 10, 11)])
