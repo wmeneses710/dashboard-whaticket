@@ -72,6 +72,36 @@ ENTREGA_AGIL = timedelta(minutes=5)   # del traspaso de datos a las credenciales
 # cedula son los dos campos del formulario que no se pueden confundir con otra cosa.
 _EMAIL_RE = re.compile(r"[\w.\-+]+@[\w\-]+\.[a-z]{2,}", re.IGNORECASE)
 _CEDULA_RE = re.compile(r"\b\d{10}\b")
+# EL FORMULARIO BANCARIO NO ES UN TRASPASO DE DATOS DE ALTA. En Ecuador una corrida de 10
+# digitos es la cedula, pero tambien el celular Y el numero de cuenta que viaja en el pedido
+# de retiro. Como el ancla elige el ULTIMO traspaso de la sesion (v12), un pedido de retiro
+# POSTERIOR y sin relacion con el alta se volvia el ancla y la ventana juzgada saltaba ahi.
+# CASO REAL `bcfc1510` (auditoria del 2026-08-13): Arturo entrego credenciales el 10-ago; dos
+# dias despues llego "60 / Vivien Perdomo Poveda / 0802930271 / Banco del Pichincha / Ahorros"
+# y la fila salio con 2 estrellas y "el alta quedó a medias" -- falso, y acusando a una
+# persona con nombre.
+# NO se reusan `_FORMULARIO_RE`/`_MONTO_RE` de src/retiro.py porque ese mensaje real **no
+# contiene las palabras "retiro" ni "monto"**: lo que lo delata es el BANCO.
+# MEDIDO sobre la copia: de 70.559 mensajes del cliente con una corrida de 10 digitos, 55.890
+# (79,2%) traen vocabulario bancario y solo 6.449 traen email.
+_FORM_BANCARIO_RE = re.compile(
+    r"\b(banco|bco|pichincha|produbanco|guayaquil|pac[ií]fico|pacifico|austro|bolivariano"
+    r"|jep|cooperativa|ahorros?|corriente|tipo de cuenta|n[uú]mero de cuenta"
+    r"|cuenta de ahorro)\b",
+    re.IGNORECASE)
+
+
+def _es_traspaso_de_datos(body: str) -> bool:
+    """El mensaje del cliente trae los datos del ALTA (no un formulario de banco).
+
+    El EMAIL gana siempre: es el unico campo del formulario de alta que no se puede
+    confundir con otra cosa. La cedula sola se descarta unicamente cuando el mensaje es
+    claramente bancario, para no romper el camino normal -- muchisimos clientes pasan sus
+    datos sin email y esa cedula tiene que seguir anclando el alta.
+    """
+    if _EMAIL_RE.search(body):
+        return True
+    return bool(_CEDULA_RE.search(body)) and not _FORM_BANCARIO_RE.search(body)
 
 
 @dataclass(frozen=True)
@@ -91,8 +121,17 @@ _COACHING = {
     3: "El usuario y la clave tardaron más de 5 minutos desde que el cliente pasó sus "
        "datos. Es el momento de mayor riesgo de que se caiga: conviene crear la cuenta "
        "cuanto antes.",
-    4: "La cuenta quedó creada. Lo que falta es acompañarlo hasta la primera recarga, "
-       "que es donde el registro se convierte en jugador.",
+    # REESCRITO el 2026-08-13. El texto anterior era "La cuenta quedó creada. Lo que falta es
+    # acompañarlo hasta la primera recarga, que es donde el registro se convierte en jugador."
+    # -- la MISMA clausula que el reproche del rationale de esta rama ("No llegó a acompañarlo
+    # hasta la primera recarga"). MEDIDO sobre el rescore v13: 1.040 de 1.054 filas (98,7%) de
+    # `registro` determinista en 4 estrellas repetian la frase en los dos campos; en el camino
+    # LLM pasaba 0 de 1.541 veces, o sea que era puramente este texto fijo. Decir dos veces
+    # QUE falto no es coaching. Ahora dice COMO: los dos pasos concretos, en el momento en que
+    # el cliente todavia esta en la conversacion.
+    4: "El alta salió rápido y ese es el momento de mayor intención del cliente. Conviene "
+       "pasarle los medios de pago ahí mismo y no cerrar la conversación hasta que llegue "
+       "el comprobante de la recarga.",
 }
 # La rama del rechazo tiene su propio consejo: el del 2 dice "decile cuándo la va a tener" y
 # ahí NUNCA la va a tener -- la cuenta no se puede crear. Ese texto delante de un operador que
@@ -129,7 +168,7 @@ def _traspasos_del_cliente(messages: list[dict]) -> list[dict]:
         if m.get("from_me"):
             continue
         body = m.get("body") or ""
-        if _EMAIL_RE.search(body) or _CEDULA_RE.search(body):
+        if _es_traspaso_de_datos(body):
             out.append(m)
     return out
 
@@ -487,8 +526,7 @@ def se_creo_la_cuenta(messages: list[dict]) -> bool:
     """
     reales = [m for m in messages if not m.get("is_note")]
     dio_datos = any(
-        not m.get("from_me")
-        and (_EMAIL_RE.search(m.get("body") or "") or _CEDULA_RE.search(m.get("body") or ""))
+        not m.get("from_me") and _es_traspaso_de_datos(m.get("body") or "")
         for m in reales
     )
     entrego_creds = any(_is_operator(m) and operator_sent_credentials([m]) for m in reales)

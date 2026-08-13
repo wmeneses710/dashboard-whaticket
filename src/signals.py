@@ -87,6 +87,34 @@ _ACREDITA_SALDO_RE = re.compile(
     r"saldo\w*[^.!?\n]{0,25}(est[aá]|se encuentra)[^.!?\n]{0,12}en (tu|su) cuenta|"
     r"ya (lo|la) (tienes|tiene)[^.!?\n]{0,15}en (tu|su) cuenta)",
     re.IGNORECASE)
+# CUARTO HUECO (2026-08-13): LA SINTAXIS, no el lexico. Los tres huecos anteriores fueron de
+# vocabulario -- faltaba un token. Este es de forma: el operador usa ESTAR o SER con el
+# posesivo y NINGUNA de las palabras que los patrones de arriba exigen.
+#   "Tu recarga ya esta activa y lista"  -> `_LISTO_RE` exige arrancar con "listo" y <=3
+#                                           palabras; "activa" no estaba en ningun lado.
+#   "ya esta su recarga"                 -> `_ACREDITA_SALDO_RE` pide `recarga (exitosa|
+#                                           acreditada|realizada)` en ESE orden.
+#   "ya FUE realizada su recarga"        -> `_ACREDITA_HECHO_RE` acepta `ya (esta|quedo)
+#                                           realizada`, no la copula `fue`.
+# MEDIDO sobre el rescore v13: **33 sesiones de `deposito` en 2 estrellas, de 8 operadores**,
+# con el rationale "nunca le confirmo que la plata habia entrado" cuando SI habian confirmado.
+# Concentrado en personas: Mel 17 (usa una PLANTILLA fija, asi que caia en cada deposito que
+# atendia) y Romina 7. Una plantilla equivocada no es un caso, es un sesgo sistematico.
+#
+# El SUJETO se exige siempre (recarga/carga/saldo): sin el, "ya esta listo" es el "ok" mas
+# comun del idioma. Es la misma cautela que ya tenia `disponible`, que exige el saldo.
+_ACREDITA_SINTAXIS_RE = re.compile(
+    # "ya esta/fue/quedo (lista) su recarga"
+    r"\bya\s+(est[aá]|fue|qued[oó])\s+(list[oa]s?\s+)?(su|tu|la)\s+(recarga|carga|saldo)\b"
+    # "su recarga ya esta/fue activa|lista|acreditada|realizada|hecha|disponible"
+    r"|\b(su|tu|la)\s+(recarga|carga|saldo)\s+ya\s+(est[aá]|fue|qued[oó])\s+"
+    r"(activ[oa]|list[oa]|acreditad[oa]|realizad[oa]|hech[oa]|disponible)"
+    # "ya fue realizada/procesada/acreditada" -- el hueco de la copula `fue`
+    r"|\bya\s+fue\s+(realizad|procesad|acreditad|cargad|abonad)[oa]"
+    # "ya tienes tu recarga"
+    r"|\bya\s+(tienes|tiene|ten[eé]s)\s+(tu|su)\s+(recarga|carga|saldo)\b",
+    re.IGNORECASE)
+
 # Un "listo" seco confirma; un "listo" seguido de otra instruccion, no.
 _LISTO_RE = re.compile(r"^\s*listo\b", re.IGNORECASE)
 # La negacion invalida la frase entera.
@@ -156,6 +184,14 @@ def operator_acreditacion(messages: list[dict]) -> bool:
             if _ACREDITA_FUERTE_RE.search(sin_acentos):
                 return True
             if _ACREDITA_SALDO_RE.search(sin_acentos):
+                return True
+            # LA FAMILIA SINTACTICA LLEVA EL GUARD DEL ACUSE ENCIMA, y es el unico patron que
+            # lo lleva. Los otros se apoyan en un token que ya significa "la plata se movio";
+            # este se apoya en la FORMA, que es mucho mas ancha: "ya esta su recarga EN
+            # PROCESO" tiene la misma sintaxis que "ya esta su recarga" y significa lo
+            # contrario. `_FUTURO_RE` no alcanza porque "en proceso" no es futuro, es curso.
+            if (_ACREDITA_SINTAXIS_RE.search(sin_acentos)
+                    and not _ACUSE_RE.search(sin_acentos)):
                 return True
             # La operacion consumada, salvo que lo realizado sea el TRAMITE y no la plata.
             if (_ACREDITA_HECHO_RE.search(sin_acentos)

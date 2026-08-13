@@ -221,7 +221,55 @@ from src.segments import segment_for_queue
 #     cero sesiones sin nombre.**
 #   - NO se inventa un `user_id`: solo el nombre. La atribucion por entidad sigue necesitando
 #     que el ETL la arregle.
-SCORING_VERSION = "2026.08-rubricas-v13"
+# 2026.08-rubricas-v14 (2026-08-13). SALE DE UNA AUDITORIA DE CUATRO FRENTES sobre el rescore
+# v13 en curso (18.545 filas), con la CAUSA RAIZ compartida por casi todo lo que aparecio: el
+# FALL-THROUGH SIN ANCLA es el 43% de las filas evaluadas (7.531), no las 4.763 que se creia.
+# `deposito`/`retiro`/`registro` quedan etiquetados con su motivo pero corren por el pase
+# generico cuando su gate no encuentra la transaccion -- `registro` lo hace el 59,1% de las
+# veces (2.464 de 4.168), `retiro` el 25,6% y `deposito` el 10,2%. El contraste que lo prueba:
+# con ancla, 0 filas con resolucion mayor a un dia; sin ancla, 63 y un maximo de 78,7 dias.
+# SEIS CAMBIOS, todos quirurgicos. Lo grande (ventana y atribucion del camino sin ancla) NO
+# entra aca: es diseño y toca el pendiente de docs/handoff.md §10.
+#
+#   1. TECHO DEL FALL-THROUGH TRANSACCIONAL (`src/scorer.py`, PIEZA 7). El camino determinista
+#      de `deposito` da 5 estrellas en 12 de 1.822 filas (0,7%); el fall-through, en 102 de 208
+#      (49,5%) -- setenta veces mas, sin un comprobante que auditar. El techo es QUIRURGICO a
+#      proposito: de esas 102, solo 23 AFIRMAN una acreditacion; las otras 79 son consultas
+#      ("¿como recargo?") bien atendidas y conservan el 5. Un techo plano habria demotado a las
+#      79 por un problema que no tienen. En `retiro` la media del operador ES la entrega y
+#      protege el 5.
+#   2. LA REINSISTENCIA DEL LLM DEMOTA (`src/scorer.py`). `friccion` se calculaba solo con
+#      `client_reasked` (el reloj); el `cliente_reinsistio` que el modelo LEE no alimentaba
+#      nada: 87 filas lo tenian en true con `friccion=false` y **71 (81,6%) quedaron en 4 y 5
+#      estrellas**. Una de 5 se desmentia sola: "no ofrecio una solucion alternativa ni escalo
+#      el caso cuando el cliente insistio en que ya llevaba 10 minutos esperando". La
+#      proteccion determinista (`not resolved`) NO se toca.
+#   3. EL 5 NO LLEVA CONSEJO CORRECTIVO, TAMPOCO EN EL CAMINO LLM (`src/scorer.py`). Eran 623
+#      de 4.782 filas en 5 estrellas (13,0%), el 100% de las del pase con LLM (439/439). Los
+#      fragmentos deterministas SI se conservan: el aviso de cambiar la contraseña no es un
+#      reproche al operador, es una instruccion para el cliente.
+#   4. EL CONSEJO DE `registro` 4 DEJA DE REPETIR EL REPROCHE (`src/registro.py`). 1.040 de
+#      1.054 filas (98,7%) tenian "acompañarlo hasta la primera recarga" en el rationale Y en
+#      la recomendacion; en el camino LLM pasaba 0 de 1.541 veces. Ahora dice COMO.
+#   5. EL FORMULARIO BANCARIO NO SECUESTRA EL ANCLA DE `registro` (`src/registro.py`).
+#      `_CEDULA_RE` es `\b\d{10}\b` y en Ecuador eso tambien es el numero de cuenta: un pedido
+#      de retiro POSTERIOR y ajeno se volvia el ancla y el alta cerrada quedaba invisible (caso
+#      `bcfc1510`: 2 estrellas y "el alta quedó a medias", falso). 14 sesiones con nota falsa,
+#      pero la exposicion era enorme: de 70.559 mensajes del cliente con 10 digitos, 55.890
+#      (79,2%) traen vocabulario bancario. El EMAIL sigue ganando siempre.
+#   6. CUARTO HUECO DEL VOCABULARIO DE ACREDITACION (`src/signals.py`). Los tres anteriores
+#      fueron de LEXICO; este es de SINTAXIS: ESTAR/SER + posesivo + recarga/saldo. 33 sesiones
+#      en 2 estrellas de 8 operadores que SI confirmaron, **concentradas en personas**: Mel 17
+#      (usa una PLANTILLA fija, asi que caia en cada deposito que atendia) y Romina 7. Validado
+#      sobre las 171 sesiones reales de la muestra: el vocabulario pasa de ver 28 a ver 58.
+#
+# LOS DOS AGUJEROS DE LOS TESTS que dejaban pasar 3 y 4 con los 13 invariantes en verde:
+# `test_el_cinco_no_lleva_consejo` llamaba a `score_deposito` DIRECTO y nunca al camino real de
+# produccion; y `test_el_coaching_dice_COMO_no_solo_QUE_paso` aceptaba la palabra suelta
+# "acompañ" como prueba de que el texto decia COMO -- y esa palabra era la del REPROCHE. Se
+# cerraron los dos, mas un invariante nuevo que compara los dos campos de la MISMA fila con
+# n-gramas de 5 palabras (4 es el tema, 5 seguidas es la misma oracion dos veces).
+SCORING_VERSION = "2026.08-rubricas-v14"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

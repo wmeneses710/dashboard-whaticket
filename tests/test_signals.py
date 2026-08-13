@@ -460,3 +460,91 @@ def test_el_infinitivo_acreditar_no_es_una_acreditacion():
                   "voy a acreditar su recarga",
                   "al acreditar le aviso"):
         assert not operator_acreditacion(_opm(no_es)), no_es
+
+
+# --- CUARTO HUECO DEL VOCABULARIO: "ESTAR/SER + posesivo + recarga/saldo" ----------
+# Auditoria del 2026-08-13 sobre el rescore v13. **33 sesiones de `deposito` en 2 estrellas,
+# de 8 operadores distintos, donde el operador SI confirmo que la plata entro** y el rationale
+# decia "nunca le confirmo al cliente que la plata habia entrado".
+#
+# Es UNA familia gramatical: el operador usa ESTAR o SER con el posesivo, sin ninguna de las
+# palabras que el vocabulario exigia (`acreditado`, `en tu cuenta`, `disponible`, `realizada`).
+# Los tres huecos anteriores fueron de LEXICO (faltaba un token); este es de SINTAXIS.
+#
+# EL DAÑO ESTABA CONCENTRADO EN PERSONAS, que es lo que lo hace urgente:
+#   Mel     30 sesiones de deposito con la frase, 17 en <=2 estrellas, 3,17 de promedio
+#   Romina  10 sesiones, 7 en <=2 estrellas, 2,60 de promedio
+# La de Mel es una PLANTILLA fija ("Todo listo <nombre>! Tu recarga ya está activa y lista
+# para usarse"), asi que caia en cada deposito que atendia. Una plantilla equivocada no es un
+# caso: es un sesgo sistematico contra una persona.
+#
+# POR QUE NO LO AGARRABA NINGUN PATRON, frase por frase:
+#   "Tu recarga ya esta activa y lista" -> `_LISTO_RE` exige que la frase ARRANQUE con
+#      "listo" y tenga <=3 palabras; "activa" no estaba en ningun lado.
+#   "ya esta su recarga"                -> `_ACREDITA_SALDO_RE` pide `recarga (exitosa|
+#      acreditada|realizada)` en ESE orden, o el saldo con "en tu cuenta".
+#   "ya FUE realizada su recarga"       -> `_ACREDITA_HECHO_RE` acepta `ya (esta|quedo)
+#      realizada` pero no la copula `fue`.
+#   "Todo listo Licet!"                 -> arranca con "Todo", no con "listo".
+
+def test_acreditacion_por_ESTAR_mas_posesivo():
+    for texto in ("ya esta su recarga amigaa", "ya esta tu recarga panita",
+                  "Ya esta su carga mi amiga", "ya esta su saldo amiga",
+                  "Ya esta lista su recarga mi estimado"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_acreditacion_por_la_PLANTILLA_de_la_recarga_activa():
+    # La plantilla que costo 17 sesiones a un solo operador.
+    texto = ("Todo listo Licet! 🎉 Tu recarga ya está activa y lista para usarse, te deseo "
+             "muchísima suerte🍀🤝")
+    assert operator_acreditacion([_agent(texto)]) is True
+
+
+def test_acreditacion_con_la_copula_FUE():
+    for texto in ("Amigo tu recarga ya fue realizada por la otra linea",
+                  "Listo estimado ya fue realizada su recarga",
+                  "ya fue acreditado su saldo"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_acreditacion_por_ya_TIENES_tu_recarga():
+    for texto in ("Ya tienes tu recarga amigo",
+                  "bro, ya funciona la página y ya tienes tu recarga"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+# --- LOS GUARDS DE LA FAMILIA NUEVA (la parte que evita el exceso) ----------------
+# La sintaxis es mucho mas ancha que un token, asi que cada guard esta atado a una frase
+# REAL del dataset que NO debe acreditar.
+
+def test_la_recarga_EN_CURSO_no_acredita_aunque_use_la_misma_sintaxis():
+    # Frases reales de la auditoria: el operador avisa que la esta haciendo, no que la hizo.
+    for texto in ("listo compa ya se esta generando la recarga",
+                  "ya panita ya se esta generando",
+                  "ya esta su recarga en proceso",
+                  "🔜 Tu solicitud de recarga está siendo procesada💳"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_el_futuro_sigue_sin_acreditar_con_la_sintaxis_nueva():
+    for texto in ("en breve tendra su saldo amiga",
+                  "ahorita ya esta su recarga",
+                  "enseguida le cargo la recarga"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_la_negacion_sigue_ganando_con_la_sintaxis_nueva():
+    for texto in ("aun no esta su recarga", "todavia no esta tu saldo",
+                  "no esta acreditada su recarga"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_un_listo_de_cortesia_sigue_sin_acreditar():
+    # El rechazo que YA funcionaba bien y no hay que romper: de las 143 sesiones sin
+    # acreditacion reconocida, 16 decian "listo" en un cierre de cortesia. Son 2 estrellas
+    # legitimas.
+    for texto in ("listo panita cualquier cosa me avisas y te ayudo",
+                  "listo bro, si necesitas ayuda en algo me dices",
+                  "Listo amiga, le dejare enviado los terminos y condiciones del bono"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto

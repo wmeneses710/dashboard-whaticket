@@ -16,10 +16,12 @@ from src.recommendations import refine_recomendacion
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
     cliente_abandono_tras_pedido,
+    operator_acreditacion,
     operator_confirmation,
     operator_maltrato,
     operator_pushed,
     operator_resolved,
+    operator_sent_media,
     client_asked_question,
     client_reasked,
 )
@@ -229,7 +231,19 @@ def score_by_motivo(
     # MODULADOR (calidad del piso): fricción determinista y claridad efectiva. La resolución
     # determinista PROTEGE el piso -> un 'confuso' difuso no baja una transacción confirmada,
     # y la fricción solo demota cuando el operador NO resolvió (lo determinista gana).
-    friccion = reasked and not resolved
+    # LAS DOS REINSISTENCIAS SE SUMAN. `reasked` ve el RELOJ (4+ mensajes con silencio real
+    # del operador, medido con timestamps) y es ciega al CONTENIDO; `cliente_reinsistio` lo
+    # LEE el modelo, y ve al cliente repitiendo el pedido con otras palabras -- insistir sin
+    # necesidad de una rafaga. Antes el campo del LLM se guardaba en `dimensions` y no
+    # alimentaba nada que pudiera demotar: solo entraba en `confuso_corroborado`, que no hace
+    # nada cuando la claridad es 'dudoso' (el valor modal, y el que se asume por omision).
+    # MEDIDO el 2026-08-13 sobre el rescore v13: 87 filas con `cliente_reinsistio=true` y
+    # `friccion=false`, **71 de ellas (81,6%) en 4 y 5 estrellas**. Una de 5 estrellas se
+    # desmentia sola en su rationale: "no ofrecio una solucion alternativa ni escalo el caso
+    # cuando el cliente insistio en que ya llevaba 10 minutos esperando".
+    # `not resolved` NO se toca: si el operador confirmo o mando el comprobante, la operacion
+    # se completo y la insistencia no convierte el trabajo en deficiente. Lo determinista gana.
+    friccion = (reasked or cliente_reinsistio) and not resolved
     # Gate 1: neutralizar 'confuso' cuando el operador resolvió determinista, o cuando el
     # cliente no preguntó nada ni reinsistió (no había nada que aclarar) -> a 'dudoso'.
     neutraliza_confuso = resolved or (not asked and not reasked)
@@ -343,6 +357,35 @@ def score_by_motivo(
                           if isinstance(e, str) and e.strip()]
     if label == "excelente" and errores_reportados:
         label, override = "buena", True
+    # PIEZA 7 - TECHO DEL FALL-THROUGH TRANSACCIONAL. Llegar hasta aca con motivo
+    # `deposito` o `retiro` PRUEBA que su rubrica determinista devolvio None (ver arriba):
+    # el gate no encontro la transaccion. En `deposito` eso significa que NO HAY
+    # COMPROBANTE del cliente, y el comprobante -dice el docstring de
+    # `deposito.es_transaccion`- "se exige por AUDITORIA". Si encima el operador AFIRMA que
+    # la plata entro, la sesion no puede valer el MEJOR ESCENARIO del motivo: la nota maxima
+    # de esa rubrica es una acreditacion confirmada Y verificable, y aca no hay nada que
+    # verificar. Se baja a 'buena' ("se hizo bien"), no mas: la plata pudo haber entrado de
+    # verdad fuera de WhatsApp, y castigar mas seria inventar en la direccion contraria.
+    #
+    # MEDIDO el 2026-08-13 sobre el rescore v13: el camino determinista de `deposito` da 5
+    # estrellas en 12 de 1.822 filas (0,7%); el fall-through, en 102 de 208 (49,5%). Setenta
+    # veces mas. Es la MISMA enfermedad que `es_transaccion` ya midio y cerro para los
+    # depositos CON comprobante que caian aca (5 estrellas el 68,2% de las veces contra el
+    # 3,6% de las transacciones); esto cierra la mitad que quedaba.
+    #
+    # EL TECHO ES QUIRURGICO A PROPOSITO, y esto es lo que evita que sea un exceso: de esas
+    # 102 filas en 5 estrellas, solo 23 (22,5%) afirman una acreditacion. Las otras 79 son
+    # CONSULTAS ("¿como recargo?") bien atendidas, y ahi el 5 es legitimo -- contestar bien
+    # es el mejor escenario disponible de una consulta. Un techo plano habria demotado a las
+    # 79 por un problema que no tienen.
+    #
+    # ASIMETRIA DE `retiro`: ahi el comprobante lo manda el OPERADOR, asi que su media ES la
+    # entrega y respalda la afirmacion -> no se aplica el techo.
+    if motivo in ("deposito", "retiro") and label == "excelente":
+        afirma = operator_acreditacion(target_messages)
+        respaldado = motivo == "retiro" and operator_sent_media(target_messages)
+        if afirma and not respaldado:
+            label, override = "buena", True
     stars = label_to_stars(motivo, label)
     rationale = raw.get("rating_rationale", "")
     if override:
@@ -368,6 +411,22 @@ def score_by_motivo(
             recomendacion = recommender(target_messages, motivo, label) or recomendacion
         except Exception:  # noqa: BLE001 - una falla del coach no debe tumbar el score
             pass
+    # EL 5 NO LLEVA CONSEJO CORRECTIVO, TAMPOCO EN ESTE CAMINO. Las seis rubricas
+    # deterministas ya devuelven "" en 5 estrellas (`deposito._coaching`, `retiro._coaching`,
+    # `registro:317`, `promo:180`, `info:137`); el pase con LLM era el unico que no, porque el
+    # texto lo escribe el modelo y el prompt le pide devolver "" "solo si ya fue excelente y
+    # no aplica ninguna regla" -- y las reglas por motivo aplican casi siempre, asi que en la
+    # practica nunca devolvia vacio.
+    # MEDIDO el 2026-08-13 sobre el rescore v13: 623 de 4.782 filas en 5 estrellas (13,0%)
+    # traian consejo correctivo, y eran el 100% de los 5 de este camino (439 de 439).
+    # 'excelente' significa EL MEJOR ESCENARIO del motivo: un reproche al lado es la misma
+    # contradiccion que la PIEZA 5 arregla en la nota, pero en el campo que la persona LEE.
+    # Los fragmentos deterministas de `refine_recomendacion` NO se tocan y siguen llegando
+    # (ver abajo): el aviso de cambiar la contraseña no es un reproche al operador, es una
+    # instruccion para el CLIENTE, y se agrego a proposito el 2026-08-12 porque no disparaba
+    # justo donde mas aplica.
+    if label == "excelente":
+        recomendacion = ""
     # Capa 1: fragmentos deterministas de alto valor (el LLM casi nunca los produce)
     # anteponen coaching aspiracional; nunca afectan la nota.
     recomendacion = refine_recomendacion(recomendacion, motivo=motivo, target_messages=target_messages)
