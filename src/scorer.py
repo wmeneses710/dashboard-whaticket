@@ -268,6 +268,12 @@ def score_by_motivo(
     # Caso `060725b4`: operador que contesta en 0,2 y 0,4 minutos, cliente que cierra con
     # "Si ya me salio. Todo bien. Muy amable." -- y sacaba 1 estrella.
     confirmo_el_cliente = cliente_confirmo_resuelto(target_messages)
+    if motivo == "registro":
+        from src.registro import operador_dijo_que_ya_tenia_cuenta
+
+        rechazo_de_alta = operador_dijo_que_ya_tenia_cuenta(target_messages)
+    else:
+        rechazo_de_alta = False
     # `cliente_reinsistio` SE RETIRO DE LA NOTA el 2026-08-14 (ver el changelog de v16 en
     # src/store.py). La friccion vuelve a ser lo que `client_reasked` mide con timestamps:
     # el cliente escribio varias veces y el operador TUVO TIEMPO de contestar y no lo hizo.
@@ -300,6 +306,15 @@ def score_by_motivo(
         # con friccion encima caia a 'mala'. La confirmacion del CLIENTE es la evidencia
         # mas dura disponible: si dijo que se resolvio, el motivo se atendio.
         or confirmo_el_cliente
+        # EL ALTA ERA IMPOSIBLE: el cliente YA TENIA cuenta y el operador se lo dijo. La rama
+        # del rechazo existe desde v8 pero vive SOLO en la rubrica determinista, y una sesion
+        # sin traspaso de datos nunca llega ahi (`es_transaccion` da False) -- asi que el
+        # camino LLM la juzgaba por un alta que no se podia hacer.
+        # CASO REAL `9f0f0717` (traido por el negocio el 2026-08-14): "como se puede inscribir
+        # confirmen" -> "ya tienes una cuenta amigo" -> 1 ESTRELLA con "no ofreció ni guio el
+        # proceso de registro". El operador hizo exactamente lo que correspondia.
+        # MEDIDO: 19 de 2.451 filas del camino LLM de `registro` (0,8%).
+        or rechazo_de_alta
     ):
         atendio, override = True, True
     # 'mala' solo con maltrato real: el modelo lo sobre-marca y el maltrato del operador es
@@ -460,6 +475,11 @@ def score_by_motivo(
     # MEDIDO el 2026-08-14 sobre v15: 149 de 283 reclamos (52,7%) son falsos. Las otras 134
     # son ciertas, asi que NO se filtra el texto -- se conserva entero y se le anexa la
     # correccion, para que quien lo lee vea las dos cosas y sepa cual manda.
+    # Y si el alta era IMPOSIBLE, el texto tiene que decirlo: sin esto el operador lee "no
+    # ofreció ni guio el proceso de registro" sobre una cuenta que ya existia.
+    if rechazo_de_alta:
+        rationale = (f"{rationale} [ajuste determinista de hechos: el cliente ya tenía una "
+                     "cuenta, así que no había alta que hacer]")
     if motivo == "registro":
         from src.registro import rationale_desmiente_el_pedido
 

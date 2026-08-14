@@ -92,6 +92,59 @@ _FORM_BANCARIO_RE = re.compile(
     re.IGNORECASE)
 
 
+# EL OPERADOR PIDIENDO UN NUMERO DE CONTACTO. Espejo de `_FORM_BANCARIO_RE`: en Ecuador la
+# corrida de 10 digitos es la cedula, pero tambien el CELULAR. Cuando el operador cierra
+# ofreciendo seguir por otro canal ("mandame tu whatsapp"), el numero que contesta el cliente
+# NO es un traspaso de datos de alta -- y como el ancla elige el ULTIMO traspaso (v12), esa
+# respuesta se volvia el ancla y la ventana saltaba a un episodio sin respuesta del operador.
+# CASO REAL `23049219` (traido por el negocio el 2026-08-14, ya predicho por la auditoria):
+# el operador pidio la cedula, el cliente mando `1501055956` y el operador respondio DOS
+# veces; al final pidio el whatsapp y el cliente mando `0999367608`. El ancla se fue a ese
+# ultimo numero -> 1 estrella y "El cliente entregó sus datos y nadie le respondió", falso.
+# PEDIR UN CAMPO DEL FORMULARIO GANA SIEMPRE. El celular ES uno de los tres campos del alta
+# ("Nombres / Correo electrónico / Número de celular"), asi que "envíame tu numero de celular
+# para crearte la cuenta" es el alta y no un cambio de canal. Sin este guard el patron de
+# abajo se comia dos altas legitimas (`86c8dc60`, `7316b194`), que quedaban SIN ANCLA y caian
+# de 4 a 3 estrellas por "no se puede medir cuanto tardo".
+_PIDE_DATO_DE_ALTA_RE = re.compile(
+    r"\b(c[ée]dula|documento|identificaci[oó]n|celular|correo|e-?mail|usuario|cuenta)\b",
+    re.IGNORECASE)
+# Y esto es OTRO CANAL: el operador cierra ofreciendo seguir por WhatsApp. Deliberadamente
+# corto -- solo el vocabulario que nombra el canal o el acto de escribirle por fuera--,
+# porque "tu numero" a secas es ambiguo y ya se probo que se lleva puestas altas reales.
+_PIDE_OTRO_CANAL_RE = re.compile(
+    r"\b(whats?app|wasap|whasapp|escr[ií]beme|escribirte|escribeme|te dejo mi)\b",
+    re.IGNORECASE)
+
+
+def operador_dijo_que_ya_tenia_cuenta(messages: list[dict]) -> bool:
+    """El operador aviso que el alta NO SE PODIA HACER porque la cuenta ya existia.
+
+    Es la misma señal que ya usa la rama del rechazo de `calificar_registro`, expuesta para
+    que el camino LLM pueda usarla: una sesion sin traspaso de datos nunca llega a la
+    rubrica determinista (`es_transaccion` da False) y quedaba juzgada por un alta
+    imposible. Ver el comentario en `src/scorer.py`.
+    """
+    return any(_is_operator(m) and _RECHAZO_RE.search(m.get("body") or "")
+               for m in messages if not m.get("is_note"))
+
+
+def es_cedula_de_alta(body: str, mensaje_previo_del_operador: dict | None) -> bool:
+    """Una corrida de 10 digitos del cliente, ¿es la cedula del alta o un telefono?
+
+    Lo decide el CONTEXTO -- que venia pidiendo el operador--, no el numero, porque los dos
+    tienen 10 digitos y no hay forma de distinguirlos mirando el cuerpo del cliente.
+    Sin mensaje previo del operador se conserva el comportamiento viejo: falla del lado
+    seguro, porque no se puede afirmar que NO sea una cedula.
+    """
+    if not _CEDULA_RE.search(body or ""):
+        return False
+    previo = (mensaje_previo_del_operador or {}).get("body") or ""
+    if _PIDE_DATO_DE_ALTA_RE.search(previo):
+        return True
+    return not _PIDE_OTRO_CANAL_RE.search(previo)
+
+
 def _es_traspaso_de_datos(body: str) -> bool:
     """El mensaje del cliente trae los datos del ALTA (no un formulario de banco).
 
@@ -173,20 +226,25 @@ def _traspasos_del_cliente(messages: list[dict]) -> list[dict]:
     salia 2 estrellas con "el alta quedo a medias" -- falso.
     """
     out = []
-    ultimo_op = ""
+    ultimo_op_msg = None
     for m in sorted((m for m in messages if not m.get("is_note")),
                     key=lambda m: m["created_at"]):
         if _is_operator(m):
-            ultimo_op = m.get("body") or ""
-            continue
-        # El operador venia pidiendo datos BANCARIOS: el numero suelto los contesta a ellos,
-        # no al alta. El email sigue ganando (lo resuelve `_es_traspaso_de_datos`).
-        if (_FORM_BANCARIO_RE.search(ultimo_op)
-                and not _EMAIL_RE.search(m.get("body") or "")):
+            ultimo_op_msg = m
             continue
         if m.get("from_me"):
             continue
         body = m.get("body") or ""
+        ultimo_op = (ultimo_op_msg or {}).get("body") or ""
+        # El operador venia pidiendo datos BANCARIOS: el numero suelto los contesta a ellos,
+        # no al alta. El email sigue ganando (lo resuelve `_es_traspaso_de_datos`).
+        if _FORM_BANCARIO_RE.search(ultimo_op) and not _EMAIL_RE.search(body):
+            continue
+        # Y lo mismo cuando pedia un NUMERO DE CONTACTO: ver `es_cedula_de_alta`.
+        if (not _EMAIL_RE.search(body)
+                and _CEDULA_RE.search(body)
+                and not es_cedula_de_alta(body, ultimo_op_msg)):
+            continue
         if _es_traspaso_de_datos(body):
             out.append(m)
     return out
@@ -281,6 +339,22 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
             _is_operator(m) for m in reales
             if datos is not None and m["created_at"] > datos["created_at"])
         if not hubo_respuesta:
+            # LA VENTANA NO PUEDE DESMENTIR A LA SESION. Nadie respondio en ESTA ventana pero
+            # el operador entrego credenciales en algun momento de la sesion: entonces la
+            # ventana no esta describiendo el alta -- el ancla eligio la ultima visita y el
+            # alta ocurrio antes. Afirmar "nadie le respondio" seria falso, y encima acusando
+            # a quien SI entrego. Se devuelve None y la juzga el camino LLM, que lee todo.
+            # CASO REAL `caa27f9a` (traido por el negocio el 2026-08-14): 86 mensajes, 6
+            # interacciones, credenciales "Usuario:vicentenava / Contraseña: Sorti123." mas
+            # un link y un video, y la fila salio 1 ESTRELLA con "nadie le respondió".
+            # ACOTADO A ESTA RAMA A PROPOSITO. Aplicarlo a todo el `cred is None` rompia el
+            # invariante que protege `test_no_empareja_los_datos_de_un_alta_con_las_
+            # credenciales_de_otra`: un SEGUNDO intento de alta que falla no puede salvarse
+            # con las credenciales del primero. Ahi el operador SI responde ("ahi te reviso")
+            # y la nota correcta es 2 estrellas, no una amnistia.
+            # MEDIDO: 5 de las 66 filas de registro determinista en 1-2 estrellas.
+            if operator_sent_credentials(messages):
+                return None
             return Registro(1, "mala",
                             "El cliente entregó sus datos y nadie le respondió.",
                             None, False, convirtio)
