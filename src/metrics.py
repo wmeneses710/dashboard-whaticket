@@ -38,6 +38,50 @@ def _is_bot(message: dict) -> bool:
     return message.get("sent_from") == BOT_SENT_FROM
 
 
+# Remitentes automaticos SIN una persona detras. `CHATBOT` era el unico que el sistema
+# reconocia, y hay dos mas.
+# MEDIDO el 2026-08-14 sobre los mensajes del negocio (`from_me`, sin notas):
+#     sent_from      mensajes     con user_id    cuerpos distintos
+#     WEB           1.138.463     1.138.313          353.567
+#     NULL            236.259       230.773            1.932
+#     CHATBOT           5.967             0               28
+#     api               1.167             0              271
+# `CHATBOT` no tiene NI UN mensaje con user_id y repite 28 textos (menus numerados); `api`
+# es marketing masivo ("*¡Aficionados al fútbol, la emoción está por comenzar en Sorti!*").
+# Las plantillas REALES del operador viven en `WEB`, con user_id y 353.567 cuerpos
+# distintos: son poblaciones que no se tocan, asi que esto no se lleva puesta ninguna.
+_REMITENTES_SIN_PERSONA = {BOT_SENT_FROM, "api"}
+
+
+def sin_persona_detras(message: dict) -> bool:
+    """El mensaje lo mando el NEGOCIO pero lo genero una MAQUINA.
+
+    LO DECIDE EL REMITENTE, NO LA FALTA DE `user_id`. La primera version pedia tambien
+    `user_id IS NULL` y sumaba el caso "sin remitente y sin user_id" -- y eso contradice algo
+    que este repo ya midio: **230.773 mensajes de operadores reales vienen sin `sent_from`**,
+    y las SEIS PUERTAS de atribucion (`src/operators.py`) existen justamente porque hay que
+    rescatar por firma o por nota del CRM a los que no traen `user_id`. De 882 sesiones sin
+    user_id ni firma, la nota rescata 860. Un campo vacio no es evidencia de una maquina.
+    """
+    if not message.get("from_me") or message.get("is_note"):
+        return False
+    return message.get("sent_from") in _REMITENTES_SIN_PERSONA
+
+
+def hay_persona_del_negocio(messages: list[dict]) -> bool:
+    """Alguien del equipo escribio de verdad en esta sesion.
+
+    EXISTE PORQUE UN MERITO NECESITA UN AUTOR. Caso `c1034a14`: la sesion entera es un menu
+    de chatbot -- ningun operador humano escribio una palabra-- y salio con **5 estrellas**
+    por "el operador atendió el motivo del depósito al confirmar la operación con una
+    respuesta implícita". El LLM le atribuyo al operador lo que hizo el bot.
+    MEDIDO: de 16.896 sesiones evaluadas, 4 tienen como unico "operador" mensajes sin
+    persona detras, y 1 de esas llego a 4 o 5 estrellas.
+    """
+    return any(m.get("from_me") and not m.get("is_note") and not sin_persona_detras(m)
+               for m in messages)
+
+
 @dataclass(frozen=True)
 class MessageStats:
     message_count: int          # mensajes reales (sin notas)

@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
+from src.metrics import hay_persona_del_negocio
 from src.prompts import build_motivo_prompt, build_motivo_schema
 from src.recommendations import refine_recomendacion
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
@@ -464,8 +465,25 @@ def score_by_motivo(
         respaldado = motivo == "retiro" and operator_sent_media(target_messages)
         if afirma and not respaldado:
             label, override = "buena", True
+    # UN MERITO NECESITA UN AUTOR. Si ningun mensaje del negocio tiene una persona detras
+    # -- chatbot, marketing por api, o sin remitente y sin user_id-- no hay atencion de
+    # operador que premiar, por mas que el modelo la describa.
+    # CASO REAL `c1034a14`: la sesion entera es un menu de chatbot ("/start" -> "Panita como
+    # te ayudo hoy 😎 1. Recargar" -> "1") y salio con **5 ESTRELLAS** por "el operador
+    # atendió el motivo del depósito al confirmar la operación con una respuesta implícita".
+    # El LLM le atribuyo al operador lo que hizo el bot.
+    # SE TOPA, NO SE SALTEA: `1bd61c16` es una persona que escribio 13 veces y solo le
+    # contesto un bot, y ESE 1 estrella es un problema real que saltear esconderia.
+    # MEDIDO: de 16.896 sesiones evaluadas, 4 tienen como unico "operador" mensajes sin
+    # persona detras y 1 llego a 4-5 estrellas.
+    sin_nadie = not hay_persona_del_negocio(target_messages)
+    if sin_nadie and label in ("buena", "excelente"):
+        label, override = "aceptable", True
     stars = label_to_stars(motivo, label)
     rationale = raw.get("rating_rationale", "")
+    if sin_nadie:
+        rationale = (f"{rationale} [ajuste determinista de hechos: no hubo ningún operador "
+                     "detrás de esta conversación]")
     if override:
         rationale = f"[ajuste determinista de hechos] {rationale}"
     # EL TEXTO NO PUEDE DESMENTIR A UNA SEÑAL DURA. El modelo escribe "no se pidieron los

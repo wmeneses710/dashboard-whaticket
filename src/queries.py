@@ -1001,7 +1001,15 @@ def _transcript(msgs: list[dict], juzgada_desde=None) -> list[dict]:
             continue
         # OPERADOR = nuestro personal de soporte. NO "AGENTE": el agente es el CLIENTE
         # vendedor/afiliador (segmento `agente`, cola "Agente 👨👩"), del otro lado del chat.
-        role = "CLIENTE" if not m["from_me"] else ("BOT" if m.get("sent_from") == "CHATBOT" else "OPERADOR")
+        # BOT NO ES SOLO `CHATBOT`. El rotulo miraba un unico remitente, asi que el marketing
+        # masivo por `api` ("*¡Aficionados al fútbol, la emoción está por comenzar!*")
+        # aparecia en el chat como OPERADOR -- indistinguible de una persona. Son 1.167
+        # mensajes. `sin_persona_detras` decide por REMITENTE, nunca por la falta de user_id:
+        # 230.773 mensajes de operadores reales vienen sin `sent_from` (ver src/metrics.py).
+        from src.metrics import sin_persona_detras
+
+        role = ("CLIENTE" if not m["from_me"]
+                else ("BOT" if sin_persona_detras(m) else "OPERADOR"))
         # La HORA de cada mensaje viaja al front. Es lo que permite ver la demora de un
         # vistazo en el chat, que es donde se entiende: un salto de 40 minutos entre el
         # pedido y la respuesta no se lee en ningun KPI. Va en ISO y el front la formatea en
