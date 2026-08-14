@@ -801,7 +801,13 @@
               <span class="chip" v-if="cv.eval_status==='evaluated' && cv.motivo" :title="AYUDA.motivo" style="background:var(--accent-soft);color:var(--accent)">{{ MOTIVO_LABEL[cv.motivo]||cv.motivo }}</span>
               <span class="chip at" :class="'at-'+cv.atencion" v-if="cv.eval_status==='evaluated' && cv.atencion" :title="AYUDA[cv.atencion]">{{ ATENCION_LABEL[cv.atencion]||cv.atencion }}</span>
               <span class="chip" v-if="cv.eval_status==='evaluated'" :style="chipStyle(cv)" :title="AYUDA.estrella"><span class="st">{{ cv.stars }}★</span>{{ cv.rating_label }}</span>
-              <span class="chip skip" v-else :title="AYUDA.sin_evaluar">sin evaluar</span>
+              <!-- LA CAUSA, NO UN GENERICO. Toda sesion salteada mostraba el mismo chip
+                   "sin evaluar", asi que abrir el chat no decia POR QUE habia quedado
+                   afuera: una derivada a otra linea nuestra se leia igual que una donde el
+                   cliente no planteo nada. El negocio lo reporto dos veces con
+                   `redireccion`. El dato ya viajaba en la fila; faltaba pintarlo. -->
+              <span class="chip skip" v-else
+                    :title="(SKIP_LABEL[cv.skip_reason] ? 'Sin evaluar: '+SKIP_LABEL[cv.skip_reason]+'. ' : '')+AYUDA.sin_evaluar">{{ SKIP_LABEL[cv.skip_reason] || 'sin evaluar' }}</span>
               <!-- Compacto a proposito: es un dato de CONTEXTO, no una nota. Un chip entero
                    por sesion sobrecargaria la fila, y pasa en 1 de cada 4. -->
               <span class="chip ab-chip" v-if="cv.cliente_desenlace"

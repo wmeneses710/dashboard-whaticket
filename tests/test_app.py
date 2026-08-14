@@ -325,3 +325,13 @@ def test_conversion_SI_aplica_en_jugador(monkeypatch):
         monkeypatch.setattr(appmod.queries, name, lambda cur, account, **k: {"ok": True})
     d = client.get("/api/conversion", params={"account": "sistemas", "ambiente": "jugador"}).json()
     assert d["aplica"] is True and d["by_operator"] == {"ok": True}
+
+
+def test_el_html_del_tablero_no_se_cachea():
+    """`FileResponse` manda etag y last-modified pero NINGUN Cache-Control, asi que el
+    navegador cachea el HTML heuristicamente y sirve una version vieja del tablero. El
+    negocio reporto dos veces "no veo el cambio" por esto. El etag se conserva: con
+    `no-cache` el navegador revalida y sigue recibiendo 304 si no cambio nada."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "no-cache" in r.headers.get("cache-control", ""), r.headers.get("cache-control")

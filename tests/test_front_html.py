@@ -436,3 +436,17 @@ def test_la_alerta_de_jugador_se_pinta_como_problema():
     bloque = _bloque_skip(html, 3500)
     assert "v-if=\"jugadorSinRespuesta\"" in bloque, "la alerta no esta en la tarjeta"
     assert "var(--r-malo)" in bloque, "la alerta tiene que leerse como un problema, no como un dato"
+
+
+def test_el_chat_muestra_LA_CAUSA_del_skip_y_no_un_generico():
+    """Toda sesion salteada mostraba el mismo chip "sin evaluar" en la lista de chats.
+
+    El negocio lo reporto dos veces con `redireccion`: la causa vivia SOLO en el cuadro
+    agregado, asi que abrir el chat no decia por que habia quedado afuera -- y una sesion
+    derivada a otra linea nuestra se leia igual que una donde el cliente no planteo nada.
+    El dato ya viajaba en la fila (`skip_reason`); solo faltaba pintarlo.
+    """
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index('class="chip skip"')
+    chip = html[i:i + 260]
+    assert "SKIP_LABEL[cv.skip_reason]" in chip, "el chip del chat sigue siendo generico"

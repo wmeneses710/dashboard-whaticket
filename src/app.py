@@ -137,7 +137,12 @@ def _conn():
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(_WEB)
+    # NO SE CACHEA. `FileResponse` manda etag y last-modified pero ningun Cache-Control, y
+    # el navegador entonces cachea el HTML por heuristica y sirve un tablero viejo: el
+    # negocio reporto dos veces "no veo el cambio" por esto. Con `no-cache` el navegador
+    # REVALIDA en cada carga y sigue recibiendo 304 mientras el archivo no cambie, asi que
+    # no cuesta ancho de banda. El index es la app entera; nunca puede quedar viejo.
+    return FileResponse(_WEB, headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/accounts")
