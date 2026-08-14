@@ -350,23 +350,72 @@ def test_la_tarjeta_de_sin_evaluar_por_causa_existe_y_usa_el_payload():
     assert "skipStats, skipTotal" in html, "skipStats/skipTotal no se exponen al template"
 
 
+def _bloque_skip(html: str, largo: int = 2600) -> str:
+    """El tramo del template que pinta las filas de 'sin evaluar'.
+
+    Se ancla en el `v-for` y NO en el titulo: desde que las dos tarjetas se unificaron en
+    una sola con switch (2026-08-14), el titulo vive en el <h2> y el contenido de esta vista
+    queda despues de la vista de calidad, fuera de cualquier ventana razonable.
+    """
+    return html[html.index('v-for="s in skipStats"'):][:largo]
+
+
 def test_la_tarjeta_de_skip_traduce_la_causa_en_vez_de_mostrar_la_clave():
     # El bug original era exactamente este: mostrar `redireccion` crudo.
     html = HTML.read_text(encoding="utf-8")
-    i = html.index("Sin evaluar, por causa")
-    bloque = html[i:i + 2200]
-    assert "SKIP_LABEL[s.skip_reason]" in bloque, "la tarjeta no pasa por SKIP_LABEL"
+    assert "SKIP_LABEL[s.skip_reason]" in _bloque_skip(html), "la tarjeta no pasa por SKIP_LABEL"
 
 
-def test_la_tarjeta_de_skip_NO_es_clicable():
-    # El filtro de estado es Todas/Evaluadas/Sin evaluar y no sabe de causas: un clic
-    # mostraria TODO lo salteado y no la fila apretada. Prometer un filtro que no existe es
-    # peor que no ofrecerlo.
+def test_la_tarjeta_de_skip_SI_es_clicable():
+    """DADO VUELTA el 2026-08-14. Antes este test exigia lo contrario, y la razon era
+    correcta para su momento: "el filtro de estado es Todas/Evaluadas/Sin evaluar y no sabe
+    de causas, asi que un clic mostraria TODO lo salteado y no la fila apretada".
+
+    Ahora el filtro SI sabe de causas (`causa` -> `cs.skip_reason`, ver
+    tests/test_queries.py::test_scores_filters_filtra_por_CAUSA_de_sin_evaluar), asi que el
+    clic muestra exactamente la fila apretada y la promesa se cumple.
+    """
     html = HTML.read_text(encoding="utf-8")
-    i = html.index("Sin evaluar, por causa")
-    bloque = html[i:i + 2200]
-    assert "@click" not in bloque, "la tarjeta de skip no deberia ser clicable"
-    assert "distrow static" in bloque, "las filas deberian ser estaticas"
+    bloque = _bloque_skip(html)
+    assert "toggleCausa(s.skip_reason)" in bloque, "la fila tiene que filtrar por su causa"
+    assert 'role="button"' in bloque, "tiene que anunciarse como boton"
+    assert "distrow static" not in bloque, "ya no son filas estaticas"
+
+
+def test_el_filtro_de_causa_viaja_al_backend():
+    html = HTML.read_text(encoding="utf-8")
+    assert 'p.set("causa", filters.causa)' in html, "la causa no se manda en el query string"
+    assert 'causa:"all"' in html, "la causa no esta en FILTER_DEFAULTS (se arrastraria entre cuentas)"
+    assert "causa:   { label:" in html, "sin entrada en FILTER_META no aparece como chip activo"
+
+
+def test_el_encabezado_con_switch_no_lleva_la_descripcion_adentro():
+    """La descripcion NO puede vivir en el <h2> cuando la tarjeta tiene un control.
+
+    Los `small` de este tablero son frases largas con varios `·`, y en un flex con
+    `flex-wrap` empujaban el switch o se le metian encima al envolver. El titulo queda
+    corto y solo, el control fijo a la derecha (`.ctl` con margin-left:auto) y la
+    descripcion baja a `.card-sub`, su propia linea.
+    """
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index('<h2 class="con-ctl">')
+    encabezado = html[i:html.index("</h2>", i)]
+    assert "<small>" not in encabezado, "la descripcion volvio al titulo y va a chocar con el switch"
+    assert 'class="segmented ctl"' in encabezado, "el control tiene que anclarse a la derecha"
+    # Y la descripcion existe, en su propia linea, para las dos vistas.
+    assert html.count('class="card-sub"') >= 2
+
+
+def test_las_dos_vistas_viven_en_UNA_tarjeta_con_switch():
+    """Eran dos tarjetas con el MISMO layout en una grilla de tres columnas, asi que la
+    segunda caia sola en una fila nueva: no era una decision, era el sobrante."""
+    html = HTML.read_text(encoding="utf-8")
+    assert html.count('class="trio"') == 1
+    inicio = html.index('class="trio"')
+    trio = html[inicio:html.index('<div class="cols">', inicio)]
+    assert trio.count('<div class="card">') == 3, "la grilla de 3 columnas tiene que tener 3 cards"
+    assert 'vistaMotivo===\'calidad\'' in trio, "falta la vista de calidad"
+    assert 'vistaMotivo=\'sin_evaluar\'' in trio, "falta el boton de la vista de sin evaluar"
 
 
 def test_la_alerta_de_jugador_sin_respuesta_solo_mira_no_agent_reply():
@@ -384,7 +433,6 @@ def test_la_alerta_de_jugador_sin_respuesta_solo_mira_no_agent_reply():
 
 def test_la_alerta_de_jugador_se_pinta_como_problema():
     html = HTML.read_text(encoding="utf-8")
-    i = html.index("Sin evaluar, por causa")
-    bloque = html[i:i + 3500]
+    bloque = _bloque_skip(html, 3500)
     assert "v-if=\"jugadorSinRespuesta\"" in bloque, "la alerta no esta en la tarjeta"
     assert "var(--r-malo)" in bloque, "la alerta tiene que leerse como un problema, no como un dato"

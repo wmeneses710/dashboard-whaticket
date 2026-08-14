@@ -160,7 +160,7 @@ _SIN_APAGADOS = f"""NOT EXISTS (
 def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
                     op="all", date_from=None, date_to=None, rating="all",
                     search="", motivo="all", inactivos="ocultar",
-                    ambiente="todos") -> tuple[str, dict]:
+                    ambiente="todos", causa="all") -> tuple[str, dict]:
     """(where_sql, params) para conversation_scores, replicando matchBase del front.
     Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas.
 
@@ -182,6 +182,14 @@ def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
         params["amb_segments"] = list(segments_for_ambiente(ambiente))
     if estado and estado != "all":
         where.append("cs.eval_status = %(estado)s"); params["estado"] = estado
+    # CAUSA de sin evaluar (2026-08-14). Existe para que la tarjeta "Sin evaluar, por causa"
+    # sea CLICABLE: hasta ahora no lo era, y el front lo documentaba — "el filtro de estado
+    # es Todas/Evaluadas/Sin evaluar y no sabe de causas, asi que un clic mostraria TODO lo
+    # salteado y no la fila apretada".
+    # NO hace falta tocar `estado`: las filas evaluadas tienen `skip_reason` NULL, asi que
+    # este predicado ya las deja afuera solo.
+    if causa and causa != "all":
+        where.append("cs.skip_reason = %(causa)s"); params["causa"] = causa
     if motivo and motivo != "all":
         where.append("cs.motivo = %(motivo)s"); params["motivo"] = motivo
     if segment and segment != "all":

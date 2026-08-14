@@ -56,6 +56,32 @@ def test_summary_endpoint_mapea_filtros(monkeypatch):
     assert k["estado"] == "all" and k["canal"] == "all" and k["op"] == "all"  # defaults
 
 
+def test_TODO_parametro_de__filters_llega_al_query_layer(monkeypatch):
+    """El dict de `_filters` es EXPLICITO, no `locals()`: se puede agregar un parametro
+    arriba y olvidarse de la clave abajo. FastAPI lo acepta igual, el endpoint devuelve 200
+    y el filtro NO FILTRA NADA. Paso exactamente eso con `causa` el 2026-08-14.
+
+    Este test recorre la firma real y exige que cada parametro tenga su hueco, asi que
+    cubre tambien el proximo filtro que se agregue.
+    """
+    import inspect
+
+    calls = _stub(monkeypatch, "summary")
+    client.get("/api/summary", params={"account": "datos"})
+    llegan = set(calls["kwargs"])
+    # `from`/`to` viajan renombrados (son palabras reservadas / alias del endpoint).
+    alias = {"date_from": "date_from", "date_to": "date_to"}
+    for nombre in inspect.signature(appmod._filters).parameters:
+        esperado = alias.get(nombre, nombre)
+        assert esperado in llegan, f"'{nombre}' esta en _filters pero NO llega al query layer"
+
+
+def test_causa_llega_con_su_valor(monkeypatch):
+    calls = _stub(monkeypatch, "summary")
+    client.get("/api/summary", params={"account": "datos", "causa": "no_agent_reply"})
+    assert calls["kwargs"]["causa"] == "no_agent_reply"
+
+
 def test_tickets_endpoint_mapea_page_sort_y_filtros(monkeypatch):
     calls = _stub(monkeypatch, "tickets_page")
     r = client.get("/api/tickets", params={

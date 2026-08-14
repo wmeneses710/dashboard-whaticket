@@ -157,6 +157,9 @@ def _filters(
     rating: str = "all",
     search: str = "",
     motivo: str = "all",
+    # Causa de "sin evaluar" (skip_reason). Hace clicable la tarjeta que la desglosa; las
+    # filas evaluadas la tienen NULL, asi que el predicado las excluye solo (ver queries).
+    causa: str = "all",
     inactivos: str = "ocultar",
     ambiente: str = Query("todos", pattern="^(todos|jugador|agente|sin_clasificar)$"),
 ) -> dict:
@@ -175,10 +178,13 @@ def _filters(
     'agente' | 'sin_clasificar'. Se valida con `pattern` para que un typo devuelva 422 en
     vez de degradarse al tablero completo: un número de la audiencia equivocada es peor
     que un error, porque nadie lo nota."""
+    # OJO: este dict es EXPLICITO, no `locals()`. Agregar el parametro de arriba sin agregar
+    # la clave aca hace que FastAPI lo acepte y lo tire a la basura -- el filtro "existe",
+    # devuelve 200 y no filtra nada. Paso el 2026-08-14 con `causa`.
     return {"estado": estado, "segment": segment, "canal": canal, "op": op,
             "date_from": date_from, "date_to": date_to, "rating": rating,
-            "search": search, "motivo": motivo, "inactivos": inactivos,
-            "ambiente": ambiente}
+            "search": search, "motivo": motivo, "causa": causa,
+            "inactivos": inactivos, "ambiente": ambiente}
 
 
 @app.get("/api/scores")

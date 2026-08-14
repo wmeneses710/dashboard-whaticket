@@ -175,6 +175,36 @@ def test_scores_filters_aplica_cada_filtro():
     assert "ILIKE %(q)s" in where and params["q"] == "%juan%"
 
 
+def test_scores_filters_filtra_por_CAUSA_de_sin_evaluar():
+    """La tarjeta de 'sin evaluar por causa' pasa a ser CLICABLE, y para eso el filtro
+    tiene que saber de causas.
+
+    Hasta el 2026-08-14 no lo sabia: el comentario del front decia textual "NO es clicable
+    a proposito: el filtro de estado es Todas/Evaluadas/Sin evaluar y no sabe de causas, asi
+    que un clic mostraria TODO lo salteado y no la fila apretada". Ahora la sabe.
+
+    No hace falta tocar `estado`: las filas evaluadas tienen `skip_reason` NULL, asi que el
+    predicado ya las excluye solo.
+    """
+    where, params = _scores_filters("datos", causa="no_agent_reply")
+    assert "cs.skip_reason = %(causa)s" in where
+    assert params["causa"] == "no_agent_reply"
+
+
+def test_scores_filters_sin_causa_no_agrega_predicado():
+    where, _ = _scores_filters("datos")
+    assert "skip_reason" not in where
+    where_all, _ = _scores_filters("datos", causa="all")
+    assert "skip_reason" not in where_all
+
+
+def test_scores_filters_causa_compone_con_los_demas():
+    where, params = _scores_filters("datos", causa="sin_motivo", segment="jugador")
+    assert "cs.skip_reason = %(causa)s" in where
+    assert "cs.segment = %(segment)s" in where
+    assert params["causa"] == "sin_motivo" and params["segment"] == "jugador"
+
+
 def test_scores_filters_esconde_operadores_apagados_por_DEFAULT():
     """Baja lógica: un operador apagado desaparece de TODO lo que sale de
     conversation_scores — KPIs incluidos, no solo de los cuadros por operador. En `sistemas`

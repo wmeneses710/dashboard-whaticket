@@ -58,6 +58,16 @@
   .acct button { border:none; background:transparent; color:var(--muted); font-family:inherit; font-size:12.5px; font-weight:600; padding:7px 13px; border-radius:8px; cursor:pointer; transition:background .12s,color .12s; }
   .acct button:hover { color:var(--ink); }
   .acct button[aria-pressed="true"] { background:var(--surface); color:var(--ink); box-shadow:var(--shadow); }
+  /* SWITCH DE VISTA DENTRO DE UNA TARJETA. Mismo lenguaje que `.acct` (el selector de
+     cuenta) pero en escala de encabezado: dos caras del MISMO padron, no dos filtros.
+     Vive en el <h2>, asi que hereda su tamaño y hay que resetear peso y transform. */
+  .segmented { display:inline-flex; align-items:center; background:var(--surface-2); border-radius:9px; padding:2px; gap:2px; flex:0 0 auto; }
+  .segmented button { border:none; background:transparent; color:var(--muted); font-family:inherit; font-size:11.5px; font-weight:600; letter-spacing:normal; text-transform:none; padding:4px 10px; border-radius:7px; cursor:pointer; display:inline-flex; align-items:center; gap:5px; transition:background .12s,color .12s; }
+  .segmented button:hover { color:var(--ink); }
+  .segmented button.on { background:var(--surface); color:var(--ink); box-shadow:var(--shadow); }
+  /* Contador al lado de la pestaña: dice CUANTO hay del otro lado sin tener que cambiar. */
+  .segmented .pill { background:color-mix(in srgb, var(--faint) 16%, transparent); color:var(--faint); border-radius:20px; padding:1px 6px; font-size:10.5px; font-weight:700; }
+  .segmented button.on .pill { background:color-mix(in srgb, var(--faint) 22%, transparent); }
   .toggle { border:1px solid var(--border); background:var(--surface); color:var(--muted); border-radius:9px; padding:9px 12px; font-size:12.5px; cursor:pointer; font-family:inherit; transition:border-color .12s,color .12s; }
   .toggle:hover { color:var(--ink); border-color:var(--accent); }
   .toggle:disabled { opacity:.5; cursor:default; }
@@ -160,7 +170,11 @@
   .cols { display:grid; grid-template-columns:1fr 1.7fr; gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .cols{ grid-template-columns:1fr;} }
   .col-stack{ display:flex; flex-direction:column; gap:16px; }
-  /* Fila de 3 cuadros chicos (distribución · % depósito · calidad por motivo) */
+  /* Fila de 3 cuadros chicos (distribución · % depósito · calidad por motivo / sin evaluar).
+     ERAN CUATRO en una grilla de tres, asi que el cuarto -"sin evaluar, por causa"- caia
+     solo en una segunda fila. No era una decision de layout: era el sobrante. Se unifico
+     con "calidad por motivo" en una tarjeta de dos vistas (2026-08-14), que ademas es lo
+     honesto -- son las dos caras del mismo padron: lo evaluado y lo que quedo afuera. */
   .trio { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:16px; }
   @media (max-width:900px){ .trio{ grid-template-columns:1fr;} }
   .charts { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
@@ -170,6 +184,13 @@
   .nvd-lbl { font-size:10.5px; color:var(--faint); text-transform:uppercase; letter-spacing:.05em; margin:2px 0 4px; font-weight:600; }
   .card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:20px; box-shadow:var(--shadow); }
   .card h2 { font-size:13.5px; font-weight:660; margin:0 0 16px; letter-spacing:-.01em; } .card h2 small { font-weight:400; color:var(--faint); letter-spacing:0; }
+  /* ENCABEZADO CON CONTROL A LA DERECHA. Cuando la tarjeta tiene un switch, la descripcion
+     NO puede ir en el <h2>: los `small` de este tablero son largos (una frase con varios
+     `·`) y empujaban el control o se le metian encima al envolver. El titulo queda corto y
+     solo, el control fijo a la derecha, y la descripcion baja a su propia linea. */
+  .card h2.con-ctl { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .card h2.con-ctl .ctl { margin-left:auto; flex:0 0 auto; }
+  .card-sub { margin:0 0 14px; font-size:11.5px; line-height:1.45; color:var(--faint); font-weight:400; }
   .chart-wrap { position:relative; height:260px; }
   .conv-legend { display:flex; gap:18px; font-size:11.5px; color:var(--muted); margin:-4px 0 14px; }
   .conv-legend i { display:inline-block; width:16px; height:3px; border-radius:2px; margin-right:6px; vertical-align:middle; }
@@ -544,10 +565,27 @@
           <div v-if="!depByChannel.length" style="color:var(--faint);padding:10px 4px;font-size:12.5px">Sin datos en este filtro.</div>
         </div>
       </div>
+      <!-- UNA SOLA TARJETA CON DOS VISTAS. Antes eran dos tarjetas separadas con el MISMO
+           layout (distrow + barra + valor), y la segunda existia solo porque no entraba en
+           la fila de tres. Son las dos caras del mismo padron: lo que se evaluo, repartido
+           por motivo, y lo que NO se evaluo, repartido por causa. El switch las cambia y
+           el pie de cada vista declara sobre que poblacion habla. -->
       <div class="card">
-        <h2>Calidad por motivo <small>· ★ promedio segmentado · el global mezcla varas distintas · respeta filtros</small></h2>
+        <h2 class="con-ctl">
+          <span>{{ vistaMotivo==='calidad' ? 'Calidad por motivo' : 'Sin evaluar, por causa' }}</span>
+          <span class="segmented ctl" role="tablist" aria-label="Vista del cuadro">
+            <button type="button" role="tab" :aria-selected="vistaMotivo==='calidad'"
+                    :class="{on: vistaMotivo==='calidad'}" @click="vistaMotivo='calidad'"
+                    title="★ promedio de lo EVALUADO, repartido por motivo.">Calidad</button>
+            <button type="button" role="tab" :aria-selected="vistaMotivo==='sin_evaluar'"
+                    :class="{on: vistaMotivo==='sin_evaluar'}" @click="vistaMotivo='sin_evaluar'"
+                    title="Por qué quedaron fuera las sesiones que NO se evaluaron.">Sin evaluar<span v-if="skipTotal" class="pill">{{ fmtN(skipTotal) }}</span></button>
+          </span>
+        </h2>
+        <p class="card-sub" v-if="vistaMotivo==='calidad'">★ promedio de lo evaluado, por motivo. El global mezcla varas distintas. Clic para filtrar · respeta filtros.</p>
+        <p class="card-sub" v-else>Por qué quedaron fuera de la estadística. Clic en una causa para filtrar · respeta filtros.</p>
         <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 5" :key="n" :style="{width:(90-n*10)+'%'}"></div></div>
-        <div v-else>
+        <div v-else-if="vistaMotivo==='calidad'">
           <div v-for="m in motivoStats" :key="m.motivo"
                :class="['distrow','tip', {active: filters.motivo===m.motivo, dim: filters.motivo!=='all' && filters.motivo!==m.motivo, static: m.motivo==='sin_motivo'}]"
                :role="m.motivo!=='sin_motivo'?'button':null" :tabindex="m.motivo!=='sin_motivo'?0:null" :aria-pressed="filters.motivo===m.motivo"
@@ -566,21 +604,21 @@
             Promedia <b>{{ fmtN(motivoCobertura.con_motivo) }}</b> de {{ fmtN(motivoCobertura.evaluadas) }} evaluadas ({{ motivoCobertura.pct }}%)<template v-if="motivoCobertura.sin_motivo_agente">; {{ fmtN(motivoCobertura.sin_motivo_agente) }} del segmento agente no llevan motivo</template><template v-if="motivoCobertura.sin_motivo_otro">. <b style="color:var(--r-malo)">{{ fmtN(motivoCobertura.sin_motivo_otro) }} sin motivo y sin explicación</b></template>
           </div>
         </div>
-      </div>
-      <!-- SIN EVALUAR, POR CAUSA. El KPI de arriba dice CUANTAS; esta tarjeta dice POR QUE.
-           Sin el desglose, causas de dueño distinto se leen igual: "el negocio nunca
-           contestó" es un problema de operación, y "el cliente no planteó nada" no es un
-           problema de nadie. Medido el 2026-08-13: en `sistemas` el 51,5% de lo salteado es
-           sin respuesta del negocio, y en `datos` el 62,4% es el cliente que no planteó nada.
-           Dos perfiles opuestos que hoy se leían como un solo número.
-           NO es clicable a proposito: el filtro de estado es Todas/Evaluadas/Sin evaluar y no
-           sabe de causas, asi que un clic mostraría TODO lo salteado y no la fila apretada. -->
-      <div class="card">
-        <h2>Sin evaluar, por causa <small>· por qué quedaron fuera de la estadística · respeta filtros</small></h2>
-        <div v-if="loadingSummary" class="skel-bars"><div class="skel" v-for="n in 4" :key="n" :style="{width:(90-n*12)+'%'}"></div></div>
+        <!-- VISTA "SIN EVALUAR". El KPI de arriba dice CUANTAS; esta vista dice POR QUE.
+             Sin el desglose, causas de dueño distinto se leen igual: "el negocio nunca
+             contestó" es un problema de operación, y "el cliente no planteó nada" no es un
+             problema de nadie. Medido el 2026-08-13: en `sistemas` el 51,5% de lo salteado es
+             sin respuesta del negocio, y en `datos` el 62,4% es el cliente que no planteó
+             nada. Dos perfiles opuestos que se leían como un solo número.
+             YA ES CLICABLE (2026-08-14): el filtro aprendio de causas (`causa` ->
+             `cs.skip_reason`), asi que un clic muestra LA FILA APRETADA y no todo lo
+             salteado, que era la razon por la que no lo era. -->
         <div v-else>
-          <div v-for="s in skipStats" :key="s.skip_reason" class="distrow static tip"
-               :data-tip="fmtN(s.n)+' de '+fmtN(skipTotal)+' sesiones sin evaluar ('+s.pct+'%) por esta causa. No entran en el ★ promedio ni en la calidad por motivo.'">
+          <div v-for="s in skipStats" :key="s.skip_reason"
+               :class="['distrow','tip', {active: filters.causa===s.skip_reason, dim: filters.causa!=='all' && filters.causa!==s.skip_reason}]"
+               role="button" tabindex="0" :aria-pressed="filters.causa===s.skip_reason"
+               :data-tip="fmtN(s.n)+' de '+fmtN(skipTotal)+' sesiones sin evaluar ('+s.pct+'%) por esta causa. No entran en el ★ promedio ni en la calidad por motivo. Clic para filtrar.'"
+               @click="toggleCausa(s.skip_reason)" @keydown.enter.prevent="toggleCausa(s.skip_reason)" @keydown.space.prevent="toggleCausa(s.skip_reason)">
             <span class="lbl">{{ SKIP_LABEL[s.skip_reason]||s.skip_reason }} <span style="color:var(--faint)">{{ fmtN(s.n) }}</span></span>
             <span class="barrow"><span class="fill" :style="{width:s.pct+'%', background:'var(--faint)'}"></span><span class="val num">{{ s.pct }}%</span></span>
           </div>
@@ -1187,6 +1225,9 @@ const PAGE_SIZE = 12;
 // quedado afuera de DOS de los tres -> el botón no limpiaba Motivo y cambiar de cuenta se
 // lo arrastraba. Un filtro nuevo se agrega ACÁ y queda cableado en los tres lugares.
 const FILTER_DEFAULTS = { estado:"all", segment:"all", canal:"all", op:"all", motivo:"all",
+                          // CAUSA de sin evaluar. Nace clicable desde la tarjeta unificada;
+                          // no tiene control propio en la barra, igual que `rating`.
+                          causa:"all",
                           sort:"new", from:"", to:"", search:"", rating:"all",
                           // Baja lógica de operadores: por default los apagados no se ven.
                           // "incluir" los trae de vuelta — nunca se borró nada.
@@ -1206,6 +1247,7 @@ const FILTER_META = {
   canal:   { label:"Canal",        show:v => v },
   op:      { label:"Operador",     show:v => v },
   motivo:  { label:"Motivo",       show:v => MOTIVO_LABEL[v] || v },
+  causa:   { label:"Sin evaluar",  show:v => SKIP_LABEL[v] || v },
   rating:  { label:"Calificación", show:v => v + (RATINGS[v] ? " " + RATINGS[v].s + "★" : "") },
   from:    { label:"Desde",        show:v => fmtDate(v) },
   to:      { label:"Hasta",        show:v => fmtDate(v) },
@@ -1283,6 +1325,7 @@ createApp({
       if (filters.canal!=="all") p.set("canal", filters.canal);
       if (filters.op!=="all") p.set("op", filters.op);
       if (filters.motivo!=="all") p.set("motivo", filters.motivo);
+      if (filters.causa!=="all") p.set("causa", filters.causa);
       if (filters.inactivos!=="ocultar") p.set("inactivos", filters.inactivos);
       if (filters.ambiente!=="todos") p.set("ambiente", filters.ambiente);
       if (filters.rating!=="all") p.set("rating", filters.rating);
@@ -1388,6 +1431,14 @@ createApp({
     function clearFilter(k) { filters[k] = FILTER_DEFAULTS[k]; }
     function toggleRating(l) { filters.rating = filters.rating===l ? "all" : l; }
     function toggleMotivo(m) { filters.motivo = filters.motivo===m ? "all" : m; }
+    // CLIC EN UNA CAUSA DE SIN EVALUAR. No toca `estado`: las filas evaluadas tienen
+    // `skip_reason` NULL, asi que el backend ya las deja afuera con el predicado de causa.
+    function toggleCausa(c) { filters.causa = filters.causa===c ? "all" : c; }
+    // Las dos vistas de la MISMA tarjeta. Arrancan en calidad; si el filtro activo es una
+    // causa, se muestra la vista que la explica (si no, el usuario ve un cuadro vacio y no
+    // entiende de donde salio el chip).
+    const vistaMotivo = ref("calidad");
+    watch(() => filters.causa, c => { if (c !== "all") vistaMotivo.value = "sin_evaluar"; });
     function toggleCard(k) { openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k); }
     function setPage(p) { tickets.page = Math.min(Math.max(1,p), tickets.pages); fetchTickets(); }
     function resetFilters() { Object.assign(filters, FILTER_DEFAULTS); }
@@ -1919,7 +1970,8 @@ createApp({
       convOps, convMaxPct, convByOp, convGlobal,
       SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL, DESENLACE_CHIP, DESENLACE_TIP,
       activeChips, isDirty, clearFilter, sinFiltrosNota,
-      switchAccount, toggleRating, toggleMotivo, toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
+      switchAccount, toggleRating, toggleMotivo, toggleCausa, vistaMotivo,
+      toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
