@@ -1934,7 +1934,11 @@ createApp({
     }
 
     // ---- watchers ----
-    watch(() => [filters.estado, filters.segment, filters.canal, filters.op, filters.motivo, filters.rating, filters.from, filters.to, filters.search], debouncedFilter);
+    // OJO: esta lista es EXPLICITA. Un filtro que no este aca cambia el estado, pinta su
+    // chip y NO RECARGA NADA — el cuadro sigue mostrando lo mismo y parece que no filtra.
+    // Paso con `causa` el 2026-08-14: el cuadro de calidad filtraba y el de sin evaluar no,
+    // con el mismo codigo de toggle. Lo ata `test_TODO_filtro_de_FILTER_DEFAULTS_dispara_una_recarga`.
+    watch(() => [filters.estado, filters.segment, filters.canal, filters.op, filters.motivo, filters.causa, filters.rating, filters.from, filters.to, filters.search], debouncedFilter);
     watch(() => filters.sort, () => { tickets.page = 1; fetchTickets(); });
     // `inactivos` es el ÚNICO filtro que también mueve /api/charts (los otros los ignora),
     // así que hay que recargarlos aparte del debounce general.

@@ -450,3 +450,33 @@ def test_el_chat_muestra_LA_CAUSA_del_skip_y_no_un_generico():
     i = html.index('class="chip skip"')
     chip = html[i:i + 260]
     assert "SKIP_LABEL[cv.skip_reason]" in chip, "el chip del chat sigue siendo generico"
+
+
+def test_TODO_filtro_de_FILTER_DEFAULTS_dispara_una_recarga():
+    """El watcher del debounce es una lista EXPLICITA de `filters.x`, igual que el dict de
+    `_filters` en el backend: se agrega un filtro nuevo, el chip aparece, el estado cambia
+    y NO SE RECARGA NADA. Paso exactamente eso con `causa` el 2026-08-14 -- el cuadro de
+    calidad filtraba y el de sin evaluar no, con el mismo codigo de toggle.
+
+    Este test recorre FILTER_DEFAULTS y exige que cada clave se observe en algun `watch`,
+    asi que cubre tambien el proximo filtro que se agregue.
+    """
+    html = HTML.read_text(encoding="utf-8")
+    defaults = html[html.index("const FILTER_DEFAULTS = {"):]
+    defaults = defaults[:defaults.index("};")]
+    # Sin los comentarios: "// Baja lógica de operadores:" aportaba una clave inexistente.
+    defaults = re.sub(r"//[^\n]*", "", defaults)
+    claves = set(re.findall(r"(\w+)\s*:", defaults))
+    # `sort` es ORDEN, no filtro: tiene su propio watcher y no cambia la poblacion.
+    # `ambiente` es un cambio de CONTEXTO: recarga desde `setAmbiente`, no por watcher.
+    # `inactivos` tiene watcher propio porque ademas mueve /api/charts.
+    exentos = {"sort", "ambiente", "inactivos"}
+    # EL WATCHER DEL DEBOUNCE, no cualquiera. La primera version de este test pedia que la
+    # clave apareciera en ALGUN `watch` y pasaba con el bug adentro: `causa` estaba observada
+    # por el watcher que cambia la pestaña, que no recarga nada.
+    m = re.search(r"watch\(\(\) => \[([^\]]*)\], debouncedFilter\)", html)
+    assert m, "cambio la forma del watcher del debounce, revisar este test"
+    observados = m.group(1)
+    for clave in claves - exentos:
+        assert f"filters.{clave}" in observados, \
+            f"'{clave}' esta en FILTER_DEFAULTS pero no dispara la recarga: el chip cambia y no pasa nada"
