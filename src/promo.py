@@ -46,6 +46,7 @@ from src.signals import (
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
 from src.horario import espera_efectiva
+from src.operators import inicio_del_reloj
 
 MODELO_DETERMINISTA = "determinista/promo-v1"
 
@@ -118,7 +119,17 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     respuesta = next(
         (m for m in reales
          if _is_operator(m) and m["created_at"] >= primero_cliente["created_at"]), None)
-    espera = (espera_efectiva(primero_cliente["created_at"], respuesta["created_at"])
+    # EL RELOJ ARRANCA CUANDO EL OPERADOR PUEDE RESPONDER (ver src/operators.inicio_del_reloj):
+    # la espera EN COLA no es suya. v15 aplico esto a deposito/retiro/info y dejo a `promo`
+    # afuera sin que ninguna decision lo registrara (a diferencia de `soporte`, cuya exclusion
+    # SI esta documentada). MEDIDO el 2026-08-14: de 2.746 filas deterministas, 276 tienen
+    # cola sin descontar y 185 de mas de 5 minutos -- proporcionalmente MAS que el motivo que
+    # el arreglo vino a corregir. Caso `2603e73c`: 2 estrellas por "26,3 minutos", de los
+    # cuales 14,6 eran cola.
+    # Se le pasa `messages` y NO `reales`: el helper busca las NOTAS del CRM, y `reales` las
+    # filtra. `promo` no acota ventana, asi que la sesion entera es el alcance correcto.
+    inicio = inicio_del_reloj(messages, primero_cliente["created_at"])
+    espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
               if respuesta else None)
     material = _material_del_operador(reales)
     empuje = operator_pushed(reales)

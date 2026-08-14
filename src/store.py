@@ -346,7 +346,94 @@ from src.segments import segment_for_queue
 #      `operator_sent_credentials`, que vive en el mismo modulo: un alta CERRADA se salteaba
 #      como `sin_motivo`/`customer_media_only` cuando el cliente solo decia "gracias" o mandaba
 #      un audio. 2 de 48 sesiones salteadas de la copia fresca.
-SCORING_VERSION = "2026.08-rubricas-v15"
+# 2026.08-rubricas-v16 (2026-08-14). SALE DE UNA AUDITORIA DE CINCO FRENTES sobre el rescore
+# v15 (comportamiento / calificacion / motivo / contexto / recomendacion), verificada despues
+# hallazgo por hallazgo contra los datos. El hilo que une casi todo: TEXTOS Y SEÑALES QUE
+# AFIRMABAN COSAS QUE LOS DATOS DESMENTIAN.
+#
+#   1. EL RATIONALE NO PUEDE DESMENTIR A UNA SEÑAL DURA. De las 2.311 filas de `registro` por
+#      el camino LLM, 283 traen un rationale que afirma que no se pidieron los datos, y
+#      corriendo `fue_al_punto` sobre los mensajes reales **149 (52,7%) lo afirman EN FALSO**
+#      (134 'buena', 10 'aceptable', 5 'deficiente'). El operador lee una acusacion falsa
+#      pegada a una nota que dice que hizo bien el trabajo.
+#      NO SE USA `_CONTRADICE_RE`, que ya existia y era la solucion "obvia": ese patron es
+#      para la nota de evidencia POR DIMENSION, y sobre el rationale general matchea el
+#      **78,1% de los 'buena'** y el **92,3% de los 'deficiente'** -- habria borrado el texto
+#      de casi todo el padron, incluidas las 134 afirmaciones CIERTAS. El guard mira la señal
+#      (`registro.rationale_desmiente_el_pedido`), conserva el texto del modelo entero y le
+#      anexa la correccion.
+#   2. `cliente_reinsistio` SE RETIRA DE LA NOTA Y DEL TABLERO. Se creo para detectar al
+#      operador que despacha con una PLANTILLA y no contesta el motivo -- ANTES de que
+#      existieran los motivos, cuando no se sabia que queria el cliente. Analizadas las 103
+#      filas donde dispara (categorias NO excluyentes): **39% son RAFAGAS** (mediana entre
+#      mensajes < 60 s: como escribe la gente), **11% DUPLICADOS literales**, **7% el cliente
+#      escribio UNA sola vez** (imposible reinsistir) y solo **14% es el caso buscado**.
+#      Y NO SE ARREGLA CON UN PROMPT MEJOR: el fenomeno real es el **0,3%** del padron (7 de
+#      2.760 con un detector determinista de plantillas) y el piso de ruido del modelo en
+#      `registro` es **9,3%**. La inestabilidad del instrumento es mas de un orden de magnitud
+#      mayor que la cosa a medir. Tampoco sirve el detector determinista: hay 212 plantillas
+#      globales contra **1.675 propias de un operador** en 55 operadores, y una plantilla
+#      recien creada tiene cero usos.
+#      LO QUE OCUPA SU LUGAR: el eje de CLARIDAD. "La respuesta no contesto" es
+#      `claridad='confuso'` corroborado por `(asked and not resolved and not pushed)`, que
+#      nunca dependio de esta señal. Se sigue PERSISTIENDO el dato crudo para poder re-medirlo.
+#      Impacto: de las 57 filas con friccion en el camino LLM, 21 tienen silencio DURO y la
+#      conservan; 36 dejan de estar demotadas por la sola palabra del modelo.
+#   3. LA CORTESIA NO COMPRA EL 5. `label_from_facts` subia a 'excelente' con
+#      `hizo_accion_extra` **o** `cortesia_destacada`, y la cortesia es casi gratis: hay 212
+#      plantillas calidas con mas de 300 usos, la mas repetida con 79.447. **ES EL MISMO BUG
+#      QUE ROMPIO LA ESCALA VIEJA**, documentado en el docstring de src/deposito.py ("el 47,5%
+#      de los depositos llegaba a 5 SOLO por cortesia"): las rubricas deterministas se
+#      rehicieron para arreglarlo y el camino LLM quedo con la regla vieja.
+#      MEDIDO: de 284 'excelente' del camino LLM, **130 (46%) no tienen el acierto
+#      `iniciativa`** -- registro 30, deposito 40, problema 36, retiro 24. Bajan a 4. La
+#      cortesia SIGUE siendo un acierto visible en `aciertos[]`: se reconoce, no se premia con
+#      la nota maxima. Reparto del golpe: maximo -0,025 en el promedio de un operador.
+#   4. EL RELOJ DE `registro` Y `promo` TAMPOCO COBRA LA COLA. v15 aplico `inicio_del_reloj` a
+#      deposito/retiro/info y dejo estos dos afuera SIN que ninguna decision lo registrara (a
+#      diferencia de `soporte`, cuya exclusion SI esta documentada arriba). Corrida pareada
+#      sobre 4.297 filas deterministas: **promo 60 mejoran (2,2%), registro 2, CERO empeoran**.
+#      El 2,2% de promo es proporcionalmente MAYOR que el 1,1% que el arreglo corrigio en
+#      `deposito`: se le habia arreglado el reloj al motivo que menos lo sufria.
+#      Y UNA ENTREGA POSTERIOR A LA ENTREGA NO PROBO NINGUNA COLA: si la nota del CRM llega
+#      DESPUES de las credenciales, no se descuenta nada. Sin ese guard, 6 de las 8 filas que
+#      mejoraban en `registro` decian "Creó la cuenta 0 segundos después de recibir los datos".
+#   5. EL CLIENTE DICIENDO QUE SE RESOLVIO ES EL PISO QUE LE FALTABA A `problema`. Caso
+#      `060725b4`, **1 estrella**: el operador contesta en 0,2 y 0,4 minutos y el cliente cierra
+#      con "Si ya me salió. Todo bien. Muy amable." Tres cosas juntas: `operator_resolved` da
+#      False porque el operador resolvio mandando un LINK (la señal solo mira confirmacion,
+#      media o credenciales); `problema` es el UNICO motivo sin rubrica determinista ni piso;
+#      y con `atendio=False` mas friccion la etiqueta cae a 'mala'.
+#      `signals.cliente_confirmo_resuelto` es ground truth del unico que sabe si su problema se
+#      arreglo. Patron DELIBERADAMENTE conservador, como MALTRATO_PATTERN: exige un verbo de
+#      RESOLUCION, no cortesia. "ya está listo" NO entra -- caso `d594567c`, donde el cliente lo
+#      dice y en el mensaje SIGUIENTE aclara "Estoy esperando su verificación no mas".
+#   6. `worker.py::score_and_store` referenciaba `sess`, que no existe en su scope: NameError
+#      latente en la cuarta puerta de atribucion. La ruta del contenedor usa
+#      `score_session_and_store` (que si define `sess`); la expuesta es scripts/run_scoring.py.
+#   7. LA FILA DICE CUANTA GENTE LA TRABAJO. El tablero valida la interaccion OPERADOR->CLIENTE
+#      y cada interaccion se le asigna a alguien, pero la fila es UNA nota con UN operador.
+#      MEDIDO separando las tres poblaciones que la auditoria mezclaba:
+#          83,2% (12.948) una sola interaccion       -> atribucion honesta
+#          16,8% ( 2.614) multi-interaccion
+#                  2.110  ...con UN SOLO operador    -> atribucion honesta igual
+#                    504  ...con VARIOS operadores   -> 3,2%, el caso a marcar
+#      En esas 504 hay 2.734 interacciones y **1.824 (66,7%) son de alguien que NO recibio la
+#      nota**; llegan a 10 operadores en una fila. NO SE MUEVE LA VENTANA: cualquiera que se
+#      elija deja ese 66,7% afuera del que cobra. Se MARCA
+#      (`dimensions.operadores_en_la_sesion` + chip), igual que `interaccion_juzgada_desde`.
+#
+# DOS CAMBIOS SE PROBARON, SE MIDIERON Y SE REVIRTIERON (el porque vive en el codigo):
+#   - EL GUARD DE DEPOSITO EMBEBIDO (extenderlo a promo/info/soporte_cuenta). 67 filas, 33
+#     bajaban. Al leer los transcripts, **2 de 2 casos muestreados entre los saltos de 5->2
+#     eran FALSOS POSITIVOS**: consultas donde la recarga se HABLA y no ocurre ("De aquí a
+#     mañana recargo"). `deposit_candidate_count` se dispara de mas cuando la recarga es el
+#     TEMA. Subir la vara a `operator_acreditacion` no los elimino.
+#   - RECORTAR LA VENTANA de las filas sin ancla. 2.000 filas cambiaban, con la resolucion
+#     encogiendo 16,8x en la mediana. Pero **1.577 son agilidad**, y esa rubrica AGREGA la
+#     sesion entera por diseño ("La espera más larga fue de 8,1 minutos, SOBRE 17 PEDIDOS").
+#     Habria cambiado una inconsistencia por otra.
+SCORING_VERSION = "2026.08-rubricas-v16"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

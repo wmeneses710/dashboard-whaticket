@@ -66,6 +66,38 @@ def message_stats(messages: list[dict]) -> MessageStats:
     )
 
 
+def reparto_por_interaccion(messages: list[dict]) -> tuple[int, int]:
+    """(cuantas interacciones tuvo la sesion, cuantos operadores DISTINTOS las atendieron).
+
+    EXISTE PARA QUE LA FILA NO MIENTA EN SILENCIO. El tablero valida la interaccion
+    OPERADOR->CLIENTE y cada interaccion se le asigna a alguien, pero una fila de
+    `conversation_scores` es UNA nota con UN operador: si la sesion tuvo varias visitas con
+    gente distinta, la nota se la lleva el de mas mensajes y el trabajo del resto desaparece.
+
+    MEDIDO el 2026-08-14 sobre v15 (15.562 sesiones evaluadas):
+        83,2% (12.948) una sola interaccion         -> atribucion honesta
+        16,8% ( 2.614) multi-interaccion
+                2.110  ...con UN SOLO operador      -> atribucion honesta igual
+                  504  ...con VARIOS operadores     -> 3,2%, el caso a marcar
+    En esas 504 hay 2.734 interacciones y **1.824 (66,7%) son de un operador que NO recibio
+    la nota**; llegan a 10 operadores en una sola fila.
+
+    NO SE MUEVE LA VENTANA para arreglarlo: cualquier ventana deja el 66,7% afuera del que
+    cobra. Partir la sesion es la solucion de raiz y el negocio la rechazo con numeros (ver
+    docs/handoff.md §10). Se MARCA, que es el mismo patron de `interaccion_juzgada_desde`.
+
+    Una interaccion sin operador identificable no suma: dejar 'sin identificar' como si
+    fuera una persona mas seria inventar un operador.
+    """
+    from src.interacciones import partir_en_interacciones
+
+    if not messages:
+        return (0, 0)
+    partes = partir_en_interacciones(messages)
+    duenos = {str(d) for d in (primary_operator(p) for p in partes) if d is not None}
+    return (len(partes), len(duenos))
+
+
 def primary_operator(messages: list[dict]):
     """user_id del operador HUMANO que mas mensajes envio (None si solo bot).
 

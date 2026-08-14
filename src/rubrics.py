@@ -362,6 +362,19 @@ def label_from_facts(
         # de hundir la nota: no hay evidencia determinista de que hizo falta aclarar.
         return "deficiente" if confuso_corroborado else "aceptable"
     # MEJOR ESCENARIO (piso limpio; 'dudoso' no bloquea, solo 'confuso' -ya descartado-).
-    if hizo_accion_extra or cortesia_destacada:
+    # LA CORTESIA NO COMPRA EL 5 (2026-08-14). Hasta aca alcanzaba con `cortesia_destacada`,
+    # y es casi gratis: los operadores usan plantillas calidas por defecto -- 212 plantillas
+    # globales con mas de 300 usos cada una, la mas repetida con 79.447.
+    # YA HABIA PASADO Y ESTA DOCUMENTADO en el docstring de src/deposito.py: la escala vieja
+    # se rompio asi, con **el 47,5% de los depositos llegando a 5 SOLO por cortesia**. Las
+    # rubricas deterministas se rehicieron para arreglarlo (el unico disparador del 5 en
+    # `deposito` es `algo_mas`); el camino LLM quedo con la regla vieja.
+    # MEDIDO el 2026-08-14 sobre v15, camino LLM: de 284 'excelente', **130 (46%) no tienen
+    # el acierto `iniciativa`** -- registro 30, deposito 40, problema 36, retiro 24.
+    # `hizo_accion_extra` describe una ACCION verificable en el transcript; la cortesia
+    # describe el TONO, que la plantilla ya trae puesto. La cortesia NO desaparece: sigue
+    # produciendo su acierto en `aciertos[]` (ver derive_aciertos), o sea que se reconoce
+    # como fortaleza. Lo que deja de hacer es comprar la nota maxima.
+    if hizo_accion_extra:
         return "excelente"
     return "buena"

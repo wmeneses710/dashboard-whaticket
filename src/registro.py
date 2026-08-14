@@ -48,6 +48,7 @@ from src.signals import (
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
 from src.horario import espera_efectiva
+from src.operators import inicio_del_reloj
 
 MODELO_DETERMINISTA = "determinista/registro-v1"
 
@@ -248,7 +249,26 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
     datos = traspasos[0] if traspasos else None
     cred = _credenciales_del_operador(reales)
     convirtio = deposit_candidate_count(reales) > 0
-    espera = (espera_efectiva(datos["created_at"], cred["created_at"])
+    # EL RELOJ ARRANCA CUANDO EL OPERADOR PUEDE RESPONDER (ver src/operators.inicio_del_reloj):
+    # entre que el cliente pasa sus datos y el operador entrega las credenciales puede haber
+    # una cola que no es suya. v15 aplico esto a deposito/retiro/info y dejo a `registro`
+    # afuera sin que ninguna decision lo registrara (a diferencia de `soporte`, cuya exclusion
+    # SI esta documentada). MEDIDO el 2026-08-14: de 1.551 filas deterministas, 88 tienen cola
+    # sin descontar y 57 de mas de 5 minutos -- justo el umbral de ENTREGA_AGIL.
+    # Se busca en `ventana` (que conserva las notas del CRM, a diferencia de `reales`) y desde
+    # el traspaso: una entrega anterior significa que el operador YA tenia la conversacion.
+    # UNA ENTREGA POSTERIOR A LA ENTREGA NO PROBO NINGUNA COLA. Si la nota del CRM llega
+    # DESPUES de que el operador ya dio las credenciales, es que venia trabajando la
+    # conversacion antes de que se la formalizaran: no hay cola, y el principio de
+    # `inicio_del_reloj` es no inventar la que no se puede probar.
+    # MEDIDO el 2026-08-14: sin este guard, 6 de las 8 filas que mejoraban quedaban en cero
+    # y el texto salia "Creó la cuenta 0 segundos después de recibir los datos".
+    inicio = None
+    if datos is not None:
+        inicio = inicio_del_reloj(ventana, datos["created_at"])
+        if cred is not None and inicio > cred["created_at"]:
+            inicio = datos["created_at"]
+    espera = (espera_efectiva(inicio, cred["created_at"])
               if cred and datos and cred["created_at"] > datos["created_at"] else None)
 
     def _mins(td: timedelta | None) -> str:
@@ -274,8 +294,10 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
                         if _is_operator(m) and _RECHAZO_RE.search(m.get("body") or "")
                         and (datos is None or m["created_at"] > datos["created_at"])), None)
         if rechazo is not None:
-            aviso = (espera_efectiva(datos["created_at"], rechazo["created_at"])
-                     if datos is not None else None)
+            # Mismo reloj que la entrega de credenciales: el aviso tampoco puede salir
+            # antes de que el CRM le entregue la conversacion al operador.
+            aviso = (espera_efectiva(inicio, max(rechazo["created_at"], inicio))
+                     if datos is not None and inicio is not None else None)
             if aviso is not None and aviso <= ENTREGA_AGIL:
                 return Registro(
                     4, "buena",
@@ -425,6 +447,34 @@ _AL_PUNTO_RE = re.compile(
     r"necesito (tus|los) datos|env[ií]ame (tus|los) datos|ayudame con (estos |los )?datos",
     re.IGNORECASE,
 )
+
+
+# EL RATIONALE AFIRMANDO QUE NO SE PIDIERON LOS DATOS. Es el unico reclamo del texto libre
+# que una señal DURA del mismo hecho (`fue_al_punto`) puede desmentir sola.
+# DELIBERADAMENTE ESTRECHO: NO incluye "no completo el alta" ni "no cerro el registro",
+# que en el fall-through suelen ser CIERTOS -- llegar ahi prueba que la cuenta no se creo.
+_RECLAMO_SIN_DATOS_RE = re.compile(
+    r"no (se )?(le )?(pidi|solicit)\w*\s+(los\s+|sus\s+|la\s+)?(datos|informaci[oó]n)",
+    re.IGNORECASE,
+)
+
+
+def rationale_desmiente_el_pedido(rationale: str | None, messages: list[dict]) -> bool:
+    """True si el texto afirma que no se pidieron los datos y la señal dura lo desmiente.
+
+    MEDIDO el 2026-08-14 sobre v15: de las 2.311 filas de `registro` por el camino LLM,
+    283 traen ese reclamo y **149 (52,7%) lo hacen EN FALSO** -- `fue_al_punto` da True,
+    el operador si los pidio (134 en 'buena', 10 'aceptable', 5 'deficiente'). Las otras
+    134 lo dicen con razon, y por eso el guard mira la señal en vez de filtrar el texto.
+
+    POR QUE NO SE USA `_CONTRADICE_RE` de src/rubrics.py: ese patron es para la nota de
+    evidencia POR DIMENSION, donde un "pero" invalida el acierto. Sobre el rationale
+    general matchea el 78,1% de los 'buena' y el 92,3% de los 'deficiente' (medido el
+    mismo dia): borraria casi todo el padron, incluidas las 134 afirmaciones ciertas.
+    """
+    if not rationale or not _RECLAMO_SIN_DATOS_RE.search(rationale):
+        return False
+    return fue_al_punto(messages)
 
 
 def fue_al_punto(messages: list[dict]) -> bool:

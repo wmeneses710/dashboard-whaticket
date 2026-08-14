@@ -3,6 +3,7 @@ import src.worker as worker
 from src.worker import (
     fetch_pending,
     fetch_pending_sessions,
+    score_and_store,
     score_session_and_store,
     score_sessions_batch,
 )
@@ -631,6 +632,36 @@ def test_la_ASIGNACION_del_crm_nombra_al_operador_cuando_no_hay_nada_mas(monkeyp
     sess = _session_row("sess1")
     sess["user_id"] = "232fcb19-5dd2-4c22-af04-9074c086488e"   # asignado en el CRM
     score_session_and_store(conn, sess, llm=None, op_map={sess["user_id"]: "Mario"})
+    assert _params_of_upsert(conn)["user_name"] == "Mario"
+
+
+def test_la_SEXTA_puerta_del_path_por_CONVERSACION_no_explota(monkeypatch):
+    """`score_and_store` referenciaba `sess`, que no existe en su scope: NameError.
+
+    HALLADO el 2026-08-14 leyendo el codigo. La sexta puerta de atribucion (la asignacion
+    del CRM) se copio del path por SESION sin renombrar la variable: alli la fila se llama
+    `sess`, aca `conv`. Solo se dispara cuando fallan las tres puertas previas -sin
+    `user_id` en los mensajes, sin firma en el cuerpo y sin nota de cierre-, que es
+    exactamente el caso que la puerta existe para cubrir.
+
+    El loop del contenedor usa `score_session_and_store` y no pasa por aca; la ruta
+    expuesta es `scripts/run_scoring.py`.
+    """
+    msgs = [
+        {"created_at": _T0, "from_me": False, "is_note": False, "body": "hola",
+         "media_type": "chat", "sent_from": None},
+        # Operador SIN user_id y SIN firma, y no hay nota de cierre: las tres primeras
+        # puertas devuelven None y la cuarta tiene que resolver.
+        {"created_at": _T0 + timedelta(seconds=30), "from_me": True, "is_note": False,
+         "body": "te ayudo", "media_type": "chat", "sent_from": "OPERATOR"},
+    ]
+    monkeypatch.setattr(worker, "fetch_messages", lambda cur, cid: msgs)
+    monkeypatch.setattr(worker, "fetch_thread_context", lambda cur, tid, cid: "")
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    conv = _session_row("conv1")
+    conv["user_id"] = "232fcb19-5dd2-4c22-af04-9074c086488e"   # asignado en el CRM
+    score_and_store(conn, conv, llm=None, op_map={conv["user_id"]: "Mario"})
     assert _params_of_upsert(conn)["user_name"] == "Mario"
 
 

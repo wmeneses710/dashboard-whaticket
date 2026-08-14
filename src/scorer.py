@@ -16,6 +16,7 @@ from src.recommendations import refine_recomendacion
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
     cliente_abandono_tras_pedido,
+    cliente_confirmo_resuelto,
     operator_acreditacion,
     operator_confirmation,
     operator_maltrato,
@@ -142,6 +143,24 @@ def score_by_motivo(
     # confirmo ("ing"/"acreditado") es una recarga completada, NO un reclamo. Se exige
     # la confirmacion (a diferencia de retiro) para NO pisar un reclamo genuino de
     # deposito no acreditado, donde el operador no confirmo nada.
+    #
+    # NO SE AMPLIA A promo/info/soporte_cuenta, y esto se PROBO Y SE REVIRTIO el 2026-08-14.
+    # La auditoria pedia extenderlo (34 filas de `promo` y 18 de `info` con
+    # `deposit_candidate_count>0`, juzgadas con una vara mas laxa que la de deposito). Se
+    # implemento y al leer los transcripts salieron FALSOS POSITIVOS en 2 de 2 casos
+    # muestreados entre los saltos mas dramaticos (5->2 estrellas):
+    #   `e8c60130`: "¿Cómo se recibe el regalo de $5?" -> el cliente crea la cuenta y dice
+    #               "De aquí a mañana recargo". NUNCA recargo.
+    #   `d14eecd5`: consulta pura sobre condiciones de bono; cierra con "los depósitos los
+    #               hago aquí contigo", en futuro. NUNCA recargo.
+    # LA CAUSA: `deposit_candidate_count`/`es_transaccion` se disparan de mas cuando la
+    # recarga es el TEMA de la charla y no el hecho -- que es exactamente lo que es una
+    # sesion de `promo`. Subir la vara a `operator_acreditacion` bajaba de 67 a 51 filas
+    # pero NO elimino los falsos positivos.
+    # EL DAÑO DE EQUIVOCARSE ES PEOR QUE EL DEL STATUS QUO: la rubrica de deposito le hace
+    # decir al tablero "nunca le confirmo al cliente que la plata habia entrado" sobre plata
+    # que nunca se movio. `problema` no sufre esto porque ahi la sesion YA es un reclamo
+    # sobre una transaccion concreta.
     elif deposit_hint and motivo == "problema" and operator_confirmation(target_messages):
         motivo = "deposito"
 
@@ -243,7 +262,16 @@ def score_by_motivo(
     # cuando el cliente insistio en que ya llevaba 10 minutos esperando".
     # `not resolved` NO se toca: si el operador confirmo o mando el comprobante, la operacion
     # se completo y la insistencia no convierte el trabajo en deficiente. Lo determinista gana.
-    friccion = (reasked or cliente_reinsistio) and not resolved
+    # EL CLIENTE DICIENDO QUE SE RESOLVIO LE GANA A TODO. Es ground truth del unico que sabe
+    # si su problema se arreglo, y apaga la friccion por la misma razon por la que ya la apaga
+    # `resolved`: una insistencia que TERMINO BIEN no convierte el trabajo en deficiente.
+    # Caso `060725b4`: operador que contesta en 0,2 y 0,4 minutos, cliente que cierra con
+    # "Si ya me salio. Todo bien. Muy amable." -- y sacaba 1 estrella.
+    confirmo_el_cliente = cliente_confirmo_resuelto(target_messages)
+    # `cliente_reinsistio` SE RETIRO DE LA NOTA el 2026-08-14 (ver el changelog de v16 en
+    # src/store.py). La friccion vuelve a ser lo que `client_reasked` mide con timestamps:
+    # el cliente escribio varias veces y el operador TUVO TIEMPO de contestar y no lo hizo.
+    friccion = reasked and not resolved
     # Gate 1: neutralizar 'confuso' cuando el operador resolvió determinista, o cuando el
     # cliente no preguntó nada ni reinsistió (no había nada que aclarar) -> a 'dudoso'.
     neutraliza_confuso = resolved or (not asked and not reasked)
@@ -251,7 +279,11 @@ def score_by_motivo(
     # Gate 2: el 'confuso' solo baja duro a 2★ si está CORROBORADO: el cliente reinsistió
     # (determinista o señal LLM cliente_reinsistio), o es un esquive genuino (preguntó y el
     # operador ni resolvió ni empujó).
-    confuso_corroborado = reasked or cliente_reinsistio or (asked and not resolved and not pushed)
+    # SIN `cliente_reinsistio` (retirado el 2026-08-14): queda el silencio medido o el esquive
+    # genuino. Ese segundo camino es JUSTO el instrumento para "la respuesta no contesto" --
+    # el cliente pregunto y el operador ni resolvio ni empujo-- que es lo que la señal
+    # retirada intentaba capturar por un proxy mucho mas ruidoso.
+    confuso_corroborado = reasked or (asked and not resolved and not pushed)
     override = False
     # PIEZA 1 - PISO: el operador atendió el motivo de forma determinista (corrige la dureza
     # residual del flujo de anuncio en 'datos', donde el LLM exigía respuesta literal).
@@ -262,6 +294,12 @@ def score_by_motivo(
         # cumple respondiendo cordial -> no es deficiente (trampa abandono/sin-necesidad).
         # Solo si el cliente NO preguntó nada: si preguntó y el operador evadió, sigue deficiente.
         or (motivo == "info" and not client_asked_question(target_messages))
+        # EL PISO QUE LE FALTABA A `problema`, y que vale para todos los motivos. Es el
+        # unico motivo sin rubrica determinista ("'problema' NO se floorea determinista...
+        # se deja al modelo"), asi que un `atendio=False` alucinado no lo corregia nada y
+        # con friccion encima caia a 'mala'. La confirmacion del CLIENTE es la evidencia
+        # mas dura disponible: si dijo que se resolvio, el motivo se atendio.
+        or confirmo_el_cliente
     ):
         atendio, override = True, True
     # 'mala' solo con maltrato real: el modelo lo sobre-marca y el maltrato del operador es
@@ -415,6 +453,19 @@ def score_by_motivo(
     rationale = raw.get("rating_rationale", "")
     if override:
         rationale = f"[ajuste determinista de hechos] {rationale}"
+    # EL TEXTO NO PUEDE DESMENTIR A UNA SEÑAL DURA. El modelo escribe "no se pidieron los
+    # datos" sobre sesiones donde `fue_al_punto` prueba que SI se pidieron, y el operador lee
+    # esa acusacion pegada a una nota que dice que hizo bien el trabajo. La ESTRELLA esta
+    # bien (la protege el piso determinista); lo que miente es el texto.
+    # MEDIDO el 2026-08-14 sobre v15: 149 de 283 reclamos (52,7%) son falsos. Las otras 134
+    # son ciertas, asi que NO se filtra el texto -- se conserva entero y se le anexa la
+    # correccion, para que quien lo lee vea las dos cosas y sepa cual manda.
+    if motivo == "registro":
+        from src.registro import rationale_desmiente_el_pedido
+
+        if rationale_desmiente_el_pedido(rationale, target_messages):
+            rationale = (f"{rationale} [ajuste determinista de hechos: el operador SI "
+                         "pidio los datos del alta]")
 
     # ATENCION (#5 + señal de resolucion). Si el operador empujo (link/invitacion/bono por
     # recarga) es 'empujo' aunque el LLM lo subvalue; si no, 'no_respondio' es falso cuando
@@ -466,6 +517,19 @@ def score_by_motivo(
     )
     dims_out = dict(raw.get("dimensions") or {})
     errores = list(dims_out.get("errores") or [])
+    # EL TEXTO DICE LA VERDAD SOBRE SU ORIGEN. `friccion` se arma con dos señales que no
+    # prueban lo mismo: `reasked` mide SILENCIO REAL con timestamps, `cliente_reinsistio` es
+    # juicio libre del modelo y no exige que el operador haya callado. El `or` de v14 se
+    # conserva -esa demotacion es la decision tomada-, pero el error mostrado no puede
+    # acusar de "no respondio" a quien respondio.
+    # MEDIDO el 2026-08-14 sobre v15: de las 57 filas con friccion en el camino LLM, **36
+    # (63,2%) tienen `client_reasked()=False`** -- 32 en 2 estrellas y 4 en 1. En el caso
+    # `43df99b7` el operador contesto CADA UNO de los ~10 mensajes del cliente.
+    # EL TEXTO YA NO PUEDE MENTIR SOBRE SU ORIGEN. Cuando `cliente_reinsistio` alimentaba la
+    # friccion hacia falta una rama por origen, porque 36 de 57 filas decian "sin respuesta
+    # del operador" sobre operadores que habian contestado todo. Retirada esa señal,
+    # `friccion` implica `reasked` -- silencio medido con timestamps-- y la frase es cierta
+    # por construccion.
     if friccion:
         errores.append("El cliente tuvo que reinsistir sin respuesta del operador.")
     if atendio and claridad_eff == "confuso" and confuso_corroborado:
@@ -475,6 +539,9 @@ def score_by_motivo(
     dims_out["errores"] = errores
     dims_out["aciertos"] = aciertos
     dims_out["claridad"] = claridad_eff
+    # SE SIGUE PERSISTIENDO PERO YA NO CALIFICA NI SE MUESTRA (2026-08-14). Queda como dato
+    # crudo del modelo para poder volver a medirlo si alguna vez se consigue un instrumento
+    # que lo detecte: hoy acierta 14 de 103 y el fenomeno real es el 0,3% del padron.
     dims_out["cliente_reinsistio"] = cliente_reinsistio
     # Se persiste para que el FRONT pueda decir "el cliente no contesto mas" en vez de
     # dejar al que mira adivinando por que el tramite quedo abierto. Va en `dimensions`

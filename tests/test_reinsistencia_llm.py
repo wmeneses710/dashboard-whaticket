@@ -79,14 +79,53 @@ RESUELTO = [
 ]
 
 
-def test_la_reinsistencia_del_LLM_demota_cuando_el_operador_no_resolvio():
+# === RETIRADA EL 2026-08-14 ==========================================================
+# La decision de v14 que testeaba este archivo SE REVIRTIO. `cliente_reinsistio` ya no
+# alimenta `friccion` ni `confuso_corroborado`. Los tests de abajo son ahora el guard de
+# esa retirada: verifican que la señal del modelo NO mueve la nota.
+#
+# POR QUE. Analisis del comportamiento sobre las 103 filas de v15 donde la señal dispara
+# (categorias NO excluyentes):
+#     39%  RAFAGA (mediana entre mensajes < 60 s: como escribe la gente)
+#     14%  PLANTILLA justo antes de repetir  <- LO UNICO que se queria medir
+#     11%  DUPLICADO literal del mismo mensaje
+#      7%  el cliente nunca escribio 2 veces seguidas (imposible reinsistir)
+# Acierta su objetivo 14 de 103 veces. El 86% restante es ruido.
+#
+# PARA QUE SE HABIA CREADO: detectar al operador que despacha con una PLANTILLA generica
+# en vez de contestar el motivo, y el cliente tiene que volver a preguntar. Se diseño
+# ANTES de que existieran los MOTIVOS, cuando no se sabia que queria el cliente.
+#
+# POR QUE NO SE ARREGLA CON UN PROMPT MEJOR: el fenomeno real es el **0,3%** del padron
+# (7 de 2.760 filas, medido con un detector determinista de plantillas), y el piso de
+# ruido del modelo en `registro` es **9,3%**. La inestabilidad del instrumento es mas de
+# un orden de magnitud mayor que la cosa a medir. Es un limite de instrumentacion.
+#
+# POR QUE NO SE REEMPLAZA POR EL DETECTOR DETERMINISTA: necesita un diccionario de
+# plantillas, y el diccionario es un blanco movil -- 212 plantillas globales contra
+# **1.675 propias de un operador** repartidas en 55 operadores, y una plantilla recien
+# creada tiene cero usos, o sea que es invisible justo cuando mas querrias detectarla.
+#
+# LO QUE OCUPA SU LUGAR: el eje de CLARIDAD. "La respuesta no contesto" es exactamente
+# `claridad='confuso'` corroborado por `(asked and not resolved and not pushed)` -- el
+# esquive genuino--, que no depende de esta señal y sigue en pie.
+
+def test_la_reinsistencia_del_LLM_ya_NO_demota():
     r = score_by_motivo(target_messages=SIN_RESOLVER, thread_context="",
                         llm=FakeLLM(_resp(cliente_reinsistio=True)))
-    assert r.rating_label == "deficiente" and r.stars == 2
+    assert r.friccion is False
+    assert r.rating_label == "buena" and r.stars == 4
 
 
-def test_sin_reinsistencia_la_nota_no_se_mueve():
-    # EL GUARD del cambio: la señal solo actua cuando el modelo la reporta.
+def test_la_señal_del_modelo_se_sigue_persistiendo_para_poder_medirla():
+    # No se borra el dato crudo: si algun dia hay un instrumento que lo detecte, hace falta
+    # el historico para compararlo.
+    r = score_by_motivo(target_messages=SIN_RESOLVER, thread_context="",
+                        llm=FakeLLM(_resp(cliente_reinsistio=True)))
+    assert r.dimensions.get("cliente_reinsistio") is True
+
+
+def test_sin_reinsistencia_la_nota_tampoco_se_mueve():
     r = score_by_motivo(target_messages=SIN_RESOLVER, thread_context="",
                         llm=FakeLLM(_resp(cliente_reinsistio=False)))
     assert r.rating_label == "buena" and r.stars == 4
@@ -99,19 +138,29 @@ def test_la_resolucion_determinista_sigue_protegiendo_el_piso():
     assert r.rating_label == "buena" and r.stars == 4
 
 
-def test_un_excelente_no_sobrevive_a_la_reinsistencia_sin_resolucion():
-    # El caso real: 5 estrellas con un rationale que admite que el cliente insistio.
+def test_un_excelente_ya_NO_se_cae_por_la_reinsistencia_del_modelo():
     r = score_by_motivo(
         target_messages=SIN_RESOLVER, thread_context="",
         llm=FakeLLM(_resp(cliente_reinsistio=True, hizo_accion_extra=True,
                           cortesia_destacada=True)))
-    assert r.stars < 5
+    assert r.friccion is False
 
 
-def test_la_baja_queda_marcada_como_ajuste_determinista():
-    r = score_by_motivo(target_messages=SIN_RESOLVER, thread_context="",
-                        llm=FakeLLM(_resp(cliente_reinsistio=True)))
-    assert r.rating_rationale.startswith("[ajuste determinista de hechos]")
+def test_el_SILENCIO_MEDIDO_sigue_demotando():
+    """Lo que NO se retiro: `client_reasked`, que exige silencio real con timestamps."""
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 3, 10, 15, 0, tzinfo=timezone.utc)
+
+    def cli(mins, body):
+        return {"created_at": base + timedelta(minutes=mins), "from_me": False,
+                "is_note": False, "body": body, "media_type": "chat"}
+
+    msgs = [cli(0, "necesito ayuda"), cli(7, "hola?"), cli(9, "alguien ahi"),
+            cli(12, "me responden")]
+    r = score_by_motivo(target_messages=msgs, thread_context="",
+                        llm=FakeLLM(_resp(cliente_reinsistio=False)))
+    assert r.friccion is True
+    assert r.stars <= 2
 
 
 # --- EL ABANDONO NO HABILITA EL MEJOR ESCENARIO DE `registro` -----------------------

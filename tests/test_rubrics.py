@@ -56,8 +56,11 @@ def test_hacer_el_trabajo_limpio_YA_ES_buena():
 def test_el_mejor_escenario_es_excelente():
     # Una sola capa por encima del trabajo limpio alcanza para el 5: el uplift dejo
     # de ser un peaje y paso a ser la marca del mejor escenario.
+    # ACOTADO el 2026-08-14: la capa tiene que ser una ACCION. La cortesia sola dejo de
+    # alcanzar -- era el 46% de los 'excelente' del camino LLM y es casi gratis con
+    # plantillas. Ver tests/test_cortesia_no_compra_el_cinco.py.
     assert _facts(atendio=True, extra=True) == "excelente"
-    assert _facts(atendio=True, cortesia=True) == "excelente"
+    assert _facts(atendio=True, cortesia=True) == "buena"
     assert _facts(atendio=True, extra=True, cortesia=True) == "excelente"
 
 

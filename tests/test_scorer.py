@@ -396,6 +396,14 @@ def test_deposit_hint_corrige_retiro_a_deposito():
 
 
 def test_deposit_hint_no_toca_otros_motivos():
+    """El guard de motivo NO se extiende mas alla de `retiro` y `problema`.
+
+    Se probo extenderlo a promo/info/soporte_cuenta el 2026-08-14 y SE REVIRTIO: al leer
+    los transcripts salieron falsos positivos en 2 de 2 casos muestreados entre los saltos
+    de 5 a 2 estrellas (`e8c60130`, `d14eecd5`) -- consultas donde la recarga se HABLA pero
+    no ocurre. `deposit_candidate_count` se dispara de mas cuando la recarga es el TEMA.
+    Ver el comentario en src/scorer.py.
+    """
     r = score_by_motivo(target_messages=MSGS, thread_context="",
                         llm=FakeLLM(_motivo_resp(motivo="info")), deposit_hint=True)
     assert r.motivo == "info"

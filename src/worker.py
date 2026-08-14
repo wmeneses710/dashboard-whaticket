@@ -19,7 +19,7 @@ from src.interacciones import tiempos_de
 from src.registro import interaccion_juzgada as interaccion_juzgada_registro
 from src.retiro import interaccion_juzgada as interaccion_juzgada_retiro
 from src.llm import OllamaClient
-from src.metrics import message_stats, primary_operator
+from src.metrics import message_stats, primary_operator, reparto_por_interaccion
 from src.operators import build_operator_map, nombre_de_notas, operator_name
 from src.redireccion import build_lineas_map
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
@@ -73,10 +73,13 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
     # la trabajo: medida contra la verdad conocida acierta el 91%, contra el 99% de la nota.
     # Cierra el hueco exacto: de 882 sesiones sin user_id ni firma, la nota rescata 860 y la
     # asignacion nombra a los 22 que quedan.
+    # La fila de ENTRADA de este path se llama `conv` (en el path por sesion es `sess`):
+    # copiar la puerta sin renombrar dejaba un NameError latente, que solo se disparaba
+    # cuando fallaban las tres puertas previas. Ver tests/test_worker.py.
     op_name = ((op_map.get(str(operator_id)) if operator_id else None)
                or operator_name(msgs, operator_id)
                or nombre_de_notas(msgs)
-               or (op_map.get(str(sess["user_id"])) if sess.get("user_id") else None))
+               or (op_map.get(str(conv["user_id"])) if conv.get("user_id") else None))
     rubric = decide_rubric(
         operator_message_count=stats.operator_message_count,
         bot_message_count=stats.bot_message_count,
@@ -306,6 +309,21 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
         # necesita el negocio. MEDIDO: 48 clientes recibieron el pedido y nunca lo abrieron,
         # y esos desenlaces no se veian en ninguna parte. Ver signals.desenlace_del_cliente.
         record["dimensions"].setdefault("cliente_desenlace", desenlace_del_cliente(msgs))
+        # CUANTA GENTE TRABAJO ESTA SESION. La fila es UNA nota con UN operador, pero una
+        # sesion que el CRM reabre puede tener varias visitas con gente distinta: la nota se
+        # la lleva el de mas mensajes y el trabajo del resto desaparece del denominador.
+        # MEDIDO el 2026-08-14: 504 de 15.562 sesiones evaluadas (3,2%) tienen VARIOS
+        # operadores, y ahi **1.824 de 2.734 interacciones (66,7%) son de alguien que NO
+        # recibio la nota**. Llegan a 10 operadores en una sola fila.
+        # NO SE MUEVE LA VENTANA: cualquiera que se elija deja ese 66,7% afuera del que cobra.
+        # Partir es la solucion de raiz y el negocio la rechazo con numeros (docs/handoff.md
+        # §10). Se MARCA, igual que `interaccion_juzgada_desde`: la fila declara su limite en
+        # vez de mentir en silencio. Sacarlas del promedio moveria como maximo +0,045
+        # estrellas, asi que el agregado NO es el problema -- lo es la fila que abre el
+        # supervisor y lee "Anggie Belén, 4 estrellas" sobre una charla de seis personas.
+        interacciones, operadores = reparto_por_interaccion(msgs)
+        record["dimensions"].setdefault("interacciones_en_la_sesion", interacciones)
+        record["dimensions"].setdefault("operadores_en_la_sesion", operadores)
     with conn.cursor() as cur:
         upsert_score(cur, record)
     conn.commit()

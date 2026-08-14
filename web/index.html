@@ -844,10 +844,10 @@
                     title="El comprobante está en el chat pero el modelo no lo vio (o al revés). Sirve para auditar al modelo; la nota se calcula con el dato duro, no con su observación.">revisar: el modelo y el comprobante no coinciden</span>
               <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='claro'" :title="AYUDA.claro" style="background:color-mix(in srgb, var(--r-buena) 15%, transparent);color:var(--r-buena)">claro</span>
               <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='confuso'" :title="AYUDA.confuso" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">poco claro</span>
-              <span class="chip" v-if="dimReinsistio(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)"
-                    :title="AYUDA.reinsistio">el cliente reinsistió</span>
               <span class="chip" v-if="dimAbandono(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
                     :title="AYUDA.abandono">el cliente no contestó más</span>
+              <span class="chip" v-if="dimVariosOperadores(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
+                    :title="AYUDA.varios_operadores">{{ dimOperadores(modal.detail.dimensions) }} operadores en esta sesión</span>
               <button type="button" class="ap-mini" @click="ayudaModal=!ayudaModal"
                       :title="'Qué significan estas etiquetas'">?</button>
             </div>
@@ -1133,7 +1133,7 @@ const AMBIENTES = [
 const AYUDA_TITULO = {
   motivo:"Motivo", estrella:"La estrella", empujo:"empujó", pasivo:"pasivo",
   no_respondio:"no respondió", claro:"claro", confuso:"poco claro",
-  reinsistio:"el cliente reinsistió", abandono:"el cliente no contestó más",
+  abandono:"el cliente no contestó más", varios_operadores:"varios operadores",
   sin_evaluar:"sin evaluar", reloj:"⏱ el reloj", convirtio:"volvió después",
 };
 const AYUDA = {
@@ -1146,6 +1146,7 @@ const AYUDA = {
   confuso:     "La respuesta dejó al cliente teniendo que inferir. Solo baja la nota si además el cliente reinsistió o el operador no resolvió.",
   reinsistio:  "El cliente insistió y el negocio estuvo callado al menos 5 minutos. Una ráfaga de mensajes seguidos NO cuenta: si nadie tuvo tiempo de contestar, no fue ignorado.",
   abandono:    "El operador pidió u ofreció algo concreto y el cliente no volvió a escribir. El trámite quedó abierto por el cliente, no por el operador: lo que dependía de esa respuesta no cuenta como error.",
+  varios_operadores: "El CRM reabrió esta conversación y la atendieron varias personas en visitas distintas. La nota se le atribuye a quien más mensajes escribió, así que describe UN tramo y no el trabajo de todos. Son el 3,2% de las sesiones; en ellas dos de cada tres interacciones son de alguien que no figura en esta fila.",
   sin_evaluar: "Esta sesión no lleva nota. Queda registrada para que la cobertura sea visible, sin ensuciar los promedios.",
   reloj:       "Cuánto tardó la primera respuesta del negocio desde que el cliente escribió.",
   convirtio:   "Esta persona escribía por primera vez y después volvió a interactuar. Es la señal de que el contacto no se perdió.",
@@ -1668,7 +1669,6 @@ createApp({
       if (d.atencion && AYUDA[d.atencion]) out.push(d.atencion);
       if (dims.claridad === "claro") out.push("claro");
       if (dims.claridad === "confuso") out.push("confuso");
-      if (dims.cliente_reinsistio) out.push("reinsistio");
       if (dims.cliente_abandono) out.push("abandono");
       return out;
     }
@@ -1715,10 +1715,20 @@ createApp({
     function dimAciertos(dims) { return (dims&&dims.aciertos)||[]; }
     function dimRecom(dims) { return (dims&&dims.recomendacion)||""; }
     function dimClaridad(dims) { return (dims&&dims.claridad)||""; }
-    function dimReinsistio(dims) { return !!(dims&&dims.cliente_reinsistio); }
+    // `cliente_reinsistio` se retiro del tablero el 2026-08-14: acertaba 14 de 103 y el 86%
+    // restante eran rafagas, duplicados o clientes que escribieron una sola vez. Se sigue
+    // persistiendo en dimensions, pero no se muestra ni califica (ver src/scorer.py).
     // El cliente dejó de contestar tras un pedido del operador. Se muestra para que el
     // trámite abierto no se lea como culpa del operador (ver src/signals.py).
     function dimAbandono(dims) { return !!(dims&&dims.cliente_abandono); }
+    // CUÁNTA GENTE TRABAJÓ ESTA SESIÓN. La fila es UNA nota con UN operador, pero el CRM
+    // reabre la misma conversación y puede haber varias visitas con gente distinta: la nota
+    // se la lleva el de más mensajes. Son 504 de 15.562 sesiones (3,2%), y ahí el 66,7% de
+    // las interacciones son de alguien que no recibió la nota. No se puede repartir sin
+    // partir la sesión (rechazado por el negocio, docs/handoff.md §10), así que se DECLARA:
+    // el que mira sabe que la nota describe un tramo y no las seis visitas.
+    function dimOperadores(dims) { return (dims&&dims.operadores_en_la_sesion)||0; }
+    function dimVariosOperadores(dims) { return dimOperadores(dims) > 1; }
     function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
       const opT = opTip(r);
       const opCell = opT? `<span title="${esc(opT)}" style="border-bottom:1px dotted currentColor;cursor:help">${esc(opName(r))}</span>` : esc(opName(r));
@@ -1915,7 +1925,8 @@ createApp({
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
       fmtDur, dimTiempos, dimConteos, dimHechos,
-      dimClaridad, dimReinsistio, dimAbandono, nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,
+      dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores,
+      nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,
       ayudaAbierta, ayudaModal, AMBIENTES, setAmbiente, horaEc, bubGap,
       CONTRAPARTE, contraparte, ambienteLbl, SEGMENT_LABEL,
       tagsDeLaSesion };

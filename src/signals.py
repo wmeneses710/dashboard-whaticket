@@ -542,6 +542,57 @@ def client_reasked(messages: list[dict], *, min_run: int = 4,
     return False
 
 
+# EL CLIENTE DICIENDO QUE SE RESOLVIO. Es la evidencia mas dura que existe -- ground truth
+# del unico que sabe si su problema se arreglo -- y hasta el 2026-08-14 no estaba en ninguna
+# señal. `operator_resolved` mira SOLO lo que hizo el operador (confirmacion, media o
+# credenciales), asi que un operador que resuelve mandando un LINK no cuenta como que
+# resolvio: caso `060725b4`, 1 estrella con el cliente cerrando "Si ya me salio. Todo bien.
+# Muy amable."
+#
+# PATRON DELIBERADAMENTE CONSERVADOR, como MALTRATO_PATTERN: exige un verbo de RESOLUCION.
+# La cortesia suelta NO confirma nada ("gracias", "listo", "ok", "muy amable"): el repo ya
+# midio en `client_sin_motivo` que agradecer no significa que el tramite se cumplio.
+# "YA ESTA LISTO" NO ENTRA, y es el falso positivo que lo enseño. Caso `d594567c`: el
+# cliente dice "Ya está listo" a los 19,9 minutos y en el mensaje SIGUIENTE aclara "Estoy
+# esperando su verificación no mas" -- estaba diciendo "ya hice mi parte", no "se resolvio".
+# El verbo tiene que nombrar el DESENLACE, no el estado del cliente.
+_CONFIRMA_CLIENTE_RE = re.compile(
+    r"\bya\s+(me\s+)?(sali[oó]|funciona|anda|sirve|pude|puedo|entr[eé]|ingres[eé]|"
+    r"lo\s+veo|me\s+lleg[oó]|me\s+carg[oó]|me\s+aparec[eé])\b"
+    r"|\b(se\s+)?solucion[oó]\b|\bsolucionado\b|\bqued[oó]\s+resuelto\b",
+    re.IGNORECASE,
+)
+# La negacion delante invierte el sentido ("aun no me llego", "no funciona todavia"). Se
+# chequea sobre el mismo mensaje: sin esto, "no funciona" matchearia "funciona".
+_NIEGA_RE = re.compile(r"\b(no|aun|a[uú]n|todav[ií]a|sigue|nunca)\b", re.IGNORECASE)
+
+
+def cliente_confirmo_resuelto(messages: list[dict]) -> bool:
+    """True si el CLIENTE dijo que su problema quedo resuelto, DESPUES de que el operador
+    hablara.
+
+    El orden importa: "ya me salio ese error otra vez" como primer mensaje es el PLANTEO,
+    no la confirmacion de un arreglo. Solo cuenta lo que el cliente dice una vez que el
+    negocio ya intervino.
+
+    Las notas del CRM no cuentan (las escribe el operador) y los mensajes del negocio
+    tampoco: la señal existe justamente para no depender de lo que el operador afirma.
+    """
+    hablo_el_negocio = False
+    for m in messages:
+        if m.get("is_note"):
+            continue
+        if m.get("from_me"):
+            hablo_el_negocio = True
+            continue
+        if not hablo_el_negocio:
+            continue
+        cuerpo = (m.get("body") or "").strip()
+        if _CONFIRMA_CLIENTE_RE.search(cuerpo) and not _NIEGA_RE.search(cuerpo):
+            return True
+    return False
+
+
 def operator_resolved(messages: list[dict]) -> bool:
     """El operador atendio el motivo de forma determinista: confirmo o mando media.
 
