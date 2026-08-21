@@ -27,11 +27,15 @@ def test_sin_respuesta_del_cliente_se_saltea():
     ) == ("skipped", "no_customer_reply")
 
 
-def test_sin_respuesta_del_negocio_se_saltea():
-    # solo hablo el cliente (ni humano ni bot respondieron)
+def test_sin_respuesta_del_negocio_YA_NO_se_saltea():
+    """CAMBIO DEL 2026-08-21: eran 1.167 sesiones invisibles donde el cliente escribio y
+    nadie contesto -- la peor falla que el sistema mide, y la unica que no aparecia en
+    ningun cuadro. Ahora se EVALUA y `src/sin_respuesta.py` le pone 1 estrella.
+    El gate ya no tiene nada que decir aca: el que decide es el worker, con los mensajes en
+    la mano."""
     assert decide_eligibility(
         real_message_count=1, customer_message_count=1, business_message_count=0
-    ) == ("skipped", "no_agent_reply")
+    ) == ("evaluated", None)
 
 
 def test_tamano_anomalo_se_saltea():

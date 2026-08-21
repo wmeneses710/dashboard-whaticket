@@ -195,7 +195,15 @@ def evaluate_session(messages: list[dict], lineas: dict | None = None):
     # mensajes (decide_eligibility solo ve contadores), y los skips previos son
     # informacion mas util — saber que el negocio nunca respondio explica mejor la
     # sesion que saber que el cliente solo dijo "hola".
-    if eval_status == "evaluated" and client_sin_motivo(messages):
+    # `sin_motivo` NO SE APLICA CUANDO NADIE RESPONDIO, y esa prioridad viene del negocio:
+    # "si no hubo respuesta del negocio, ese caso manda -- es informacion mas util que
+    # 'sin_motivo' para entender por que no se califico". Hasta el 2026-08-21 la prioridad se
+    # cumplia sola porque `no_agent_reply` era un skip y ganaba antes en `decide_eligibility`.
+    # Al dejar de serlo, `sin_motivo` se comia justo esas sesiones -- volvian a desaparecer,
+    # ahora etiquetadas como que el cliente no planteo nada, cuando lo que paso es que no le
+    # contestaron. El guard reconstruye el orden explicito.
+    hubo_negocio = stats.operator_message_count + stats.bot_message_count > 0
+    if eval_status == "evaluated" and hubo_negocio and client_sin_motivo(messages):
         return stats, rubric, "skipped", "sin_motivo"
     # `redireccion` YA NO SE SALTEA (decision del negocio, 2026-08-20): es un motivo con
     # nota determinista propia (src/redireccion.score_redireccion). El skip protegia bien

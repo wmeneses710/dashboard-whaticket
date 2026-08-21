@@ -189,23 +189,37 @@ def test_score_session_and_store_evaluated_corre_el_llm_por_sesion(monkeypatch):
     assert seen["ctx"] == ""
 
 
-def test_score_session_and_store_skipped_no_scorea(monkeypatch):
-    # Solo un mensaje del cliente -> no_agent_reply -> skipped, sin LLM ni stars.
+def test_nadie_le_respondio_ahora_lleva_UNA_estrella(monkeypatch):
+    """CAMBIO DEL 2026-08-21. Esto era `skipped/no_agent_reply` -- 1.167 sesiones donde el
+    cliente escribio y nadie contesto, invisibles en todos los cuadros. Ahora llevan 1
+    estrella determinista (src/sin_respuesta.py).
+
+    La intencion del test viejo se conserva ENTERA: sigue sin correr el LLM. Pagar una
+    inferencia para leer una conversacion donde el negocio no escribio nada es gasto puro.
+    Lo que cambia es el resultado: nota en vez de skip.
+
+    La fixture ahora trae `created_at` porque la consulta real SIEMPRE lo trae (el contrato
+    lo fija tests/test_context.py); sin el, el fixture representaba algo que produccion no
+    produce -- y solo pasaba porque el skip cortaba antes de que nada lo necesitara.
+    """
     monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: [
-        {"from_me": False, "is_note": False, "body": "me ayudas con una recarga?", "sent_from": None,
+        {"created_at": _T0, "from_me": False, "is_note": False,
+         "body": "me ayudas con una recarga?", "sent_from": None,
          "user_id": None, "media_type": None},
     ])
 
     def boom(**kw):
-        raise AssertionError("no debe correr el LLM en una sesion skipped")
+        raise AssertionError("no debe correr el LLM cuando nadie respondio")
 
     monkeypatch.setattr(worker, "score_by_motivo", boom)
     conn = _CtxConn()
     eval_status, skip_reason, score = score_session_and_store(
         conn, _session_row(), llm=None, op_map={})
-    assert eval_status == "skipped" and skip_reason == "no_agent_reply" and score is None
+    assert (eval_status, skip_reason) == ("evaluated", None)
+    assert score is not None and score.stars == 1
+    assert score.dimensions.get("sin_respuesta_del_negocio") is True
     params = _params_of_upsert(conn)
-    assert params["session_id"] == "sess1" and params["stars"] is None
+    assert params["session_id"] == "sess1" and params["stars"] == 1
 
 
 def test_score_sessions_batch_cuenta_y_no_aborta_por_una_excepcion(monkeypatch):

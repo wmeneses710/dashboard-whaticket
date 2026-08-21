@@ -58,8 +58,16 @@ def decide_eligibility(
         return "skipped", "no_customer_reply"
     if customer_text_count is not None and customer_text_count == 0 and not operator_resolved:
         return "skipped", "customer_media_only"
-    if business_message_count == 0:
-        return "skipped", "no_agent_reply"
+    # `no_agent_reply` YA NO SE SALTEA (decision del negocio, 2026-08-21). Eran 1.167
+    # sesiones, y el skip escondia la peor falla que este sistema puede medir: el cliente
+    # escribio y nadie contesto. Peor: medido sobre 300 de ellas, el **99,7% tiene una nota
+    # del CRM "<Nombre> *resuelto* la conversacion"** -- un operador la cerro sin escribirle
+    # nunca al cliente. Eso es deliberado y atribuible, no un descuido.
+    # La nota la pone `src/sin_respuesta.score_sin_respuesta` (1 estrella, determinista), y
+    # la razon viaja en `dimensions.sin_respuesta_del_negocio` porque el CHECK de la tabla
+    # borra `skip_reason` en las filas evaluadas.
+    # El chequeo del contador SE QUEDA aca aunque ya no skipee: es la unica señal que este
+    # gate tiene, y el que decide es el worker con los mensajes en la mano.
     if real_message_count > ANOMALOUS_MESSAGE_MAX:
         return "skipped", "anomalous_size"
     return "evaluated", None

@@ -31,6 +31,7 @@ from src.redireccion import (
     score_redireccion,
 )
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
+from src.sin_respuesta import score_sin_respuesta
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
@@ -223,7 +224,15 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                or (op_map.get(str(sess["user_id"])) if sess.get("user_id") else None))
     score = None
     if eval_status == "evaluated":
-        if segment_for_queue(sess.get("queue_name")) == "agente":
+        # NADIE CONTESTO: va PRIMERO, antes del ruteo por segmento, porque es una falla en
+        # los dos y no depende del motivo -- es ANTERIOR a cualquier motivo. Determinista y
+        # sin LLM: pagar una inferencia para leer una conversacion donde el negocio no
+        # escribio nada es gasto puro. Hasta el 2026-08-21 esto era el skip `no_agent_reply`
+        # y escondia 1.167 sesiones. Ver src/sin_respuesta.py.
+        score = score_sin_respuesta(msgs)
+        if score is not None:
+            pass
+        elif segment_for_queue(sess.get("queue_name")) == "agente":
             # AGENTE: SIEMPRE determinista, SIN LLM. Correr el pase con LLM aca aplicaria la
             # vara COMERCIAL del jugador (uplift, empujo/pasivo) y topaba el 94% de las
             # sesiones de agente en 3 estrellas por diseño. Eso no cambia.

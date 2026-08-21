@@ -28,13 +28,16 @@ def _msg(from_me, body="hola", *, user_id=None, sent_from=None,
 
 # --- evaluate_session: el skip fabricado desaparece --------------------------
 
-def test_episodio_cliente_solo_aislado_seria_skip_no_agent_reply():
-    # Episodio 1 SOLO-CLIENTE evaluado en soledad: se saltea (no_agent_reply).
-    # Este es el skip que HOY se fabrica al evaluar por conversacion.
+def test_episodio_cliente_solo_aislado_ya_no_se_saltea():
+    """Lo que este test protege sigue siendo lo importante: que evaluar el episodio EN
+    SOLEDAD ve cero mensajes del operador. Eso es el skip FABRICADO que la sesionizacion
+    vino a matar, y `test_sesion_mergeada_absorbe_el_skip_fabricado` lo demuestra al lado.
+    Lo que cambio el 2026-08-21 es que "nadie respondio" ya no se saltea: se evalua y lleva
+    1 estrella (src/sin_respuesta.py)."""
     ep1 = [_msg(False, "hola, estan?"), _msg(False, "sigo esperando")]
     stats, rubric, eval_status, skip_reason = evaluate_session(ep1)
     assert stats.operator_message_count == 0
-    assert (eval_status, skip_reason) == ("skipped", "no_agent_reply")
+    assert (eval_status, skip_reason) == ("evaluated", None)
 
 
 def test_sesion_mergeada_absorbe_el_skip_fabricado():
@@ -50,15 +53,16 @@ def test_sesion_mergeada_absorbe_el_skip_fabricado():
     assert rubric == "human"
 
 
-def test_sesion_genuinamente_sin_agente_sigue_skipped():
-    # Todos los episodios solo-cliente: NO hay agente en NINGUNO -> sigue skipped
-    # no_agent_reply (el merge no inventa una respuesta que no existe).
+def test_el_merge_no_inventa_una_respuesta_que_no_existe():
+    """EL INVARIANTE NO CAMBIO, cambio su consecuencia. Todos los episodios solo-cliente ->
+    el merge NO fabrica un operador: `operator_message_count` sigue en cero. Lo que cambio
+    el 2026-08-21 es que eso ya no se saltea -- se evalua y lleva 1 estrella."""
     ep1 = [_msg(False, "hola")]
     ep2 = [_msg(False, "alguien?"), _msg(False, "?")]
     merged = ep1 + ep2
     stats, rubric, eval_status, skip_reason = evaluate_session(merged)
     assert stats.operator_message_count == 0
-    assert (eval_status, skip_reason) == ("skipped", "no_agent_reply")
+    assert (eval_status, skip_reason) == ("evaluated", None)
 
 
 def test_sesion_solo_bot_es_rubric_bot():
@@ -209,9 +213,16 @@ def test_un_comprobante_del_cliente_NO_es_sin_motivo():
     assert status == "evaluated"
 
 
-def test_los_skips_previos_siguen_ganando():
-    # Si no hubo respuesta del negocio, ese skip manda: es informacion mas util que
-    # 'sin_motivo' para entender por que no se califico.
+def test_nadie_respondio_le_gana_a_sin_motivo():
+    """El ORDEN se conserva y sigue importando: un "Hola" sin respuesta NO es `sin_motivo`.
+    Antes eso se expresaba como "gana el skip de no_agent_reply"; desde el 2026-08-21 se
+    expresa como "se evalua", porque nadie-respondio dejo de ser un skip. La conclusion es
+    la misma y es la que vale: la sesion no desaparece etiquetada como que el cliente no
+    planteo nada, cuando lo que paso es que no le contestaron.
+
+    Lo hace un guard explicito en `evaluate_session` (`hubo_negocio`): antes la prioridad se
+    cumplia sola porque `no_agent_reply` ganaba en `decide_eligibility`, y al dejar de ser un
+    skip habia que escribirla."""
     msgs = [_msg(False, "Hola")]
     _, _, status, reason = evaluate_session(msgs)
-    assert (status, reason) == ("skipped", "no_agent_reply")
+    assert (status, reason) == ("evaluated", None)
