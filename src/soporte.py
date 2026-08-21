@@ -40,6 +40,7 @@ from datetime import timedelta
 from statistics import median
 
 from src.rubrics import formato_espera
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 from src.signals import (
     _NEGACION_RE,
@@ -135,16 +136,7 @@ class Soporte:
 # ambiguo por construccion: el operador no podia saber cual de las dos fallo. El caso que lo
 # trajo (`0b321579`) tenia 3,4 min de mediana efectiva, o sea que la mitad del consejo era
 # literalmente falsa.
-_COACHING = {
-    3: "En soporte el cliente ya viene trabado y cada espera pesa doble. Un mensaje "
-       "corto entre paso y paso alcanza para que no sienta que quedó solo.",
-    4: "Cerrar con \"¿te falta algo más?\" es el motivo donde más rinde, porque el "
-       "problema de cuenta suele volver si quedó un paso a medias. Conviene esperar unos "
-       "5 minutos antes de cerrar el ticket, que es cuando aparece ese paso.",
-}
-_COACHING_2_SIN_INTENTO = (
-    "El cliente no se llevó ningún paso a seguir. Aunque el desbloqueo dependa de otra "
-    "área, conviene decirle qué sigue y en cuánto tiempo.")
+# LOS TEXTOS VIVEN EN src/catalogo_coaching.py (una sola fuente de verdad).
 # RETIRADO el 2026-08-21. `_COACHING_2_LENTO` decia "Hubo trabajo en el caso, pero cada ida
 # y vuelta tardo demasiado. Conviene avisar antes de cada consulta interna: 'dejame revisar
 # esto y te confirmo en unos minutos'". Eran 373 recomendaciones y el manual no lo respalda:
@@ -153,8 +145,6 @@ _COACHING_2_SIN_INTENTO = (
 # sobre avisarle al CLIENTE que se esta haciendo una consulta interna.
 # EL DIAGNOSTICO DE LA RAMA NO SE PERDIO: "cada ida y vuelta tardo demasiado" tiene respaldo
 # en el minuto del manual y sigue vivo en el rationale. Lo que se fue es la prescripcion.
-_COACHING_1 = ("El cliente reportó un problema con su cuenta y nadie le respondió. Conviene "
-               "acusar el recibo aunque la solución dependa de otra área.")
 
 
 def esperas_por_turno(messages: list[dict]) -> list[timedelta]:
@@ -249,17 +239,17 @@ def calificar_soporte(messages: list[dict], cierre_at=None) -> Soporte | None:
                    med, True, False)
 
 
-def _coaching(s: Soporte) -> str:
-    """El consejo de la RAMA que produjo la nota (ver la nota de `_COACHING`)."""
+def _situacion(s: Soporte) -> str | None:
+    """La RAMA que produjo la nota; el texto vive en src/catalogo_coaching.py."""
     if s.stars == 5:
-        return ""
+        return None
     if s.stars == 1:
-        return _COACHING_1
+        return "1"
     if s.stars == 2:
-        # Con `intento` la rama se queda SIN consejo: su texto se retiro por no tener
-        # respaldo (ver arriba). NO cae a `_COACHING[2]`, que no existe.
-        return _COACHING_2_SIN_INTENTO if not s.intento else ""
-    return _COACHING.get(s.stars, "")
+        # Con `intento` la rama NO lleva consejo: su texto se retiro el 2026-08-21 por no
+        # tener respaldo en el manual (ver tests/test_coaching_sin_respaldo.py).
+        return "2_sin_intento" if not s.intento else None
+    return str(s.stars)
 
 
 def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:
@@ -267,6 +257,7 @@ def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     s = calificar_soporte(messages, cierre_at)
     if s is None:
         return None
+    _consejo = consejo_de("soporte", _situacion(s) or "")
     return ScoreResult(
         rubric="soporte_cuenta",
         motivo="soporte_cuenta",
@@ -285,7 +276,10 @@ def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:
         atencion=None,
         deposit_observed=None,
         floor_applied=False,
-        recomendacion=_coaching(s),
+        # Del catalogo (src/catalogo_coaching.py): una sola fuente de verdad, y el
+        # codigo viaja en la fila para poder CONTAR entre operadores.
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
         claridad="claro",
         friccion=False,
         aciertos=[],

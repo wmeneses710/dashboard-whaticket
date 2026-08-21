@@ -40,6 +40,7 @@ from src.deposits import has_recharge_context
 from src.interacciones import interaccion_de
 from src.operators import inicio_del_reloj
 from src.rubrics import formato_espera
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -98,39 +99,11 @@ class Deposito:
 # le decia al operador que no hizo algo que SI habia hecho, con su propio rationale al lado
 # diciendo lo contrario. Medido el 2026-08-11: 370 de las 1.400 sesiones en 2 estrellas
 # (26,4%) ya tenian `acredito=true` y recibian igual el consejo de "confirmale siempre".
-_COACHING = {
-    3: "Un primer mensaje corto —\"ya lo recibí, lo reviso\"— apenas entra el comprobante "
-       "alcanza para que el cliente no quede en silencio mientras se procesa.",
-    4: "Cerrar con \"¿te falta algo más?\" abre la puerta a la segunda duda, que en recargas "
-       "suele ser el bono o el próximo depósito. Y conviene dar unos 5 minutos antes de "
-       "cerrar el ticket: preguntar y cerrar en el mismo acto no deja tiempo de contestar.",
-}
-_COACHING_2_SIN_ACREDITAR = (
-    "Conviene confirmar que la plata entró con una línea al cierre: \"listo, ya tienes "
-    "tu saldo\". Un \"en breve\" deja esa pregunta sin responder, y el cierre con /FIN "
-    "recién corresponde cuando la gestión terminó.")
-_COACHING_2_TARDE = (
-    "El primer aviso tardó demasiado. El manual separa los dos momentos y les da una "
-    "respuesta rápida a cada uno: /R2verificaciondeboleta apenas entra el comprobante, y "
-    "/R3Recarga cuando la carga ya está en curso.")
+# LOS TEXTOS VIVEN EN src/catalogo_coaching.py (una sola fuente de verdad).
 # LA RAMA DEL RECHAZO (ver calificar_deposito): la plata no podia entrar y el operador lo
 # aviso. El consejo NO puede ser el del 4/3 normal, que habla del bono o del acuse.
-_COACHING_RECHAZO_RAPIDO = (
-    "El aviso salió rápido. Lo que más ayuda es decirle también cómo arreglarlo —qué dato "
-    "corregir o cómo verificar la cuenta— para que el próximo intento sí entre.")
-_COACHING_RECHAZO_TARDE = (
-    "El rechazo conviene avisarlo enseguida: mientras espera, el cliente cree que su plata "
-    "está en camino. Un mensaje corto en cuanto se ve el problema evita esa espera a ciegas.")
-_COACHING_1 = ("El comprobante quedó sin respuesta. En caja conviene contestar siempre: una "
-               "línea mientras se procesa evita que el cliente crea que se perdió su plata.")
 # LA RAMA DE LA DERIVACION: el jugador es de un agente y ATC tiene PROHIBIDO recargarle
 # (manual, cap. 06). El consejo no puede pedir la acreditacion -- pediria justo lo prohibido.
-_COACHING_DERIVACION_RAPIDA = (
-    "La derivación salió rápido. Suma indicarle también que puede recargar desde la "
-    "plataforma, así tiene la opción a mano si no ubica a su agente.")
-_COACHING_DERIVACION_TARDE = (
-    "Cuando la recarga le corresponde al agente, conviene decirlo enseguida y pasar su "
-    "número: mientras espera, el cliente cree que su plata ya está en camino.")
 
 
 def _comprobantes_del_cliente(messages: list[dict]) -> list[dict]:
@@ -373,22 +346,25 @@ def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None) -> Dep
         espera, True, False)
 
 
-def _coaching(d: Deposito) -> str:
-    """El consejo de la RAMA que produjo la nota (ver la nota de `_COACHING`)."""
+def _situacion(d: Deposito) -> str | None:
+    """La RAMA que produjo la nota, que es la clave del consejo en el catalogo.
+
+    Devuelve la rama y no el texto: los textos viven en src/catalogo_coaching.py. None = la
+    rama no lleva consejo (5 estrellas no tiene nada que mejorar).
+    """
     if d.stars == 5:
-        return ""
+        return None
     if d.stars == 1:
-        return _COACHING_1
+        return "1"
     if d.stars == 2:
-        return _COACHING_2_SIN_ACREDITAR if not d.acredito else _COACHING_2_TARDE
+        return "2_sin_acreditar" if not d.acredito else "2_tarde"
     # 4 o 3 SIN acreditacion = la rama del rechazo (en la normal el 4 y el 3 siempre
     # acreditaron). Su consejo apunta al rechazo, no al bono ni al acuse.
     if d.derivo_al_agente:
-        return (_COACHING_DERIVACION_RAPIDA if d.stars == 4
-                else _COACHING_DERIVACION_TARDE)
+        return "derivacion_rapida" if d.stars == 4 else "derivacion_tarde"
     if not d.acredito:
-        return _COACHING_RECHAZO_RAPIDO if d.stars == 4 else _COACHING_RECHAZO_TARDE
-    return _COACHING[d.stars]
+        return "rechazo_rapido" if d.stars == 4 else "rechazo_tarde"
+    return str(d.stars)
 
 
 def score_deposito(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResult | None:
@@ -401,6 +377,7 @@ def score_deposito(messages: list[dict], cierre_at=None, lineas=None) -> ScoreRe
     d = calificar_deposito(messages, cierre_at, lineas)
     if d is None:
         return None
+    _consejo = consejo_de("deposito", _situacion(d) or "")
     return ScoreResult(
         rubric="deposito",
         motivo="deposito",
@@ -421,7 +398,10 @@ def score_deposito(messages: list[dict], cierre_at=None, lineas=None) -> ScoreRe
         floor_applied=False,
         # La recomendacion es EXACTAMENTE el gap hacia el 5. En el mejor escenario
         # queda vacia: no hay nada que corregir.
-        recomendacion=_coaching(d),
+        # Del catalogo (src/catalogo_coaching.py): una sola fuente de verdad, y el
+        # codigo viaja en la fila para poder CONTAR entre operadores.
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
         claridad="claro",
         friccion=False,
         aciertos=[],

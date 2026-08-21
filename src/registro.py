@@ -37,6 +37,7 @@ from datetime import timedelta
 from src.deposits import deposit_candidate_count
 from src.interacciones import interaccion_de
 from src.rubrics import formato_espera
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 from src.signals import (
     _cliente_lo_leyo,
@@ -169,36 +170,10 @@ class Registro:
     convirtio: bool            # logro el deposito en la misma sesion
 
 
-_COACHING = {
-    2: "El alta quedó a medias. Si la cuenta no se puede crear en el momento, conviene "
-       "decirle cuándo la va a tener: ya entregó sus datos y está esperando.",
-    3: "El usuario y la clave tardaron más de 5 minutos desde que el cliente pasó sus "
-       "datos. Es el momento de mayor riesgo de que se caiga: conviene crear la cuenta "
-       "cuanto antes.",
-    # REESCRITO el 2026-08-13. El texto anterior era "La cuenta quedó creada. Lo que falta es
-    # acompañarlo hasta la primera recarga, que es donde el registro se convierte en jugador."
-    # -- la MISMA clausula que el reproche del rationale de esta rama ("No llegó a acompañarlo
-    # hasta la primera recarga"). MEDIDO sobre el rescore v13: 1.040 de 1.054 filas (98,7%) de
-    # `registro` determinista en 4 estrellas repetian la frase en los dos campos; en el camino
-    # LLM pasaba 0 de 1.541 veces, o sea que era puramente este texto fijo. Decir dos veces
-    # QUE falto no es coaching. Ahora dice COMO: los dos pasos concretos, en el momento en que
-    # el cliente todavia esta en la conversacion.
-    4: "El alta salió rápido y ese es el momento de mayor intención del cliente. Conviene "
-       "pasarle los medios de pago ahí mismo y no cerrar la conversación hasta que llegue "
-       "el comprobante de la recarga.",
-}
+# LOS TEXTOS VIVEN EN src/catalogo_coaching.py (una sola fuente de verdad).
 # La rama del rechazo tiene su propio consejo: el del 2 dice "decile cuándo la va a tener" y
 # ahí NUNCA la va a tener -- la cuenta no se puede crear. Ese texto delante de un operador que
 # hizo lo correcto es peor que no decir nada.
-_COACHING_RECHAZO_RAPIDO = (
-    "Avisaste rápido que la cuenta no se podía crear. Lo que suma es asegurarte de que "
-    "llegue a quien sí puede ayudarlo: pasarle el contacto y verificar que lo recibió.")
-_COACHING_RECHAZO_TARDE = (
-    "El aviso llegó tarde: el cliente estuvo esperando una cuenta que no iba a llegar. "
-    "Cuando el alta no puede salir, conviene decirlo apenas se sabe.")
-_COACHING_1 = ("El cliente entregó sus datos y nadie le respondió. Conviene acusar el "
-               "recibo enseguida: ya había decidido registrarse y es el peor momento "
-               "para dejarlo esperando.")
 
 
 def _datos_del_cliente(messages: list[dict]):
@@ -424,14 +399,16 @@ def calificar_registro(messages: list[dict]) -> Registro | None:
         espera, True, False)
 
 
-def _coaching(r: Registro) -> str:
-    """El consejo de la nota. La rama del rechazo tiene el suyo: un 4 o un 3 SIN credenciales
-    entregadas solo puede venir de ahi (en el camino normal el 4 y el 3 siempre entregaron),
-    y el consejo generico del 3 habla de crear la cuenta cuanto antes -- que es justo lo que
-    NO se podia hacer."""
+def _situacion(r: Registro) -> str | None:
+    """La RAMA de la nota; el texto vive en src/catalogo_coaching.py.
+
+    La rama del rechazo tiene la suya: un 4 o un 3 SIN credenciales entregadas solo puede
+    venir de ahi (en el camino normal el 4 y el 3 siempre entregaron), y el consejo generico
+    del 3 habla de crear la cuenta cuanto antes -- que es justo lo que NO se podia hacer.
+    """
     if r.stars in (3, 4) and not r.entrego:
-        return _COACHING_RECHAZO_RAPIDO if r.stars == 4 else _COACHING_RECHAZO_TARDE
-    return _COACHING_1 if r.stars == 1 else _COACHING[r.stars]
+        return "rechazo_rapido" if r.stars == 4 else "rechazo_tarde"
+    return str(r.stars)
 
 
 def score_registro(messages: list[dict]) -> ScoreResult | None:
@@ -443,6 +420,7 @@ def score_registro(messages: list[dict]) -> ScoreResult | None:
     r = calificar_registro(messages)
     if r is None:
         return None
+    _consejo = consejo_de("registro", _situacion(r) or "")
     return ScoreResult(
         rubric="registro",
         motivo="registro",
@@ -467,7 +445,10 @@ def score_registro(messages: list[dict]) -> ScoreResult | None:
         # rubrica determinista no tiene opinion que reconciliar.
         deposit_observed=None,
         floor_applied=False,
-        recomendacion="" if r.stars == 5 else _coaching(r),
+        # Del catalogo (src/catalogo_coaching.py): una sola fuente de verdad, y el
+        # codigo viaja en la fila para poder CONTAR entre operadores.
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
         claridad="claro",
         friccion=False,
         aciertos=[],

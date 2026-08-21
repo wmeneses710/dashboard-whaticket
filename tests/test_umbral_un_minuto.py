@@ -143,22 +143,18 @@ def test_ningun_consejo_le_sigue_pidiendo_dos_minutos():
     "<=2 min" son MEDICIONES historicas (que porcentaje respondia en 2 minutos) y son
     evidencia, no politica. Reescribirlas seria falsificar el registro.
     """
-    # DOS FUENTES MIENTRAS DURE LA MIGRACION. `agilidad` ya vive en
-    # src/catalogo_coaching.py (catalogo cerrado con codigo, 2026-08-21); las otras seis
-    # todavia tienen su `_COACHING` local. Se recorren las dos para que el invariante no
-    # pierda cobertura durante la mudanza, y para que cubra sola a la proxima que se migre.
+    # UNA SOLA FUENTE desde el 2026-08-21: las siete rubricas deterministas viven en
+    # src/catalogo_coaching.py. El invariante gano cobertura con la mudanza -- antes
+    # recorria los dicts modulo por modulo y las ramas de derivacion y rechazo quedaban
+    # afuera; ahora son los 35 consejos y los 2 fragmentos, sin huecos.
     from src.catalogo_coaching import CONSEJOS, FRAGMENTOS
 
     for c in CONSEJOS:
         assert "2 minutos" not in c.texto, \
-            f"catalogo_coaching {c.codigo} ({c.rubrica}/{c.situacion}) sigue prometiendo 2 minutos"
+            f"catalogo {c.codigo} ({c.rubrica}/{c.situacion}) sigue prometiendo 2 minutos"
     for f in FRAGMENTOS:
         assert "2 minutos" not in f.texto, \
-            f"catalogo_coaching {f.codigo} sigue prometiendo 2 minutos"
-    for mod in (src.deposito, src.info, src.promo, src.retiro, src.soporte):
-        for clave, texto in mod._COACHING.items():
-            assert "2 minutos" not in texto, \
-                f"{mod.__name__}._COACHING[{clave!r}] sigue prometiendo 2 minutos"
+            f"catalogo {f.codigo} sigue prometiendo 2 minutos"
 
 
 def test_ningun_rationale_le_sigue_pidiendo_dos_minutos():

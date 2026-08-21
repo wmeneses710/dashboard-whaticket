@@ -56,8 +56,11 @@ _CONSULTA_INTERNA = "Conviene avisar antes de cada consulta interna"
 
 
 def _textos_de(mod) -> list[str]:
-    """Todo el coaching que el modulo puede emitir, sin importar como este guardado."""
-    out: list[str] = []
+    """Todo el coaching que la rubrica puede emitir, mire el modulo o el catalogo."""
+    from src.catalogo_coaching import CONSEJOS
+
+    nombre = mod.__name__.split(".")[-1]
+    out: list[str] = [c.texto for c in CONSEJOS if c.rubrica == nombre]
     for attr in dir(mod):
         if not attr.startswith("_COACHING"):
             continue
@@ -83,7 +86,8 @@ def test_soporte_ya_no_prescribe_avisar_la_consulta_interna():
 
 def test_promo_en_cuatro_estrellas_se_queda_SIN_consejo():
     """La rama no se rellena con una frase generica: se queda vacia."""
-    assert src.promo._COACHING.get(4) is None
+    from src.catalogo_coaching import consejo_de
+    assert consejo_de("promo", "4") is None
 
 
 def test_promo_no_revienta_al_calificar_cuatro_estrellas():
@@ -108,12 +112,15 @@ def test_promo_no_revienta_al_calificar_cuatro_estrellas():
 
 def test_soporte_dos_estrellas_con_trabajo_no_revienta_ni_inventa():
     """`_coaching` elegia entre SIN_INTENTO y 2_LENTO. Al irse 2_LENTO la rama devuelve ""
-    y NO cae en `_COACHING[2]`, que no existe: seria un KeyError sobre 373 sesiones."""
+    y NO cae en `_COACHING[2]`, que no existe: seria un KeyError sobre 373 sesiones.
+
+    Desde la migracion al catalogo (2026-08-21) la rubrica devuelve la RAMA y el texto sale
+    de src/catalogo_coaching.py, asi que la ausencia se expresa como `situacion is None`."""
     s = src.soporte.Soporte(
         stars=2, label="deficiente", rationale="hubo trabajo pero lento",
         mediana=timedelta(minutes=9), intento=True, pregunto_algo_mas=False,
     )
-    assert src.soporte._coaching(s) == ""
+    assert src.soporte._situacion(s) is None
 
 
 def test_soporte_dos_estrellas_sin_trabajo_conserva_su_consejo():
@@ -123,11 +130,15 @@ def test_soporte_dos_estrellas_sin_trabajo_conserva_su_consejo():
         stars=2, label="deficiente", rationale="no hizo nada",
         mediana=None, intento=False, pregunto_algo_mas=False,
     )
-    assert src.soporte._coaching(s) == src.soporte._COACHING_2_SIN_INTENTO
+    from src.catalogo_coaching import consejo_de
+
+    assert src.soporte._situacion(s) == "2_sin_intento"
+    assert consejo_de("soporte", "2_sin_intento") is not None
 
 
 def test_las_demas_ramas_de_promo_siguen_con_su_consejo():
     """La limpieza es quirurgica: los otros tres textos de promo tienen respaldo."""
-    assert src.promo._COACHING.get(2)
-    assert src.promo._COACHING.get(3)
-    assert src.promo._COACHING_1
+    from src.catalogo_coaching import consejo_de
+    assert consejo_de("promo", "2") is not None
+    assert consejo_de("promo", "3") is not None
+    assert consejo_de("promo", "1") is not None

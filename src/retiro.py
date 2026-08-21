@@ -35,6 +35,7 @@ from datetime import timedelta
 from src.interacciones import interaccion_de
 from src.operators import inicio_del_reloj
 from src.rubrics import formato_espera
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -81,21 +82,7 @@ class Retiro:
 # se llega porque no se envio el comprobante, o porque se envio tarde. Medido el 2026-08-11:
 # 112 de las 221 sesiones en 2 estrellas (50,7%) SI habian entregado el comprobante y
 # recibian igual el consejo de que "el retiro quedo sin comprobante".
-_COACHING = {
-    3: "El objetivo es 1 minuto para acusar el pedido y 15 para tener el comprobante "
-       "arriba. Acusar primero y entregar después cumple las dos cosas.",
-    4: "Cerrar con \"¿te falta algo más?\" es la diferencia entre entregar y acompañar: en "
-       "retiro el agente suele tener una segunda operación en camino. Conviene dejar unos "
-       "5 minutos antes de cerrar el ticket, para que llegue a pedirla.",
-}
-_COACHING_2_SIN_COMPROBANTE = (
-    "Enviar el comprobante siempre, incluso si el agente no lo pidió: es el único respaldo "
-    "de que la plata salió, y es lo que sostiene la confianza de la agencia.")
-_COACHING_2_TARDE = (
-    "El comprobante llegó pero tarde. Conviene avisar en cuanto el retiro entra en "
-    "proceso: el agente necesita saber que está en marcha, no solo que terminó.")
-_COACHING_1 = ("El pedido de retiro quedó sin respuesta. Aunque no se pueda procesar en el "
-               "momento, conviene acusar el recibo: el agente tiene plata comprometida.")
+# LOS TEXTOS VIVEN EN src/catalogo_coaching.py (una sola fuente de verdad).
 
 
 def _pedidos_del_cliente(messages: list[dict]) -> list[dict]:
@@ -257,15 +244,15 @@ def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None) -> Retir
         espera, entrega, False)
 
 
-def _coaching(r: Retiro) -> str:
-    """El consejo de la RAMA que produjo la nota (ver la nota de `_COACHING`)."""
+def _situacion(r: Retiro) -> str | None:
+    """La RAMA que produjo la nota; el texto vive en src/catalogo_coaching.py."""
     if r.stars == 5:
-        return ""
+        return None
     if r.stars == 1:
-        return _COACHING_1
+        return "1"
     if r.stars == 2:
-        return _COACHING_2_SIN_COMPROBANTE if r.entrega is None else _COACHING_2_TARDE
-    return _COACHING[r.stars]
+        return "2_sin_comprobante" if r.entrega is None else "2_tarde"
+    return str(r.stars)
 
 
 def score_retiro(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResult | None:
@@ -277,6 +264,7 @@ def score_retiro(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResu
     r = calificar_retiro(messages, cierre_at, lineas)
     if r is None:
         return None
+    _consejo = consejo_de("retiro", _situacion(r) or "")
     return ScoreResult(
         rubric="retiro",
         motivo="retiro",
@@ -301,7 +289,10 @@ def score_retiro(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResu
         # mismatches de la corrida v6 eran estos. Igual que promo/info/soporte/agilidad.
         deposit_observed=None,
         floor_applied=False,
-        recomendacion=_coaching(r),
+        # Del catalogo (src/catalogo_coaching.py): una sola fuente de verdad, y el
+        # codigo viaja en la fila para poder CONTAR entre operadores.
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
         claridad="claro",
         friccion=False,
         aciertos=[],

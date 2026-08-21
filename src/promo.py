@@ -46,6 +46,7 @@ from src.signals import (
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
+from src.catalogo_coaching import consejo_de
 from src.horario import espera_efectiva
 from src.operators import inicio_del_reloj
 
@@ -69,28 +70,12 @@ class Promo:
     empuje: bool
 
 
-_COACHING = {
-    2: "Una consulta de promo se enfría rápido. Conviene responder aunque sea con lo que "
-       "se sabe y completar después, en vez de esperar a tener todo el detalle.",
-    3: "En promo la ventana es corta: un primer mensaje dentro del minuto —aunque "
-       "sea \"ya te confirmo el detalle\"— evita que la consulta se enfríe.",
-    # 4 ESTRELLAS SE QUEDO SIN CONSEJO (2026-08-21). Decia "Una imagen marcando donde
-    # tocar, o un video corto, hace lo que el texto no puede: le muestra el camino". Eran
-    # 6.300 recomendaciones y el manual NO lo respalda: prescribe video en solo dos
-    # procedimientos -- el tutorial de actualizacion de numero en BackOffice y las
-    # "solicitudes de videos personalizados" que pide un agente -- y en ninguno se trata de
-    # explicar una promo.
-    # LA HISTORIA IMPORTA Y SE CONSERVA: el texto NO era una invencion nuestra. La version
-    # anterior decia "el flyer o el enlace" y ATC no entendia a que se referia (2026-08-11,
-    # no usan ninguno de esos dos artefactos); "imagen o video" salio de ellos. Se retiro
-    # igual, ya sabiendo esto: no tener respaldo escrito es distinto de estar inventado, y la
-    # decision del negocio fue que un consejo que el manual no sostiene no se emite. Si
-    # vuelve, vuelve con la cita.
-    # NO SE REEMPLAZA POR UNO GENERICO: tapar el hueco con relleno es volver a inventar, y el
-    # operador lee el coaching como politica de la empresa.
-}
-_COACHING_1 = ("El cliente preguntó por la promo y nadie le respondió. Es la consulta con "
-               "más intención de todas: conviene contestar aunque sea con lo que se sabe.")
+# LOS TEXTOS VIVEN EN src/catalogo_coaching.py. La rama de 4 ESTRELLAS no tiene consejo
+# desde el 2026-08-21: decia "Una imagen marcando donde tocar, o un video corto", el manual
+# no lo respalda (solo prescribe video en el tutorial de BackOffice y en las solicitudes de
+# videos personalizados de un agente) y eran 6.300 recomendaciones. La historia completa
+# --incluido que el vocabulario lo habia puesto ATC el 2026-08-11-- esta en
+# tests/test_coaching_sin_respaldo.py y en tests/test_promo_rubrica.py.
 
 
 def _material_del_operador(messages: list[dict]) -> bool:
@@ -192,6 +177,7 @@ def score_promo(messages: list[dict]) -> ScoreResult | None:
     p = calificar_promo(messages)
     if p is None:
         return None
+    _consejo = consejo_de("promo", str(p.stars))
     return ScoreResult(
         rubric="promo",
         motivo="promo",
@@ -209,10 +195,10 @@ def score_promo(messages: list[dict]) -> ScoreResult | None:
         atencion="empujo" if p.empuje else "pasivo",
         deposit_observed=None,
         floor_applied=False,
-        recomendacion="" if p.stars == 5 else (
-            # `.get` y no `[]`: desde que 4 estrellas se quedo sin consejo la clave puede
-            # faltar, y un KeyError aca tiraria el scoring de la sesion entera.
-            _COACHING_1 if p.stars == 1 else _COACHING.get(p.stars, "")),
+        # Del catalogo: una sola fuente de verdad, y el codigo viaja en la fila para poder
+        # CONTAR. Ausente (4 estrellas) -> "" sin inventar nada.
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
         claridad="claro",
         friccion=False,
         aciertos=[],

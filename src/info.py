@@ -45,6 +45,7 @@ from src.signals import (
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
+from src.catalogo_coaching import consejo_de
 from src.horario import espera_efectiva
 from src.operators import inicio_del_reloj
 
@@ -64,17 +65,6 @@ class Info:
     pregunto_algo_mas: bool
 
 
-_COACHING = {
-    2: "Quien pregunta todavía está decidiendo si se queda. Conviene responder con lo "
-       "que se sabe y completar después, antes que demorar la primera respuesta.",
-    3: "El objetivo es 1 minuto para la primera respuesta, aunque sea parcial: quien "
-       "consulta está comparando y la demora se nota.",
-    4: "Cerrar con \"¿te falta algo más?\" rinde acá: en una consulta suele quedar "
-       "una segunda duda sin plantear. Conviene esperar unos 5 minutos antes de cerrar el "
-       "ticket: la pregunta solo sirve si el cliente alcanza a responderla.",
-}
-_COACHING_1 = ("El cliente preguntó y nadie le respondió. Conviene contestar aunque sea "
-               "parcialmente: quien consulta todavía está decidiendo si se queda.")
 
 
 def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:
@@ -141,6 +131,7 @@ def score_info(messages: list[dict], cierre_at=None) -> ScoreResult | None:
     i = calificar_info(messages, cierre_at)
     if i is None:
         return None
+    _consejo = consejo_de("info", str(i.stars))
     return ScoreResult(
         rubric="info",
         motivo="info",
@@ -158,8 +149,10 @@ def score_info(messages: list[dict], cierre_at=None) -> ScoreResult | None:
         atencion=None,
         deposit_observed=None,
         floor_applied=False,
-        recomendacion="" if i.stars == 5 else (
-            _COACHING_1 if i.stars == 1 else _COACHING[i.stars]),
+        # Los textos viven en src/catalogo_coaching.py: una sola fuente de verdad, y el
+        # codigo viaja en la fila para poder CONTAR (ver el docstring de ese modulo).
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
         claridad="claro",
         friccion=False,
         aciertos=[],

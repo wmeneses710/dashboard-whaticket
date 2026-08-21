@@ -292,17 +292,16 @@ _IMPERATIVOS_VOSEO = ("confirmale", "mandale", "preguntale", "decile", "avisale"
 def _todos_los_textos():
     from src.catalogo_coaching import CONSEJOS as _C_A
     A = {c.situacion: c.texto for c in _C_A if c.rubrica == 'agilidad'}
-    from src.deposito import (_COACHING as D, _COACHING_1 as D1,
-                              _COACHING_2_SIN_ACREDITAR as D2A, _COACHING_2_TARDE as D2T)
-    from src.info import _COACHING as I, _COACHING_1 as I1
-    from src.promo import _COACHING as P, _COACHING_1 as P1
-    from src.registro import _COACHING as R, _COACHING_1 as R1
-    from src.retiro import (_COACHING as T, _COACHING_1 as T1,
-                            _COACHING_2_SIN_COMPROBANTE as T2S, _COACHING_2_TARDE as T2T)
-    # `_COACHING_2_LENTO` se retiro el 2026-08-21 por no tener respaldo en el manual
-    # (ver tests/test_coaching_sin_respaldo.py). Ya no hay texto que auditar en esa rama.
-    from src.soporte import (_COACHING as S, _COACHING_1 as S1,
-                             _COACHING_2_SIN_INTENTO as S2I)
+    # LAS SIETE RUBRICAS VIVEN EN src/catalogo_coaching.py desde el 2026-08-21. El
+    # inventario sale de ahi: una sola fuente, y las rubricas que se agreguen entran solas.
+    from src.catalogo_coaching import CONSEJOS, FRAGMENTOS
+
+    out = [(f"{c.rubrica}/{c.situacion}", c.texto) for c in CONSEJOS]
+    out += [(f.codigo, f.texto) for f in FRAGMENTOS]
+    return out
+
+
+def _inventario_viejo_sin_usar():
     out = []
     for d in (A, D, I, P, R, T, S):
         out += [(f"{k}", v) for k, v in d.items()]
@@ -332,7 +331,15 @@ def test_el_coaching_dice_COMO_no_solo_QUE_paso():
     señales = ("confírm", "mánda", "pregúnt", "avísa", "dile", "muéstra", "pide", "envía",
                "conviene", "alcanza", "basta", "se apunta", "objetivo", "recuerda", "avisar",
                "cerrar con", "un primer mensaje", "una línea", "una imagen", "un video",
-               "indícale", "responder", "contestar", "enviarlo", "enviar", "decirle")
+               "indícale", "indicarle", "responder", "contestar", "enviarlo", "enviar",
+               "decirle", "pasar", "pasarle", "acusar", "verificá", "verificar",
+               "guía", "guia", "suma ", "asegurarte", "crear")
+    # `indicarle` y las otras entraron el 2026-08-21 y NO por relajar el invariante: al
+    # migrar al catalogo, el inventario paso de 12 textos sueltos a los 35 completos. Las
+    # ramas de derivacion y rechazo de deposito/registro nunca habian pasado por aca --
+    # el inventario viejo listaba solo dep_1, dep_2_sin y dep_2_tarde-- y usan el
+    # INFINITIVO ("Suma indicarle tambien que puede recargar...") donde la lista solo
+    # tenia el imperativo. La forma verbal cambia; que el consejo diga COMO, no.
     for clave, texto in _todos_los_textos():
         bajo = texto.lower()
         # NOMBRAR UNA RESPUESTA RAPIDA DEL MANUAL ES LA FORMA MAS ACCIONABLE DE DECIR COMO,
@@ -443,8 +450,20 @@ _MODULOS_CON_CIERRE = ("deposito", "retiro", "info", "soporte")
 
 
 def _coaching_del_cuatro():
+    """El consejo de 4 estrellas de cada rubrica que tiene pregunta de cierre.
+
+    Busca en las DOS fuentes mientras dure la migracion al catalogo: `info` ya esta en
+    src/catalogo_coaching.py y `deposito`/`retiro`/`soporte` todavia tienen su `_COACHING`
+    local. Asi el invariante no pierde cobertura durante la mudanza.
+    """
     import importlib
+
+    from src.catalogo_coaching import CONSEJOS
+    del_catalogo = {c.rubrica: c.texto for c in CONSEJOS if c.situacion == "4"}
     for nombre in _MODULOS_CON_CIERRE:
+        if nombre in del_catalogo:
+            yield nombre, del_catalogo[nombre]
+            continue
         mod = importlib.import_module(f"src.{nombre}")
         yield nombre, mod._COACHING[4]
 

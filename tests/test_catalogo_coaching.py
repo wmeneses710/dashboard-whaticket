@@ -141,3 +141,28 @@ def test_score_agilidad_persiste_el_codigo():
         assert score.recomendacion_codigos == [consejo.codigo]
     else:
         assert score.recomendacion_codigos == []
+
+
+# --- EL CONTRATO GENERICO: una sola fuente de verdad, rubrica por rubrica ---------------
+# Va parametrizado sobre el catalogo, no sobre una lista fija: cada rubrica que se migre
+# queda cubierta al agregarla, sin tocar este test. Es lo que impide que una rubrica se
+# guarde su copia del texto y el catalogo empiece a mentir.
+def test_ninguna_rubrica_migrada_conserva_su_propio_COACHING():
+    """Si la rubrica ya esta en el catalogo, su modulo NO puede tener `_COACHING*` propio."""
+    import importlib
+
+    migradas = {c.rubrica for c in CONSEJOS}
+    for rubrica in sorted(migradas):
+        mod = importlib.import_module(f"src.{rubrica}")
+        sobrantes = [a for a in dir(mod) if a.startswith("_COACHING")]
+        assert not sobrantes, (
+            f"src/{rubrica}.py sigue teniendo {sobrantes}: son dos fuentes de verdad y el "
+            f"catalogo miente en cuanto una cambie")
+
+
+def test_cada_situacion_del_catalogo_es_unica_por_rubrica():
+    vistos = set()
+    for c in CONSEJOS:
+        clave = (c.rubrica, c.situacion)
+        assert clave not in vistos, f"{clave} duplicada: consejo_de() devolveria uno al azar"
+        vistos.add(clave)

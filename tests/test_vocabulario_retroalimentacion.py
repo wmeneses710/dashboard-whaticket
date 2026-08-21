@@ -25,7 +25,12 @@ HTML = pathlib.Path(__file__).resolve().parents[1] / "web" / "index.html"
 
 
 def test_el_coaching_de_promo_no_nombra_artefactos_que_el_equipo_no_usa():
-    from src.promo import _COACHING, _COACHING_1
+    # `promo` migro a src/catalogo_coaching.py (2026-08-21): mismos textos, unica fuente.
+    from src.catalogo_coaching import CONSEJOS as _CAT
+    _COACHING = {c.situacion: c.texto for c in _CAT
+                 if c.rubrica == "promo" and c.situacion != "1"}
+    _COACHING_1 = next(c.texto for c in _CAT
+                       if c.rubrica == "promo" and c.situacion == "1")
     for nota, texto in list(_COACHING.items()) + [(1, _COACHING_1)]:
         bajo = texto.lower()
         for falso in FALSOS:
