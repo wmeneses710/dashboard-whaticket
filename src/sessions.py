@@ -202,9 +202,15 @@ def evaluate_session(messages: list[dict], lineas: dict | None = None):
     # Al dejar de serlo, `sin_motivo` se comia justo esas sesiones -- volvian a desaparecer,
     # ahora etiquetadas como que el cliente no planteo nada, cuando lo que paso es que no le
     # contestaron. El guard reconstruye el orden explicito.
-    hubo_negocio = stats.operator_message_count + stats.bot_message_count > 0
-    if eval_status == "evaluated" and hubo_negocio and client_sin_motivo(messages):
-        return stats, rubric, "skipped", "sin_motivo"
+    # `sin_motivo` YA NO SE SALTEA (decision del negocio, 2026-08-21). Eran **5.247**
+    # sesiones que desaparecian del denominador: el tablero medaba sobre menos sesiones de las
+    # que hubo. Ahora se evalua por el ESTANDAR DE CIERRE, que es lo unico que el manual pide
+    # cuando el cliente no planteo nada -- ver src/solo_cortesia.py. El worker rutea usando
+    # `client_sin_motivo` directo.
+    # EL GUARD DE `hubo_negocio` YA NO HACE FALTA aca: nadie-respondio tambien se evalua
+    # (src/sin_respuesta.py) y el worker le da prioridad porque lo chequea primero. La
+    # prioridad del negocio -- "si no hubo respuesta, ese caso manda" -- se conserva en el
+    # ORDEN del worker, que es donde ahora vive la decision.
     # `redireccion` YA NO SE SALTEA (decision del negocio, 2026-08-20): es un motivo con
     # nota determinista propia (src/redireccion.score_redireccion). El skip protegia bien
     # -- el traspaso puro caia en 2 estrellas por "no atendio el motivo" -- pero BORRABA el

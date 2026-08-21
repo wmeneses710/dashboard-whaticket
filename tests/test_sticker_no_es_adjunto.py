@@ -76,7 +76,9 @@ def test_un_sticker_con_un_gracias_es_una_sesion_sin_motivo():
             _cli(1, "gracias"),
             _op(2, "te creo la cuenta?")]
     assert client_sin_motivo(msgs) is True
-    assert evaluate_session(msgs)[2:] == ("skipped", "sin_motivo")
+    # Desde el 2026-08-21 `sin_motivo` no se saltea: se evalua por el estandar de cierre. Lo
+    # que este test protege es la DETECCION del sticker, y eso no cambio.
+    assert evaluate_session(msgs)[2:] == ("evaluated", None)
 
 
 def test_un_sticker_pelado_tampoco_deja_nota():

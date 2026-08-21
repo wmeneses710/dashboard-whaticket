@@ -26,6 +26,7 @@ from src.redireccion import (
     traspaso_a_linea_viva,
 )
 from src.sessions import evaluate_session
+from src.signals import client_sin_motivo
 
 # Lineas reales de la copia (tail de 9 digitos -> status), ver connections.
 LINEAS = {
@@ -185,12 +186,20 @@ def test_la_redireccion_a_linea_muerta_SI_se_evalua():
     assert eval_status == "evaluated"
 
 
-def test_sin_motivo_le_GANA_a_redireccion():
+def test_la_cortesia_le_sigue_ganando_al_traspaso():
+    """La PRIORIDAD se conserva, cambio DONDE se expresa. Hasta el 2026-08-21 `sin_motivo`
+    era un skip y ganaba en `evaluate_session`; ahora se evalua (estandar de cierre, ver
+    src/solo_cortesia.py) y la prioridad vive en el ORDEN del worker, que chequea
+    `client_sin_motivo` ANTES de `respuesta_fue_solo_traspaso`. Lo que este test fija es la
+    señal que sostiene esa prioridad."""
     # Decision del negocio (2026-08-07): el bucket A se queda en `sin_motivo`.
     msgs = [_cli("Hola"),
             _op("A partir de ahora te estaremos atendiendo desde el 0991194133")]
     _, _, eval_status, skip_reason = evaluate_session(msgs, lineas=LINEAS)
-    assert (eval_status, skip_reason) == ("skipped", "sin_motivo")
+    # La señal es lo que sostiene la prioridad, y el worker la chequea antes que el
+    # traspaso. La sesion ya no se saltea: lleva nota por el estandar de cierre.
+    assert client_sin_motivo(msgs) is True
+    assert (eval_status, skip_reason) == ("evaluated", None)
 
 
 def test_evaluate_session_sin_lineas_no_cambia_nada():

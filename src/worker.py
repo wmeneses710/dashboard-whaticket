@@ -31,7 +31,9 @@ from src.redireccion import (
     score_redireccion,
 )
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
+from src.signals import client_sin_motivo
 from src.sin_respuesta import score_sin_respuesta
+from src.solo_cortesia import score_solo_cortesia
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
@@ -232,6 +234,14 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
         score = score_sin_respuesta(msgs)
         if score is not None:
             pass
+        elif client_sin_motivo(msgs):
+            # EL CLIENTE NO PLANTEO NADA: se juzga el estandar de cierre y nada mas. VA
+            # DESPUES de `sin_respuesta` a proposito, y ese orden ES la prioridad del negocio
+            # ("si no hubo respuesta, ese caso manda: es informacion mas util que sin_motivo").
+            # Determinista y sin LLM: la señal esta verificada contra el modelo -- gemma4:12b
+            # acerto 40/40 sobre una muestra mixta con control y coincidio con
+            # `client_sin_motivo` en todas. Ver scripts/bench_sin_motivo.py.
+            score = score_solo_cortesia(msgs, sess.get("resolved_at"))
         elif segment_for_queue(sess.get("queue_name")) == "agente":
             # AGENTE: SIEMPRE determinista, SIN LLM. Correr el pase con LLM aca aplicaria la
             # vara COMERCIAL del jugador (uplift, empujo/pasivo) y topaba el 94% de las

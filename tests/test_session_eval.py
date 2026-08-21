@@ -183,15 +183,21 @@ def test_fetch_session_messages_sesion_vacia():
 # (8,7%), que es donde vive la prospeccion saliente. NO se califica: ponerle nota al
 # operador por un contacto en frio que no prendio es castigarlo por algo que no hizo.
 
-def test_sin_motivo_se_saltea():
-    # Todo lo que dijo el cliente es cortesia. Strings reales del dataset.
+def test_solo_cortesia_YA_NO_se_saltea_y_la_señal_la_sigue_detectando():
+    """CAMBIO DEL 2026-08-21: eran 5.247 sesiones que desaparecian del denominador. Ahora se
+    evaluan por el estandar de cierre (src/solo_cortesia.py). Lo que NO cambio es la deteccion:
+    `client_sin_motivo` sigue reconociendo las mismas cortesias, y es lo que el worker usa
+    para rutear. Strings reales del dataset."""
+    from src.signals import client_sin_motivo
+
     for texto in ("Si", "Hola", "Ok", "Bueno", "Ok listo", "Bueno Ok Bueno",
                   "Hola Si Ya", "Gracias"):
         msgs = [_msg(True, "hola! te cuento que soy agente de Sorti365"),
                 _msg(False, texto),
                 _msg(True, "te creo la cuenta?")]
+        assert client_sin_motivo(msgs) is True, texto
         _, _, status, reason = evaluate_session(msgs)
-        assert (status, reason) == ("skipped", "sin_motivo"), texto
+        assert (status, reason) == ("evaluated", None), texto
 
 
 def test_una_sola_palabra_de_verdad_lo_vuelve_evaluable():

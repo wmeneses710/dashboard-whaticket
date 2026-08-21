@@ -31,6 +31,7 @@ from src.redireccion import respuesta_fue_solo_traspaso
 from src.redireccion import score_redireccion
 from src.rubrics import MOTIVO_RUBRICS, MOTIVOS
 from src.sessions import evaluate_session
+from src.signals import client_sin_motivo
 
 BASE = datetime(2026, 3, 10, 20, 0, 0, tzinfo=timezone.utc)
 TRASPASO = "a partir de ahora te vamos a atender en el 0991194168"
@@ -71,12 +72,20 @@ def test_el_traspaso_puro_ya_no_se_saltea():
     assert skip_reason is None
 
 
-def test_sin_motivo_sigue_ganandole_al_traspaso():
+def test_la_cortesia_le_sigue_ganando_al_traspaso():
+    """La PRIORIDAD se conserva, cambio DONDE se expresa. Hasta el 2026-08-21 `sin_motivo`
+    era un skip y ganaba en `evaluate_session`; ahora se evalua (estandar de cierre, ver
+    src/solo_cortesia.py) y la prioridad vive en el ORDEN del worker, que chequea
+    `client_sin_motivo` ANTES de `respuesta_fue_solo_traspaso`. Lo que este test fija es la
+    señal que sostiene esa prioridad."""
     """Bucket A: si el cliente tampoco planteo nada, la etiqueta sigue siendo `sin_motivo`.
     Decision del negocio del 2026-08-07 que este cambio NO toca."""
     msgs = [_cli(0, "Hola"), _op(1, TRASPASO)]
     _s, _r, eval_status, skip_reason = evaluate_session(msgs, lineas=VIVA)
-    assert (eval_status, skip_reason) == ("skipped", "sin_motivo")
+    # La señal es lo que sostiene la prioridad, y el worker la chequea antes que el
+    # traspaso. La sesion ya no se saltea: lleva nota por el estandar de cierre.
+    assert client_sin_motivo(msgs) is True
+    assert (eval_status, skip_reason) == ("evaluated", None)
 
 
 # --- el predicado ---------------------------------------------------------------------
