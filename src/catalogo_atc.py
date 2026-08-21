@@ -181,3 +181,14 @@ def bloque_para_el_prompt() -> str:
     frase, un codigo suelto es una etiqueta que cada corrida interpreta distinto.
     """
     return "\n".join(f"- {f.codigo}: {f.texto}" for f in ERRORES)
+
+
+def bloque_practicas_para_el_prompt() -> str:
+    """Las doce buenas practicas, formateadas para el system prompt.
+
+    Espejo de `bloque_para_el_prompt` y por la MISMA razon: se le dan al modelo con el numero
+    Y la frase del manual. El numero es lo que el supervisor reconoce; la frase es lo que le
+    fija el criterio al modelo -- sin ella, un codigo suelto es una etiqueta que cada corrida
+    interpreta distinto.
+    """
+    return "\n".join(f"- {p.codigo}: {p.texto}" for p in PRACTICAS)

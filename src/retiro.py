@@ -303,6 +303,10 @@ def score_retiro(messages: list[dict], cierre_at=None, lineas=None,
         # codigo viaja en la fila para poder CONTAR entre operadores.
         recomendacion=_consejo.texto if _consejo else "",
         recomendacion_codigos=[_consejo.codigo] if _consejo else [],
+        # La practica del manual a la que apunta el consejo. Sale del catalogo, no se elige
+        # aca: es lo que hace que la cuenta por practica cubra los DOS caminos y no solo el
+        # del LLM. Ver el campo en src/scorer.ScoreResult.
+        recomendacion_practica=_consejo.practica if _consejo else "",
         claridad="claro",
         friccion=False,
         aciertos=[],

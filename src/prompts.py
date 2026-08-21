@@ -15,7 +15,12 @@ from __future__ import annotations
 
 from src.fewshot import formatear_fewshot
 from src.interacciones import es_cierre
-from src.catalogo_atc import CODIGOS_ERROR, bloque_para_el_prompt
+from src.catalogo_atc import (
+    CODIGOS_ERROR,
+    CODIGOS_PRACTICA,
+    bloque_para_el_prompt,
+    bloque_practicas_para_el_prompt,
+)
 from src.rubrics import (
     MOTIVO_LABELS,
     MOTIVOS,
@@ -303,6 +308,15 @@ _CAMPOS_CONTRATO = (
     "Puede quedar vacia, y de hecho lo normal es que lo este: una sesion bien atendida no "
     "necesita errores inventados. NO inventes codigos que no esten en la lista.\n"
     "  ERRORES CRITICOS DE ATC (elegi solo de aca):\n" + bloque_para_el_prompt() + "\n"
+    # LA MISMA JUGADA QUE v21 HIZO CON LOS ERRORES, ahora del lado positivo. La recomendacion
+    # sigue siendo PROSA -- los B dicen QUE y el operador necesita el COMO (ver
+    # tests/test_coaching.py::test_el_coaching_dice_COMO_no_solo_QUE_paso) -- pero declara a
+    # QUE practica apunta, y eso la vuelve sumable. MEDIDO: 12.163 recomendaciones del modelo
+    # en 10.325 textos distintos (84,9% unicos), o sea hoy no se puede contar ninguna.
+    # El catalogo va COMPLETO y con la frase: sin la frase el codigo es una etiqueta que cada
+    # corrida interpreta distinto (misma leccion que `bloque_para_el_prompt`).
+    "  BUENAS PRACTICAS DE ATC (para `recomendacion_practica`, elegi solo de aca):\n"
+    + bloque_practicas_para_el_prompt() + "\n"
     "- recomendacion: aca va TODO lo mejorable, incluido lo que quedo pendiente del cliente "
     "y los matices de venta (ir al punto, explicar como sigue el tramite, generar confianza "
     "antes de pedir datos personales). Es el campo de coaching: usalo.\n"
@@ -340,6 +354,7 @@ _MOTIVO_JSON_SHAPE = (
     '"cliente_reinsistio": <true|false>, '
     '"rating_rationale": "<2-4 frases especificas de esta sesion>", '
     '"recomendacion": "<1 consejo accionable, o \\"\\" si excelente>", '
+    '"recomendacion_practica": "<el codigo B## al que apunta ese consejo, o \\"\\">", '
     '"atencion": "<empujo|pasivo|no_respondio>", '
     '"deposit_observed": <true|false>}'
     + _CAMPOS_CONTRATO
@@ -413,6 +428,10 @@ def build_motivo_schema() -> dict:
                 },
                 "required": ["resolucion", "iniciativa", "cortesia"],
             },
+            # El vacio es VALIDO: cinco estrellas no lleva consejo, y forzar un codigo ahi
+            # inventaria una practica incumplida que no existe.
+            "recomendacion_practica": {"type": "string",
+                                       "enum": [""] + list(CODIGOS_PRACTICA)},
             "atendio_el_motivo": {"type": "boolean"},
             "hizo_accion_extra": {"type": "boolean"},
             "cortesia_destacada": {"type": "boolean"},

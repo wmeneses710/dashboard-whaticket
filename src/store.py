@@ -966,7 +966,10 @@ def build_score_record(
                         # Los CODIGOS al lado del texto: el texto es para leer, el codigo es
                         # para CONTAR. Ver src/catalogo_coaching.py. Lista vacia en las
                         # rubricas que todavia no se migraron.
-                        "recomendacion_codigos": score.recomendacion_codigos},
+                        "recomendacion_codigos": score.recomendacion_codigos,
+                        # A que buena practica del manual apunta el consejo. Es lo que hace
+                        # sumable el coaching por practica en los DOS caminos.
+                        "recomendacion_practica": score.recomendacion_practica},
             rating_label=score.rating_label,
             rating_rationale=score.rating_rationale,
             stars=score.stars,

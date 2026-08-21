@@ -14,6 +14,7 @@ from typing import Protocol
 from src.metrics import hay_persona_del_negocio
 from src.prompts import build_motivo_prompt, build_motivo_schema
 from src.recommendations import refine_recomendacion
+from src.catalogo_atc import CODIGOS_PRACTICA
 from src.rubrics import MOTIVOS, derive_aciertos, label_from_facts, label_to_stars
 from src.signals import (
     cliente_abandono_tras_pedido,
@@ -69,6 +70,12 @@ class ScoreResult:
     # textos). Vacio = el consejo no vino del catalogo todavia (las seis rubricas que faltan
     # migrar) o no hubo consejo. Ver src/catalogo_coaching.py.
     recomendacion_codigos: list = field(default_factory=list)
+    # A QUE BUENA PRACTICA del manual apunta el consejo (B01-B12). Existe para que la cuenta
+    # sea UNIFORME entre los dos caminos: el 85% determinista ya lo trae del catalogo
+    # (`Consejo.practica`) y el 15% que escribe el LLM lo declara. Sin eso, sumar por practica
+    # cubriria solo una mitad y el numero mentiria por omision. "" = no hubo consejo, asi que
+    # tampoco hay practica incumplida.
+    recomendacion_practica: str = ""
     claridad: str = "dudoso"        # eje claridad EFECTIVO (claro|confuso|dudoso) que modulo la nota
     friccion: bool = False          # True si el cliente tuvo que reinsistir sin respuesta (determinista)
     aciertos: list = field(default_factory=list)  # el "por que" POSITIVO (espejo de errores[])
@@ -233,6 +240,9 @@ def score_by_motivo(
         # hubo alta. En el camino LLM eran 88 de 397 (22%).
         # `agilidad` queda afuera a proposito: no pasa por aca (worker.py la llama directo) y
         # sus fragmentos serian de otro dominio -- un agente no se convierte, opera una caja.
+        # La practica viaja tal cual: la puso el catalogo determinista (`Consejo.practica`) y
+        # `refine_recomendacion` solo APENDICEA fragmentos, no cambia a que practica apunta el
+        # consejo base.
         return replace(determinista, recomendacion=refine_recomendacion(
             determinista.recomendacion, motivo=motivo, target_messages=target_messages))
 
@@ -249,6 +259,12 @@ def score_by_motivo(
     if claridad not in CLARIDAD_VALS:
         claridad = "dudoso"
     cliente_reinsistio = _as_bool(raw.get("cliente_reinsistio")) is True
+    # LA PRACTICA QUE EL MODELO ELIGIO, validada contra el catalogo. Un codigo inventado no
+    # puede viajar a la fila: el tablero lo sumaria como si existiera. Se degrada a "" igual
+    # que `atencion` fuera del enum -- preferimos un dato faltante a uno falso.
+    practica_llm = raw.get("recomendacion_practica")
+    if practica_llm not in CODIGOS_PRACTICA:
+        practica_llm = ""
 
     # OVERRIDES deterministas de los HECHOS (la senal dura le gana al modelo):
     resolved = operator_resolved(target_messages)   # confirmó o mandó media (comprobante/KYC/tutorial)
@@ -606,6 +622,7 @@ def score_by_motivo(
         deposit_observed=_as_bool(raw.get("deposit_observed")),
         floor_applied=override,
         recomendacion=recomendacion,
+        recomendacion_practica=practica_llm,
         claridad=claridad_eff,
         friccion=friccion,
         aciertos=aciertos,
