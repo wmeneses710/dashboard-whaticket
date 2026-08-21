@@ -145,6 +145,26 @@ def index() -> FileResponse:
     return FileResponse(_WEB, headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/api/catalogo")
+def catalogo() -> dict:
+    """El vocabulario de ATC para el tablero: sus doce errores criticos y sus doce buenas
+    practicas, con su numeracion.
+
+    VA POR ENDPOINT Y NO DUPLICADO EN EL JS a proposito. El catalogo es la fuente de verdad
+    de como se le habla al operador (src/catalogo_atc.py, verbatim del manual); tenerlo dos
+    veces garantiza que un dia digan cosas distintas. El front lo pide una vez al arrancar.
+    """
+    from src.catalogo_atc import ERRORES, PRACTICAS, RESPUESTAS_RAPIDAS
+
+    return {
+        "errores": [{"codigo": f.codigo, "chip": f.chip, "texto": f.texto,
+                     "detalle": f.detalle} for f in ERRORES],
+        "practicas": [{"codigo": p.codigo, "chip": p.chip, "texto": p.texto}
+                      for p in PRACTICAS],
+        "respuestas_rapidas": RESPUESTAS_RAPIDAS,
+    }
+
+
 @app.get("/api/accounts")
 def accounts() -> list[dict]:
     """Cuentas disponibles (con conteo) para el selector."""

@@ -21,7 +21,11 @@ from src.retiro import interaccion_juzgada as interaccion_juzgada_retiro
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator, reparto_por_interaccion
 from src.operators import build_operator_map, nombre_de_notas, operator_name
-from src.redireccion import build_lineas_map
+from src.redireccion import (
+    build_lineas_map,
+    respuesta_fue_solo_traspaso,
+    score_redireccion,
+)
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
 from src.router import decide_eligibility, decide_rubric
 from src.scorer import score_by_motivo
@@ -224,6 +228,18 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
             # score None = la sesion no tiene pedidos medibles en horario; se persiste
             # igual, sin nota, en vez de inventar una.
             score = score_agilidad(msgs)
+        elif respuesta_fue_solo_traspaso(msgs):
+            # REDIRECCION: la respuesta del negocio fue SOLO un traspaso a otra linea.
+            # Motivo determinista y SIN LLM (decision del negocio, 2026-08-20). Hasta esa
+            # fecha esto era un skip; ahora lleva nota, pero sigue sin pasar por el modelo:
+            # que todos los mensajes del negocio sean traspaso lo dice una funcion pura, y
+            # a donde apunta lo dice `connections`. Ninguno de los dos hechos se puede
+            # verificar leyendo el transcript, asi que preguntarle al modelo seria pagar una
+            # inferencia para despues pisarla. Ver src/redireccion.py y src/rubrics.py
+            # (MOTIVOS_DEL_LLM, que lo deja afuera del enum del prompt a proposito).
+            # VA DESPUES del segmento `agente`: el ruteo por segmento es mas fundamental
+            # (un agente se mide con su propio reloj) y no lo pisa un traspaso.
+            score = score_redireccion(msgs, lineas)
         else:
             # Pase v2: el LLM clasifica el MOTIVO y califica en 2 capas. thread_context
             # vacio: la sesion YA mergea todos los episodios del ticket. deposit_hint pasa
@@ -234,6 +250,11 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                 # Cierre del ticket: lo necesita la pregunta de cierre para exigir la espera
                 # de 5 min (regla del negocio). Sin el, el credito se mantiene.
                 cierre_at=sess.get("resolved_at"),
+                # El mapa de lineas ya se construye para el skip por traspaso; la rubrica
+                # transaccional lo necesita para distinguir "derivo al AGENTE del cliente"
+                # (numero ajeno, procedimiento correcto del manual) de "derivo a otra linea
+                # NUESTRA" (que es `redireccion` y tiene su propia regla).
+                lineas=lineas,
             )
             if score is not None:
                 acotar = _ANCLA_POR_MOTIVO.get(score.motivo)

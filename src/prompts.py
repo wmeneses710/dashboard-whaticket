@@ -15,7 +15,14 @@ from __future__ import annotations
 
 from src.fewshot import formatear_fewshot
 from src.interacciones import es_cierre
-from src.rubrics import MOTIVO_LABELS, MOTIVOS, RubricSpec, get_rubric
+from src.catalogo_atc import CODIGOS_ERROR, bloque_para_el_prompt
+from src.rubrics import (
+    MOTIVO_LABELS,
+    MOTIVOS,
+    MOTIVOS_DEL_LLM,
+    RubricSpec,
+    get_rubric,
+)
 
 # Rotulo del lado "negocio" (from_me=True) segun quien atiende esa rubrica.
 _BUSINESS_LABEL = {"human": "Operador", "bot": "Bot"}
@@ -285,9 +292,17 @@ _CAMPOS_CONTRATO = (
     "completo/confirmo/guio' en estos tres campos: son la evidencia de lo que se hizo BIEN "
     "y se muestran al operador como sus logros. Si en un eje no hizo nada destacable, "
     "describilo en una frase corta y neutra, sin reprochar.\n"
-    "- dimensions.errores: SOLO lo que el operador pudo haber hecho distinto Y dependia de "
-    "el. Si algo quedo sin cerrar porque el CLIENTE no respondio, NO va aca. Puede quedar "
-    "vacio: una sesion bien atendida no necesita errores inventados.\n"
+    # DE PROSA LIBRE A CODIGO DEL CATALOGO. Con texto libre el modelo escribia la MISMA
+    # falta de cinco formas: MEDIDO el 2026-08-19, 7.019 errores en 3.680 textos distintos
+    # (52% unicos), asi que el negocio no podia contar ni comparar nada. Los doce codigos
+    # son la lista CERRADA que ATC ya publica en su manual, con su numeracion; el supervisor
+    # los conoce por el numero. Ver src/catalogo_atc.py.
+    "- dimensions.errores: una lista de CODIGOS del catalogo de errores criticos de ATC "
+    "(los de abajo), NO texto libre. Solo lo que el operador pudo haber hecho distinto Y "
+    "dependia de el: si algo quedo sin cerrar porque el CLIENTE no respondio, NO va aca. "
+    "Puede quedar vacia, y de hecho lo normal es que lo este: una sesion bien atendida no "
+    "necesita errores inventados. NO inventes codigos que no esten en la lista.\n"
+    "  ERRORES CRITICOS DE ATC (elegi solo de aca):\n" + bloque_para_el_prompt() + "\n"
     "- recomendacion: aca va TODO lo mejorable, incluido lo que quedo pendiente del cliente "
     "y los matices de venta (ir al punto, explicar como sigue el tramite, generar confianza "
     "antes de pedir datos personales). Es el campo de coaching: usalo.\n"
@@ -314,9 +329,9 @@ _CAMPOS_CONTRATO = (
 _MOTIVO_JSON_SHAPE = (
     "Responde UNICAMENTE con un objeto JSON valido, sin texto fuera del JSON, con esta "
     "forma EXACTA (los 4 HECHOS son booleanos; NO incluyas rating_label, lo calcula el sistema):\n"
-    '{"motivo": "<uno de: ' + "|".join(MOTIVOS) + '">, '
+    '{"motivo": "<uno de: ' + "|".join(MOTIVOS_DEL_LLM) + '">, '
     '"dimensions": {"resolucion": "<nota 1 frase>", "iniciativa": "<nota 1 frase>", '
-    '"cortesia": "<nota 1 frase>", "errores": []}, '
+    '"cortesia": "<nota 1 frase>", "errores": ["<codigos E01-E12, o vacio>"]}, '
     '"atendio_el_motivo": <true|false>, '
     '"hizo_accion_extra": <true|false>, '
     '"cortesia_destacada": <true|false>, '
@@ -332,9 +347,13 @@ _MOTIVO_JSON_SHAPE = (
 
 
 def _motivo_tabla_block() -> str:
-    """Tabla de motivos para el prompt: 'motivo: PISO = ... UPLIFT = ...' por cada uno."""
+    """Tabla de motivos para el prompt: 'motivo: PISO = ... UPLIFT = ...' por cada uno.
+
+    Recorre MOTIVOS_DEL_LLM: describirle al modelo una rubrica que no puede elegir solo
+    lo confunde -- `redireccion` la decide `respuesta_fue_solo_traspaso` antes de llamarlo.
+    """
     lines = []
-    for m in MOTIVOS:
+    for m in MOTIVOS_DEL_LLM:
         spec = get_rubric(m)
         res = next(d for d in spec.dimensions if d.key == spec.dominant)
         upl = next(d for d in spec.dimensions if d.key == spec.uplift)
@@ -377,14 +396,20 @@ def build_motivo_schema() -> dict:
     return {
         "type": "object",
         "properties": {
-            "motivo": {"type": "string", "enum": list(MOTIVOS)},
+            # MOTIVOS_DEL_LLM y no MOTIVOS: `redireccion` la decidimos nosotros
+            # con `connections`, y el modelo no puede verificarla. Ver src/rubrics.py.
+            "motivo": {"type": "string", "enum": list(MOTIVOS_DEL_LLM)},
             "dimensions": {
                 "type": "object",
                 "properties": {
                     "resolucion": {"type": "string"},
                     "iniciativa": {"type": "string"},
                     "cortesia": {"type": "string"},
-                    "errores": {"type": "array", "items": {"type": "string"}},
+                    # ENUM CERRADO: el grammar del nivel 2 lo hace imposible de violar, y en el
+                    # nivel 1 el prompt lo pide. Ver src/catalogo_atc.py.
+                    "errores": {"type": "array",
+                                "items": {"type": "string",
+                                          "enum": list(CODIGOS_ERROR)}},
                 },
                 "required": ["resolucion", "iniciativa", "cortesia"],
             },

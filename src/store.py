@@ -433,7 +433,280 @@ from src.segments import segment_for_queue
 #     encogiendo 16,8x en la mediana. Pero **1.577 son agilidad**, y esa rubrica AGREGA la
 #     sesion entera por diseño ("La espera más larga fue de 8,1 minutos, SOBRE 17 PEDIDOS").
 #     Habria cambiado una inconsistencia por otra.
-SCORING_VERSION = "2026.08-rubricas-v16"
+# 2026.08-rubricas-v17 (2026-08-17). SALE DE LA AUDITORIA DE LA CORRIDA v16 COMPLETA (71.111
+# filas, 65.599 con nota, del 14/08 19:58 al 17/08 16:21). Los tres arreglos son de la misma
+# familia y la peor que tiene este sistema: LA FILA ACUSA DE ALGO QUE SU TRANSCRIPT DESMIENTE.
+# Ninguno cambia una vara: los tres corrigen una MEDICION.
+#
+#   1. EL PATRON DE CREDENCIALES NO CONOCIA EL USTED. `CREDENTIALS_PATTERN` aceptaba la frase
+#      de entrega solo en informal ("tu usuario es X"), y las agencias escriben "SU usuario es
+#      X y la contraseña tambien X". MEDIDO: de las 501 filas de `registro` en 2 estrellas con
+#      el rationale "El cliente entregó sus datos pero nunca recibió su usuario y clave",
+#      **201 (40,1%) tenian la entrega TEXTUAL en el transcript** (`a7c79fda`, `339fb197`,
+#      `7d92c3a4`). Recalculadas las 4.616 filas deterministas de `registro`: **203 suben
+#      (104 a 3★, 80 a 4★, 17 a 5★) y CERO bajan**; las 201 falsas quedaron en 0.
+#      EL RADIO NO ERA SOLO LA NOTA. La señal alimenta `registro.se_creo_la_cuenta`, que FUERZA
+#      el motivo a `registro` cuando el alta se cerro: **35 filas de jugador cambian de motivo**
+#      (17 desde `promo`, 16 de ellas con 5 estrellas; 15 desde `soporte_cuenta`). Es la fuga
+#      que este archivo ya documentaba mas arriba ("un alta CERRADA se salteaba") y que seguia
+#      abierta por una palabra. Tambien entra en `operator_resolved` (piso del camino LLM) y en
+#      la recomendacion de seguridad de cambiar la contraseña, que ahora si alcanza a esas
+#      sesiones.
+#   2. `soporte_cuenta` NO RECONOCIA SUS PROPIOS PASOS, Y NO ESCUCHABA AL CLIENTE. La rama "no
+#      hubo intento" emite el texto mas duro de la rubrica ("ni un paso a seguir ni la certeza
+#      de que su caso se escaló") y le faltaba el vocabulario mas usado del motivo: `intent[ae]`
+#      ("intente nuevamente y me avisa"), `captura`/`pantallazo` ("me envia una captura de lo
+#      que le sale") y `comunicar(te|se) a` ("Debes comunicarte a este número"). El ultimo va
+#      con PREPOSICION porque `comunic` suelto ya se probo y matcheaba la plantilla de cierre.
+#      Y `cliente_confirmo_resuelto` -- el cliente diciendo "Ya pude gracias" -- vivia SOLO en
+#      el camino LLM, que esta rubrica no recorre: ahora tambien cuenta como intento, porque es
+#      la evidencia mas dura que existe de que algo se hizo.
+#      Recalculadas las 2.613 filas: **21 suben (8 a 3★, 13 a 4★), CERO bajan**, y 22 dejan de
+#      emitir la frase falsa (la 22ª sigue en 2 estrellas por la OTRA rama, la de la espera).
+#   3. EL RELOJ DE `info` Y DE `promo` ARRANCABA EN UN "HOLA". Las dos rubricas anclaban en el
+#      PRIMER mensaje del cliente, sea lo que sea, y le cobraban al operador un tramo en el que
+#      no habia nada que contestar. El criterio correcto ya estaba escrito en el docstring de
+#      `info` ("hubo algo que responder") y `es_cortesia` ya se usa para esto en src/agilidad.py
+#      (su confound 2); lo que faltaba era aplicarlo al ANCLA. Vive en
+#      `signals.planteo_del_cliente`, compartido por las dos.
+#          `info`   379 de 2.033 sesiones (18,6%) abren con cortesia -> **98 cambian: 60 suben, 38 bajan**
+#          `promo`  658 de 10.163 (6,5%)                             -> **104 cambian: 57 suben, 47 bajan**
+#      Casos: `58a51842`, donde la operadora mando el video tutorial UN minuto despues de la
+#      consulta y la nota decia "Respondió recién 6,5 minutos después"; y `07b642b4`, con 8,6
+#      HORAS en la nota y 6 SEGUNDOS de espera real.
+#      QUE HAYA FILAS QUE BAJAN ES LA PRUEBA DE QUE ES UNA CORRECCION Y NO UNA INDULGENCIA: son
+#      las de quien contesto rapido el saludo y tarde la consulta.
+#      Y TIENE UN GUARD QUE COSTO CINCO FALSOS 1 ESTRELLA. Mover el ancla a un mensaje FINAL
+#      sin respuesta manda la fila a "nadie le respondió", que es la nota mas cara del sistema,
+#      y el vocabulario de cortesia es CERRADO -- todo lo que no esta en la lista parece un
+#      planteo: `0ccb648c` cerraba con "super", `6d6f093b` con "Que dios los vendiga",
+#      `0ebb1ecf` con "nada, tranqui". Si al planteo no le sigue ninguna respuesta, el ancla
+#      vuelve donde estaba, asi que las 10 filas de 1 estrella de `promo` y las 9 de `info` no
+#      se mueven ni para un lado ni para el otro.
+#      QUEDA UN HUECO DECLARADO: 3 filas de `info` donde el cliente SI planteo al final
+#      ("Necesito más información", "Tengo una consulta") y nadie contesto siguen con la nota
+#      vieja, mas indulgente. Separarlas exige ampliar el vocabulario de cortesia, que es del
+#      negocio. `deposito` y `retiro` son inmunes: anclan en un hecho del dominio (el
+#      comprobante, el formulario), que ya es el planteo por construccion.
+#
+#   8. EL VOCABULARIO DE CORTESIA NO CONOCIA LOS TYPOS. `es_cortesia` decide si un bloque del
+#      cliente PIDE algo, y de ahi cuelga el 1 estrella de agilidad ("un pedido quedo sin
+#      respuesta"), que es el **89% de todos los 1 estrella del padron**. Clasificando los 442
+#      pedidos abandonados de las 439 filas: **111 no tenian ningun pedido de verdad**. Once
+#      formas de "gracias" mal escrito en 185 bloques (Graciad, Gracais, Graxias, Grqcias,
+#      Gracis, Grx), mas el tratamiento con que el agente le habla al operador ("Gracias men",
+#      "Listo amigo") y el acuse del que avisa que ya hizo su parte ("Ya le escribí").
+#      LOS TYPOS SE RESUELVEN POR DISTANCIA DE EDICION, no agrandando la lista: un typo es una
+#      tecla. El nucleo son TRES palabras (gracias/gracia/muchas) y NO todo el vocabulario,
+#      porque se probo con todo y a una tecla de una palabra de cortesia hay palabras del
+#      NEGOCIO: "llego" esta a una tecla de "luego", y "saldos" de "saludos".
+#      Y LAS PALABRAS DE ACUSE VAN BAJO EL GUARD DE NEGACION que ya usa src/soporte.py: sin el,
+#      `es_cortesia("no me llego")` daba True. "No me llegó" es el reclamo mas importante que
+#      existe en este negocio y habria terminado en `sin_motivo`. Se sondeo ANTES de subirlo.
+#      `que` y `paso` quedaron afuera de las dos listas: juntas hacen "que paso", que es una
+#      pregunta y no tiene negacion que la delate.
+#      OJO CON EL NUMERO: la clasificacion decia 111 y el arreglo devuelve **64**. La diferencia
+#      es el precio de los dos guards de arriba, y se paga a proposito.
+#   9. UN STICKER NO ES UN COMPROBANTE. `MEDIA_TYPES` lo incluia, y `is_real_media` es la fuente
+#      unica de "esto es un adjunto de verdad" para CUATRO preguntas: si el agente pidio algo
+#      (`es_pedido`), si el operador mando el comprobante (`operator_sent_media`), si hizo algo
+#      por el caso (`_hubo_intento`) y si el cliente planteo algo (`client_sin_motivo`). Las
+#      cuatro se contestaban mal. Un emoji en TEXTO ya lo trataba `es_cortesia`; esto alinea las
+#      dos formas de mandar lo mismo. Efecto verificado uno por uno: mueve 1 fila de `deposito`
+#      (`9e52f49d`, 4->2), y al mirarla el ancla estaba parada sobre un sticker de las 18:57 en
+#      vez del comprobante real de las 18:54 -- o sea que ahora juzga el objeto correcto.
+#
+# TOTAL: **607 de 65.599 notas cambian (0,93%)** -- registro 203, agilidad 155, promo 110,
+# info 107, soporte 21, deposito 11. NINGUNA baja a 1 estrella, que era el riesgo de sacar el
+# sticker de `operator_sent_media` (esa señal PERDONA un pedido sin responder, asi que endurecerla
+# podia fabricar 1 estrella nuevos: se midio y no paso).
+#
+# LA COBERTURA SI SE MUEVE, y se declara: **121 filas pasan de evaluada a `sin_motivo`** y 11 a
+# `internal_notes_only`, porque el cliente no planteo nada -- que es exactamente para lo que
+# existe ese skip. Sumadas a las 29 de agilidad que quedan sin nota (su unico pedido medible era
+# una cortesia), son ~161 filas de 65.599 (0,25%) que dejan de tener nota. LAS 29 SON EL PROBLEMA:
+# no van a `sin evaluar` sino al limbo de `eval_status='evaluated'` sin nota, que el tablero no
+# muestra en ningun lado (ver el pendiente del `skip_reason` que falta).
+# El arreglo del usted entra en `operator_resolved`, que decide el skip `customer_media_only`, asi
+# que eso tambien habia que medirlo: recorridas las 5.387 salteadas, ni una pasa a evaluarse (el
+# unico movimiento aparente son las 119 de `redireccion`, que el arnes no ve sin el mapa de lineas).
+#
+# EL PISO DE RUIDO DEL ARNES ES CERO, y por eso los numeros de arriba se leen directo:
+# recalculadas las 10.163 filas de `promo` ANTES de tocarla, **cambian 0**. Para llegar a eso
+# hubo que arreglar el arnes primero: `conversation_scores.resolved_at` NO es el `cierre_at` que
+# recibio la rubrica -- worker.py lo reescribe despues de calificar con `tiempos_de(ventana)` --
+# y con la columna equivocada aparecian 7 filas "cambiando" a 5 estrellas que no cambian. El
+# valor correcto es `conversations.resolved_at` de la conversacion cuyo id es el session_id (ver
+# PENDING_SESSIONS_SQL). El control post-arreglo sobre `deposito` da 7 de 9.536 (0,07%), y son
+# sesiones que CRECIERON despues de scorearse: la copia se espejo con la corrida en curso.
+# 2026.08-rubricas-v18 (2026-08-19). SALE DEL MANUAL DE OPERACIONES DE ATC, no de una
+# auditoria de la data. Es el primer cambio de este repo que mueve una VARA en vez de corregir
+# una medicion, y por eso el cuidado extra en documentarlo.
+#
+# EL HALLAZGO. El manual fija un solo numero para la primera respuesta y lo dice DOS veces
+# (cap. 04 para jugadores, cap. 06 para agentes), con su razon tecnica: "cuando el mensaje
+# ingresa a Whaticket, el sistema lo marca automaticamente como leido mediante el doble check
+# azul. Por esta razon, la respuesta del operador debe ser inmediata y no superar un tiempo
+# maximo de 1 MINUTO". Las seis rubricas deterministas usaban `AGIL = timedelta(minutes=2)`.
+#
+# DE DONDE SALIA EL 2, que es lo que vuelve indefendible mantenerlo: de la DISTRIBUCION
+# OBSERVADA, y esta escrito en los propios docstrings -- info "mediana 1,5 min, 62,5% <=2 min",
+# retiro "el 74,1% responde en <=2 min", deposito "el 78,0% acusa en <=2 min", promo "mediana
+# 1,7 min, 56,8% <=2 min". Calibramos la vara contra lo que la gente ya hacia. Eso explica la
+# concentracion en 4 y 5 estrellas (75,2% de las 65.599 notas) mejor que cualquier otra cosa:
+# la escala se acomodo a la poblacion en vez de medirla contra la norma.
+#
+# IMPACTO MEDIDO recalculando las SEIS rubricas sobre la copia ENTERA -- son funciones puras
+# sobre el transcript, asi que no hay muestreo: 52.002 sesiones comparables.
+# **10.222 notas bajan (19,7%) y NINGUNA sube.**
+#     agilidad        26.667 comparables   5.035 cambian (18,9%)   todas 5★ -> 4★
+#     promo           10.053               1.980 (19,7%)           todas 4★ -> 3★
+#     deposito         9.525               1.865 (19,6%)           1.840 de 4★, 25 de 5★
+#     soporte_cuenta   2.592                 654 (25,2%)           624 de 4★, 30 de 5★
+#     info             1.926                 447 (23,2%)           432 de 4★, 15 de 5★
+#     retiro           1.239                 241 (19,5%)           239 de 4★, 2 de 5★
+# Piso de ruido del arnes por debajo del 1% en cinco de las seis; `info` da 5,3% (107 filas
+# que el recalculo no reproduce), asi que ahi la señal es 4x el ruido y no 20x como en el resto.
+#
+# LO QUE ESTE CAMBIO NO HACE. El manual trata el minuto como un MAXIMO -- pasarse es un
+# incumplimiento -- y aca sigue siendo el borde de la banda ALTA. Un operador que contesta en
+# 3 minutos sigue sacando 4 estrellas en agilidad y 3 en el resto. Convertir la escala en
+# cumple/no-cumple es una decision del negocio, no un umbral, y NO se tomo.
+#
+# LO QUE NO SE TOCO, porque el manual no lo menciona: `retiro.ENTREGA_AGIL` (15 min para el
+# comprobante), `retiro.ENTREGA_TOPE` (30), `registro.ENTREGA_AGIL` (5 min del traspaso de
+# datos a las credenciales) y `agilidad.GAP_BLOQUE` (15 min, mecanica de armado de bloques y no
+# una vara de calidad). Esos siguen calibrados con datos y siguen vigentes.
+#
+# LOS TEXTOS TAMBIEN CAMBIAN, y no es cosmetico: diez frases de `_COACHING` y de los rationale
+# prometian "el objetivo son 2 minutos". Una fila que baja por pasarse del minuto con un consejo
+# al lado que pide dos se desmiente sola -- la misma familia de bug que v16 pago caro. Las
+# MEDICIONES historicas de los docstrings ("el 78,0% acusa en <=2 min") NO se tocaron: son
+# evidencia de lo que se observo, no politica, y reescribirlas seria falsificar el registro.
+# Contrato en tests/test_umbral_un_minuto.py (10 tests). 1.263 verdes desde 1.253.
+# 2026.08-rubricas-v19 (2026-08-19). SEGUNDO cambio salido del manual de ATC, y el primero
+# que corrige una FALSA ACUSACION nacida de una regla de negocio que el sistema no conocia.
+#
+# EL CASO. Manual cap. 06: "Si un jugador pertenece a un agente, el operador NO debe realizar
+# recargas ni retiros". Lo correcto es derivarlo y DARLE EL TELEFONO del agente. La rubrica
+# transaccional le exigia justo el paso prohibido -- confirmar la acreditacion -- porque
+# clasifica por el TEMA de la charla (una recarga) y no sabe que existe la regla del agente.
+# MEDIDO: 443 sesiones de `jugador` con derivacion; en `deposito` son 152 con media 3,08
+# estrellas y 70 en 1-2 (46%). Leidos 3 de esos 70 en orden y sin elegir, los 3 son el
+# procedimiento correcto castigado (`009312d9`, `03566bc9`, `09c1b759`).
+#
+# EL GATE EXIGE UN NUMERO AJENO, no la frase. La exencion no puede apoyarse en lo que el
+# operador DICE: seria auto-otorgada y "derivalo al agente" pasaria a ser la forma de esquivar
+# cualquier deposito. Se apoya en lo que HACE -- publicarle al cliente un numero que no es de
+# ninguna de nuestras lineas --, que es un acto visible y auditable, y ademas es LO QUE EL
+# MANUAL PIDE: derivar sin dar el telefono deja al cliente a la deriva y no cumple nada.
+# Se descartaron MIDIENDO otras dos corroboraciones: la etiqueta del contacto
+# (`AGENTE`/`JUGADOR AFILIADO`) cubre 5 de 74 casos (7%), y `users` no guarda telefono, asi
+# que la BD NO PUEDE decir si un operador es ademas agente.
+#
+# EL RELOJ DE LA RAMA SON 5 MINUTOS Y NO EL MINUTO DE v18, y la razon es del manual: antes de
+# derivar el operador TIENE que pedir el usuario y verificar la agencia (cap. 05, pasos 1 y 2).
+# Eso es una consulta, no un reflejo, y cobrarle el minuto seria cobrarle la verificacion que
+# el manual le exige. Mismo tope que la rama del alta imposible de src/registro.py. Sobre los
+# 18 casos que la señal encuentra: p50 4,3 min, 56% dentro de 5 y solo 11% dentro de 1.
+#
+# IMPACTO sobre las 10.777 sesiones deterministas de deposito+retiro: **13 filas SUBEN
+# (9 de 2★ a 4★, 4 de 2★ a 3★) y NINGUNA baja.** Es chico a proposito: el gate es conservador
+# y cubre 18 de las 74 castigadas (24%). Las otras 56 no dieron numero (43% de la poblacion,
+# o sea que tampoco cumplieron el procedimiento completo) o apuntaron a una linea NUESTRA
+# (26%, que es `redireccion` y tiene su propia regla).
+# OJO CON EL CONTROL: el arnes reporta 19,66% de filas que no reproducen la nota guardada.
+# NO es ruido, es el delta de v18 -- las notas guardadas se calcularon con AGIL=2 min. Coincide
+# con el 19,6% que v18 midio para `deposito`. La comparacion antes/despues de ESTA rama corre
+# con AGIL=1 en las dos puntas, asi que las 13 estan bien aisladas.
+#
+# TECHO EN 4 en las dos rubricas, igual que la rama del rechazo: el 5 es "el mejor escenario
+# del motivo" y una transaccion que ATC no podia hacer no lo es.
+# Contrato en tests/test_derivacion_al_agente.py (17 tests). 1.280 verdes desde 1.263.
+# 2026.08-rubricas-v20 (2026-08-19). TERCER cambio del manual de ATC: la politica del ultimo
+# mensaje. Cap. 04 y cap. 06, TEXTUAL en los dos: "Es politica obligatoria del departamento
+# que el ultimo mensaje de la conversacion sea enviado por el operador". Y sobre el caso
+# chico: si el cliente responde con un "gracias", emoji o sticker despues de la despedida,
+# "el operador debera responder para mantener el estandar de cierre".
+#
+# NO BAJA NOTAS: BLOQUEA LA QUINTA ESTRELLA. El 5 de las cuatro rubricas que lo dan por el
+# cierre dice, literal, "antes de cerrar se aseguró de que no le faltara nada", y eso no se
+# puede afirmar de una sesion donde el cliente contesto esa pregunta y nadie le respondio. La
+# fila se desmentiria sola. Es un TECHO en 4, no un castigo: el trabajo se hizo.
+#
+# EL GATE DEL CIERRE ES LO QUE LA VUELVE JUSTA. Solo cuenta si el cliente quedo colgado con el
+# ticket TODAVIA ABIERTO. MEDIDO: de las 659 sesiones de 5 estrellas que terminan con el
+# cliente, **548 (83%) escribieron DESPUES de `resolved_at`** -- ahi el operador ya mando
+# /FIN, espero sus 5 minutos y cerro, que es el procedimiento del manual. Quedan 111.
+#
+# LA PROPORCION: solo el 4,1% de las 65.588 sesiones evaluadas termina con el cliente, asi que
+# el cumplimiento de esta politica YA ES ALTO. Y lo que el cliente manda es casi siempre una
+# cortesia: "gracias" 620, "muchas gracias" 202, "ok" 157, sticker 72, "listo" 67 -- justo el
+# caso que el manual obliga a contestar.
+#
+# IMPACTO: **9 filas bajan de 5 a 4** (deposito 3, info 4, soporte_cuenta 2) y ninguna sube.
+# POR QUE TAN POCAS, que es lo interesante: de las 111 candidatas, 67 estan en las rubricas
+# deterministas por motivo... pero eran 5 estrellas CALCULADAS CON `AGIL=2`. v18 ya las bajo
+# sola a 3 o 4, asi que no queda quinto que bloquear. Los tres cambios del manual INTERACTUAN
+# y hay que medirlos en orden, no por separado. Las otras 44: 37 en `agilidad` y 7 en el
+# camino LLM.
+#
+# QUEDAN AFUERA A PROPOSITO:
+#   - `agilidad` (37 filas). La politica del manual tambien cubre a los agentes, pero esa
+#     rubrica mide UNA cosa por diseño -- cuanto tardo el operador -- y meterle un eje de
+#     cortesia la convierte en otra cosa. Entrarla es decision del negocio.
+#   - `promo`. Su quinta estrella no se gana con el cierre sino con el MATERIAL, asi que
+#     agregarle esta compuerta seria una regla nueva y no la correccion de una que miente.
+#   - el camino LLM (7 filas). Ahi la etiqueta la deriva `label_from_facts` y esto seria un
+#     hecho mas; entra cuando se toque esa capa.
+# Contrato en tests/test_ultima_palabra.py (11 tests). 1.291 verdes desde 1.280.
+# 2026.08-rubricas-v21 (2026-08-19). EL TABLERO PASA A HABLAR EL IDIOMA DE ATC. No cambia
+# ninguna nota: cambia COMO se nombran los errores y con que vocabulario se aconseja. Pedido
+# del negocio, y con razon -- el tablero lo leen ellos.
+#
+# EL PROBLEMA, MEDIDO. `errores[]` lo llenaba el LLM en TEXTO LIBRE: **7.019 errores emitidos
+# en 3.680 TEXTOS DISTINTOS (52% unicos)**. La misma falta escrita de cinco formas:
+#     "No se pidieron los datos necesarios para crear la cuenta."           464
+#     "No se solicito al cliente los datos necesarios para crear la cuenta." 115
+#     "No se pidio al cliente los datos necesarios para crear la cuenta."    115
+#     "No se le pidio al cliente los datos necesarios para crear la cuenta."  49
+# Son la misma falta contada cuatro veces. Un supervisor no puede decir "esta semana tuvimos
+# 40 de este error", ni comparar dos operadores, ni ver si algo mejora. El campo existia y no
+# servia para nada.
+#
+# LA SOLUCION YA ESTABA ESCRITA, Y NO POR NOSOTROS. El manual de ATC publica dos listas
+# CERRADAS Y NUMERADAS -- doce errores criticos y doce buenas practicas -- y aclara que
+# cualquiera de los errores "puede derivar en medidas correctivas". Esa es la rubrica del
+# negocio con las palabras del negocio. Ahora:
+#   - `src/catalogo_atc.py` la guarda VERBATIM (regla del modulo: el campo `texto` no se
+#     edita), con la numeracion de ellos, porque el supervisor los conoce por numero.
+#   - el pase con LLM emite CODIGOS (E01-E12) en vez de prosa: el prompt le da la lista con
+#     numero Y frase, y el schema los declara como ENUM CERRADO, asi que el grammar del
+#     nivel 2 lo vuelve imposible de violar.
+#   - `/api/catalogo` se lo sirve al tablero UNA vez. No se duplica en el JS: tener el
+#     vocabulario dos veces garantiza que un dia digan cosas distintas.
+#   - el modal muestra "Errores criticos · manual ATC" con el numero adelante y la frase del
+#     manual, y el "por que" del manual como tooltip. "Lo que hizo bien" pasa a ser "Buenas
+#     practicas cumplidas", que es como el manual las llama.
+#
+# LAS 65.599 FILAS YA SCOREADAS NO SE PIERDEN: traen prosa libre y el tablero cae al texto
+# crudo cuando el codigo no esta en el catalogo. Un rescore no puede ser requisito para
+# cambiar una pantalla.
+#
+# EL COACHING TAMBIEN CAMBIA DE VOCABULARIO. El manual tiene una respuesta rapida con NOMBRE
+# para casi cada consejo que damos, y decir "/R2verificaciondeboleta apenas entra el
+# comprobante" no deja nada que interpretar -- el operador la tiene en Whaticket. Reescritos
+# los consejos de mayor volumen de `agilidad` y `deposito` con /Bienvenida, /R2verificaciondeboleta,
+# /R3Recarga y /FIN. Y hay un test nuevo que prohibe nombrar una plantilla que NO este en el
+# catalogo: mandar al operador a buscar algo que no existe seria, ademas, el error critico
+# E10 del propio manual ("Alterar respuestas rapidas... o informacion oficial").
+#
+# LO QUE FALTA PARA CERRAR EL CIRCULO, y es un pedido concreto al negocio: el manual nombra
+# las respuestas rapidas pero NO incluye su TEXTO CANONICO. Con esos textos se puede auditar
+# E10 de verdad (¿la plantilla salio sin modificar?) y ademas se vuelve medible el protocolo
+# de seguimiento que quedo afuera en v20.
+# Contrato en tests/test_catalogo_atc.py (10) y tests/test_coaching.py. 1.302 verdes desde 1.291.
+SCORING_VERSION = "2026.08-rubricas-v21"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
@@ -688,7 +961,12 @@ def build_score_record(
             atencion=score.atencion,
             deposit_observed=score.deposit_observed,
             motivo=score.motivo,
-            dimensions={**score.dimensions, "recomendacion": score.recomendacion},
+            dimensions={**score.dimensions,
+                        "recomendacion": score.recomendacion,
+                        # Los CODIGOS al lado del texto: el texto es para leer, el codigo es
+                        # para CONTAR. Ver src/catalogo_coaching.py. Lista vacia en las
+                        # rubricas que todavia no se migraron.
+                        "recomendacion_codigos": score.recomendacion_codigos},
             rating_label=score.rating_label,
             rating_rationale=score.rating_rationale,
             stars=score.stars,

@@ -129,9 +129,12 @@ def test_promo_con_cola_probada_descuenta_la_espera():
 
 
 def test_promo_cruza_de_banda_al_descontar_la_cola():
-    # RAZONABLE son 5 minutos: 12 crudos quedan afuera, 2 netos entran.
+    # AGIL es 1 minuto: 12 crudos caen en la banda de 3, 1 neto entra en la de 4.
+    # (Con el umbral viejo de 2 min alcanzaba una asignacion en el minuto 10; ahora hace
+    # falta la del 11 para que el neto entre en la banda alta. Lo que el test prueba es
+    # lo mismo: descontar la cola PUEDE mover de banda, no un numero en particular.)
     lento = calificar_promo(_promo())
-    rapido = calificar_promo(_promo(con_asignacion_en=10))
+    rapido = calificar_promo(_promo(con_asignacion_en=11))
     assert rapido.stars > lento.stars, f"{lento.stars} -> {rapido.stars}"
 
 

@@ -45,6 +45,7 @@ from src.signals import (
     _NEGACION_RE,
     _frases,
     _is_operator,
+    cliente_confirmo_resuelto,
     is_real_media,
     operator_asked_and_waited,
     operator_sent_credentials,
@@ -57,7 +58,7 @@ from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/soporte-v1"
 
-AGIL = timedelta(minutes=2)
+AGIL = timedelta(minutes=1)
 TOLERABLE = timedelta(minutes=5)
 
 # Un PASO concreto: una instruccion accionable, no "ya lo estamos viendo".
@@ -86,9 +87,23 @@ _PASO_RE = re.compile(
 # reconocia. Caso `a35b8f53`: el operador diagnostico ("tu cuenta es esta luisbrito, pero es
 # de otra agente") y ofrecio "te hago una cuenta con mi agencia", y el coaching le decia al
 # cliente que no se llevo ningun paso -- contradiciendo el transcript.
+# TRES PIEZAS MAS, del 2026-08-17. MEDIDO sobre la corrida v16 completa: de las 571 filas en
+# 2 estrellas, 385 caen por la rama "no hubo intento" y en **81 de esas (21%) el operador
+# escribio algo que ES un paso** y el vocabulario no lo reconocia. Salieron de transcripts:
+#     "intente nuevamente y me avisa"           -> `27a70c00`, `554cd765`
+#     "me envia una captura de lo que le sale"  -> `27a70c00`, `554cd765`
+#     "Debes comunicarte a este número ..."     -> `067c90eb`
+# PEDIR LA EVIDENCIA ES DIAGNOSTICO, NO UNA ESPERA: el operador que pide la captura esta
+# trabajando el caso, y la fila decia que el cliente no se llevo nada.
+# EL NUMERO ES LO QUE SEPARA LA DERIVACION DE LA PLANTILLA. `comunicarte` suelto esta en
+# "Gracias por comunicarte con nosotros", que aparece en casi toda sesion y NO es una
+# instruccion (leccion de `7d562266`, ya documentada arriba). Por eso se exige el numero.
 _PASO_AMPLIADO_RE = re.compile(
     r"verific|valid[aá]|confirm[aá]|sub[aei]|subir|cambi[aá]|comunic[aá]te|comun[ií]quese|"
-    r"(te |le )?(hago|creo|crear|creando|cre[eé]) (una |la |tu )?cuenta",
+    r"(te |le )?(hago|creo|crear|creando|cre[eé]) (una |la |tu )?cuenta|"
+    r"intent[aeoé]\w*|"
+    r"(captura|pantallazo|screenshot|foto de la pantalla)|"
+    r"comunic\w+ a (este|ese|el siguiente) (numero|número)|comunic\w+ al \+?\d",
     re.IGNORECASE)
 # Escalar TAMBIEN es intentar: es el techo de lo que el operador puede hacer solo.
 _ESCALO_RE = re.compile(
@@ -173,7 +188,15 @@ def _hubo_intento(messages: list[dict]) -> bool:
         for frase in _frases(cuerpo):
             if not _NEGACION_RE.search(frase) and _PASO_AMPLIADO_RE.search(frase):
                 return True
-    return operator_sent_credentials(messages)
+    if operator_sent_credentials(messages):
+        return True
+    # EL CLIENTE ES EL TESTIGO, y esta rubrica no lo escuchaba. `cliente_confirmo_resuelto`
+    # existe desde v16 pero vivia SOLO en el camino LLM (src/scorer.py), y esta rubrica es
+    # determinista: nunca la veia. MEDIDO: en 6 de las 385 filas de la rama el CLIENTE cierra
+    # diciendo que se resolvio ("Ya pude gracias", "Ya ingrese") y la fila afirmaba que no se
+    # llevo ni un paso. Si el unico que sabe si su problema se arreglo dice que si, hubo
+    # intento -- da lo mismo si el operador uso un verbo que el vocabulario reconoce.
+    return cliente_confirmo_resuelto(messages)
 
 
 def calificar_soporte(messages: list[dict], cierre_at=None) -> Soporte | None:
@@ -207,7 +230,7 @@ def calificar_soporte(messages: list[dict], cierre_at=None) -> Soporte | None:
     if med > AGIL:
         return Soporte(3, "aceptable",
                        f"Atendió el caso, aunque el cliente esperó {mins} en cada ida "
-                       "y vuelta. El objetivo son 2 minutos.",
+                       "y vuelta. El objetivo es 1 minuto.",
                        med, True, algo_mas)
     if algo_mas:
         return Soporte(

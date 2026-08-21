@@ -283,20 +283,120 @@ def operator_acuso_comprobante(messages: list[dict], desde=None) -> bool:
 # La regla es conservadora POR DISEÑO: el bloque es cortesia solo si TODAS sus palabras
 # estan en el vocabulario. Alcanza UNA palabra de verdad ("comision", "por fa",
 # "me avisa") para que vuelva a exigir respuesta.
+#
+# TERCERA VUELTA (2026-08-17), de verificar TODAS las notas que afirman que el negocio no
+# respondio. Clasificando los 442 pedidos abandonados de las 439 filas de agilidad en 1
+# estrella: **111 filas (25,3%) tenian como UNICO pedido abandonado una cortesia**, y la nota
+# que salia es la mas cara del sistema. Faltaban dos cosas distintas:
+#   - LOS TYPOS. Once formas de "gracias" mal escrito en 185 bloques: Graciad, Gracais,
+#     Graxias, Grqcias, Graciaas, Graciass, Graciasb, Gracis, "Gra6 Gracias",
+#     "Mucha agracias", "Michas gracias". Se resuelven por DISTANCIA DE EDICION (ver
+#     `_a_una_edicion`), no agrandando la lista: un typo es una tecla, y generalizar asi
+#     mantiene el vocabulario cerrado.
+#   - PALABRAS QUE FALTABAN COMO CONCEPTO, y solo las que aparecen en los bloques reales: el
+#     tratamiento con que el agente le habla al operador ("Gracias men", "Muchas gracias
+#     estimado", "Listo amigo"), la despedida completa ("Gracias hasta mañana") y el acuse
+#     del que avisa que ya hizo su parte ("Ya le escribí", "Ok estoy pendiente").
+# `avisa`/`aviso` NO ENTRAN, a proposito: el docstring de arriba los nombra como ejemplo de
+# palabra de verdad ("me avisa" es un pedido), y siguen siendolo.
+# Quedan afuera ~8 formas de ruido de un solo caso ("Lizz", "Yks", "Unmmmm", "Meokey"):
+# meterlas seria sobreajustar la lista a la muestra.
 _CORTESIA_VOCAB = frozenset({
     # acuse
-    "ok", "oka", "okay", "okey", "oki", "dale", "listo", "lista", "vale", "entendido",
+    "ok", "oka", "okay", "okey", "oki", "okis", "okei", "oke", "dale", "listo", "lista",
+    "vale", "entendido", "entiendo", "entendi", "comprendido",
     "de", "acuerdo", "correcto", "ya", "esta", "voy", "pedi", "va",
     # agradecimiento
     "gracias", "gracia", "muchas", "mil", "tks", "thanks", "thank", "you",
+    "grx", "grcs", "agradezco", "agradecido", "agradecida", "igualmente", "nada",
     # valoracion
     "bien", "muy", "buenisimo", "perfecto", "excelente", "bendiciones", "genial",
-    "amable", "bueno", "buena",
+    "amable", "amables", "bueno", "buena",
     # saludo / despedida
-    "hola", "buenas", "buenos", "buen", "dia", "dias", "tardes", "noches",
+    "hola", "buenas", "buenos", "buen", "dia", "dias", "tardes", "noches", "saludos",
+    "hasta", "luego", "manana", "tarde", "noche", "lindo", "linda", "chao", "adios",
+    # tratamiento: el agente le habla al operador por su trato, no le pide nada
+    "estimado", "estimada", "estimados", "estimadas", "amigo", "amiga", "amigos",
+    "men", "sres", "sr", "ud", "uds", "usted", "ustedes", "mi", "mis", "le", "les",
+    "a", "tambien", "ese", "eso", "esa", "asi", "tengas", "tenga",
     # respuestas minimas
     "si", "no", "claro",
 })
+
+# EL ACUSE QUE LA NEGACION DA VUELTA. Estas palabras son cortesia cuando el agente avisa que
+# ya hizo su parte o que la cosa funciono ("ya le escribí", "gracias ya pude ingresar"), y son
+# UN RECLAMO en cuanto aparece una negacion adelante: "no me llegó", "no puedo ingresar", "no
+# funcionó". Van aparte y bajo `_NEGACION_RE` -- el mismo guard que ya usa `_hubo_intento` en
+# src/soporte.py por la misma razon.
+# SE MIDIO ANTES DE SUBIRLO: con estas palabras en la lista comun, `es_cortesia("no me llego")`
+# daba True. "No me llegó" es el reclamo mas importante que existe en este negocio y lo habria
+# mandado a `sin_motivo`. Habria sido un agujero peor que el que este cambio viene a tapar.
+_CORTESIA_SI_NO_HAY_NEGACION = frozenset({
+    "pude", "ingrese", "ingresar", "llego", "aparecio", "salio", "funciono",
+    "escribi", "escribo", "consulto", "estoy", "pendiente", "atento", "atenta", "quedo",
+    "me",
+})
+# `que` y `paso` QUEDARON AFUERA de las dos listas: juntas hacen "que paso", que es una
+# pregunta y no tiene negacion que la delate. El precio es no cubrir "que tengas lindo dia"
+# ni "ok ya le paso" (una fila cada una); la alternativa era tratar una pregunta como cortesia.
+
+# NUCLEO DE LA TOLERANCIA A TYPOS: solo la familia de "gracias", que es la UNICA donde hay
+# evidencia (11 formas mal escritas en 185 bloques). Tentaba aplicar la distancia a todo el
+# vocabulario, y se probo: a una tecla de una palabra de cortesia hay palabras del NEGOCIO.
+#     "llego"  esta a una tecla de "luego"   -> "no llego nada" pasaba por cortesia
+#     "saldos" esta a una tecla de "saludos" -> la palabra central del negocio
+# Con el nucleo acotado a tres palabras ese vecindario no toca nada: alrededor de "gracias",
+# "gracia" y "muchas" no vive ninguna palabra que pida algo.
+_CORTESIA_NUCLEO = frozenset({"gracias", "gracia", "muchas"})
+
+
+def _a_una_edicion(a: str, b: str) -> bool:
+    """`a` y `b` estan a UNA edicion: sustitucion, insercion, borrado o transposicion.
+
+    Damerau-Levenshtein acotado a 1, escrito a mano para no traer una dependencia. La
+    transposicion importa: `gracais` es el typo mas comun de `gracias` y no es una
+    sustitucion.
+    """
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:
+        dif = [i for i in range(la) if a[i] != b[i]]
+        if len(dif) == 1:
+            return True
+        return (len(dif) == 2 and dif[1] == dif[0] + 1
+                and a[dif[0]] == b[dif[1]] and a[dif[1]] == b[dif[0]])
+    largo, corto = (a, b) if la > lb else (b, a)
+    i = j = salto = 0
+    while i < len(largo) and j < len(corto):
+        if largo[i] != corto[j]:
+            if salto:
+                return False
+            salto = 1
+            i += 1
+            continue
+        i += 1
+        j += 1
+    return True
+
+
+def _es_palabra_de_cortesia(palabra: str, *, hay_negacion: bool) -> bool:
+    """En el vocabulario, o a una tecla de "gracias" (ver `_CORTESIA_NUCLEO`).
+
+    Con negacion en el texto, las palabras de `_CORTESIA_SI_NO_HAY_NEGACION` no cuentan.
+    El piso de 5 letras deja afuera las abreviaturas ("grx", "grcs"), que van en la lista
+    exacta: a 3 letras, la distancia 1 tocaria demasiado.
+    """
+    if palabra in _CORTESIA_VOCAB:
+        return True
+    if not hay_negacion and palabra in _CORTESIA_SI_NO_HAY_NEGACION:
+        return True
+    if len(palabra) < 5:
+        return False
+    return any(_a_una_edicion(palabra, nucleo) for nucleo in _CORTESIA_NUCLEO)
+
 
 # Todo lo que no es palabra ni espacio (puntuacion Y emojis) se descarta antes de
 # comparar contra el vocabulario.
@@ -342,7 +442,73 @@ def es_cortesia(texto: str) -> bool:
     palabras = _palabras_normalizadas(texto)
     if not palabras:
         return True
-    return all(p in _CORTESIA_VOCAB for p in palabras)
+    hay_negacion = bool(_NEGACION_RE.search(" ".join(palabras)))
+    return all(_es_palabra_de_cortesia(p, hay_negacion=hay_negacion) for p in palabras)
+
+
+def _primer_planteo(delcliente: list[dict]) -> dict | None:
+    """El primer mensaje del cliente que no es pura cortesia, o None si no hay ninguno.
+
+    Un ADJUNTO cuenta como planteo aunque el texto sea cortesia, por la misma razon que en
+    `client_sin_motivo`: mandar algo es plantear algo.
+    """
+    for m in delcliente:
+        if is_real_media(m.get("media_type")):
+            return m
+        cuerpo = " ".join((m.get("body") or "").split())
+        if cuerpo and not es_cortesia(cuerpo):
+            return m
+    return None
+
+
+def planteo_del_cliente(reales: list[dict]) -> dict | None:
+    """DONDE ARRANCA EL RELOJ: el primer mensaje del cliente que PLANTEA algo.
+
+    Un "Hola" o un "Gracias" de entrada no exige respuesta, y anclar el reloj ahi le cobra al
+    operador un tramo en el que no habia nada que contestar. El criterio es el mismo que
+    define `client_sin_motivo` (`es_cortesia`, un vocabulario CERRADO) y el mismo que
+    `src/agilidad.py` ya aplica a sus bloques desde el 2026-08-05 (su confound 2: "el peor
+    turno de una sesion suele ser un 'Ok' o un 'Gracias'"). Lo que faltaba era aplicarlo al
+    ANCLA de las rubricas que miden la primera respuesta.
+
+    MEDIDO el 2026-08-17 sobre la corrida v16 completa, en las dos rubricas que anclaban en el
+    primer mensaje del cliente:
+        `info`   379 de 2.033 sesiones (18,6%) abren con cortesia -> 98 cambian (60 arriba, 38 abajo)
+        `promo`  658 de 10.163 (6,5%)                             -> 104 cambian (57 arriba, 47 abajo)
+    CAMBIA EN LAS DOS DIRECCIONES, y por eso es una correccion y no una indulgencia: las filas
+    que BAJAN son las de quien contesto rapido el saludo y tarde la consulta. Caso `58a51842`:
+    el video tutorial salio UN minuto despues de la consulta y la nota decia 6,5 minutos.
+
+    `deposito` y `retiro` no usan esto: anclan en un hecho del dominio (el comprobante del
+    cliente, el formulario del pedido), que ya es el planteo por construccion.
+
+    DOS REGLAS DE SEGURIDAD, las dos por el mismo motivo -- este ancla no puede FABRICAR notas:
+    1. Si todo lo del cliente es cortesia se devuelve su primer mensaje y la sesion se mide
+       como siempre. Devolver None mandaria la fila al camino con LLM, que es una decision de
+       routing y no de reloj: para eso esta el skip `sin_motivo`.
+    2. Si al planteo NO le sigue ninguna respuesta del operador, el ancla vuelve al primer
+       mensaje. Sin este guard el arreglo generaba **5 notas falsas de 1 estrella** en `info`
+       (medido antes de subirlo): mover el ancla al ULTIMO mensaje del cliente lo manda a la
+       rama "nadie le respondió", que es la nota mas cara del sistema, y como el vocabulario de
+       cortesia es cerrado, todo lo que no esta en la lista parece un planteo -- `0ccb648c`
+       cerraba con "super", `6d6f093b` con "Que dios los vendiga", `0ebb1ecf` con "nada,
+       tranqui".
+       QUEDA UN HUECO DECLARADO: 3 filas de `info` donde el cliente SI planteo al final
+       ("Necesito más información" en `18f9be37`, "Tengo una consulta" en `9cedb9f6`) y nadie
+       le contesto siguen con la nota vieja, mas indulgente. Separarlas de las cinco de arriba
+       exige ampliar el vocabulario de cortesia, que es una decision del negocio.
+
+    Recibe los mensajes REALES (sin notas) y ya ordenados, como los arman las rubricas.
+    """
+    delcliente = [m for m in reales if not m.get("from_me")]
+    if not delcliente:
+        return None
+    planteo = _primer_planteo(delcliente)
+    if planteo is None:
+        return delcliente[0]
+    hay_respuesta = any(_is_operator(m) and m["created_at"] >= planteo["created_at"]
+                        for m in reales)
+    return planteo if hay_respuesta else delcliente[0]
 
 
 def client_sin_motivo(messages: list[dict]) -> bool:
@@ -406,8 +572,14 @@ def operator_confirmation(messages: list[dict]) -> bool:
 # Tipos de media REAL (comprobante, tutorial en video, audio, doc). Se excluyen a
 # proposito 'chat'/'missed'/'template'/'location', que NO son un adjunto del operador
 # (un texto guardado como 'chat' no debe contar como "mando el comprobante/tutorial").
+# `sticker` SALIO el 2026-08-17: es el emoji de WhatsApp, no un documento. Adentro de la lista
+# contestaba mal las CUATRO preguntas que cuelgan de esta señal -- un sticker del agente era
+# "un pedido que hay que confirmar" (7 de las 439 filas de agilidad en 1 estrella), uno del
+# operador contaba como haber mandado el comprobante y como haber hecho algo por el caso, y
+# una sesion donde el cliente solo manda un sticker se volvia calificable. Un emoji en TEXTO
+# ya lo trataba `es_cortesia`; esto alinea las dos formas de mandar lo mismo.
 MEDIA_TYPES = frozenset({"image", "video", "audio", "voice", "ptt", "document",
-                         "application", "sticker", "viewonce"})
+                         "application", "viewonce"})
 
 
 def is_real_media(media_type: str | None) -> bool:
@@ -660,10 +832,25 @@ def operator_maltrato(messages: list[dict]) -> bool:
 # Patrones SIN acentos (se comparan sobre el texto normalizado con _strip_accents,
 # que ademas pasa a minusculas). Asi "contrasena" cubre "contraseña" y los verbos
 # de pedido con tilde en la raiz ("indicame", "pasame") matchean igual.
+#
+# EL USTED FALTABA, y es la forma que usan las agencias. La frase de entrega estaba solo
+# en segunda persona informal ("tu usuario es X"), asi que "SU usuario es X" no disparaba.
+# MEDIDO el 2026-08-17 sobre la corrida v16 completa: **201 de las 501 filas de `registro`
+# en 2 estrellas (40,1%)** cuyo rationale dice "El cliente entregó sus datos pero nunca
+# recibió su usuario y clave" tienen al operador entregandolas TEXTUAL — `a7c79fda` ("Su
+# usuario es Apunkjuanarias y la contraseña tambien Apunkjuanarias"), `339fb197`,
+# `7d92c3a4`. La fila afirmaba lo contrario de su propio transcript.
+# Y no era solo la nota: esta señal alimenta `registro.se_creo_la_cuenta`, que FUERZA el
+# motivo a `registro` cuando el alta se cerro. Medido con el patron parcheado, **35 filas
+# de jugador cambian de motivo** (17 desde `promo`, 16 de ellas con 5 estrellas; 15 desde
+# `soporte_cuenta`). Es la misma fuga que documenta scorer.py ("de 163 altas consumadas, 40
+# caian en promo"), que seguia abierta por el usted.
+# El guard de PEDIDO sigue haciendo el trabajo: "me ayuda con su usuario", "cual es su
+# clave" e "indiqueme su usuario" no matchean, porque exige el orden `su X es`.
 CREDENTIALS_PATTERN = (
     r"(usuario|user)\s*[:=][ \t]*\S+|"
     r"(clave|contrasena|pass)\s*[:=][ \t]*\S+|"
-    r"tu (usuario|clave|contrasena) es\b|"
+    r"(tu|su) (usuario|clave|contrasena) (es|sera)\b|"
     r"(tus|las) credenciales|credenciales (de acceso|de tu cuenta|son)"
 )
 _CREDENTIALS_RE = re.compile(CREDENTIALS_PATTERN)
@@ -901,3 +1088,116 @@ def operator_asked_and_waited(messages: list[dict], cierre_at=None,
     if cierre_at is None or pregunta_at is None:
         return True
     return (cierre_at - pregunta_at) >= min_espera
+
+
+# --- derivacion al AGENTE del cliente ---------------------------------------------
+# Manual de ATC, cap. 06: "Si un jugador pertenece a un agente, el operador NO debe realizar
+# recargas ni retiros". Lo correcto es direccionarlo y DARLE EL TELEFONO del agente. La
+# rubrica transaccional le exigia justo el paso prohibido: MEDIDO el 2026-08-19, 152 sesiones
+# de `deposito` con derivacion, media 3,08 estrellas y 70 en 1-2 (46%). Tres de tres
+# transcripts leidos son el procedimiento correcto castigado.
+#
+# LAS DOS FAMILIAS que aparecen en la data, con el mismo rasgo: el operador NOMBRA al agente
+# COMO DESTINO. No alcanza con que la palabra "agente" aparezca -- es la trampa que ya costo
+# cara en src/redireccion.py, donde enumerar verbos sueltos capturaba la plantilla de cierre
+# en vez de la intencion.
+#
+# ACENTOS: `re.IGNORECASE` NO los dobla, y esta familia de verbos los usa justo en la silaba
+# del stem -- "comuníquese" no empieza por "comunic" sino por "comuní". Es la misma leccion
+# que ya esta anotada en src/redireccion.py, y aca costo 2 de 10 tests: de las tres frases
+# reales de la data, "se comunique con su agente" y "comuníquese con su agente" caian las dos.
+_DERIVA_AGENTE_RE = re.compile(
+    r"(comun[ií]|contact|escr[ií]b|habl|dirij|dirig)\w*\s+"
+    r"(te\s+|se\s+|nos\s+)?(con|a|al)\s+(tu|su)\s+agente"
+    r"|(tu|su) agente (de confianza|te (puede|podra|podrá) ayudar)"
+    r"|pertenece[s]? a (un |una )?agen\w*",
+    re.IGNORECASE,
+)
+
+# Cuantos mensajes del operador despues de la frase pueden traer el telefono. En la data el
+# numero viaja SEPARADO mas seguido que junto: contando solo el mensaje de la frase el gate
+# cubria 15 de 74 sesiones, y con la ventana sube a 23.
+_VENTANA_TELEFONO = 3
+
+
+def operador_derivo_al_agente(messages: list[dict], lineas: dict | None):
+    """El operador derivo al cliente a SU AGENTE y le paso un telefono que NO es nuestro.
+
+    Devuelve el mensaje donde lo dijo (para medir el reloj del aviso, igual que la rama del
+    rechazo de `src/registro.py`), o None.
+
+    EXIGE EL NUMERO A PROPOSITO, y que sea ajeno. Dos razones que se sostienen solas:
+      1. Es lo que el manual pide. Derivar sin dar el telefono deja al cliente a la deriva:
+         no completa el procedimiento y no hay nada que eximir.
+      2. Una exencion por la sola frase seria AUTO-OTORGADA -- "derivalo al agente" pasaria a
+         ser la forma de esquivar cualquier deposito. Publicarle un numero al cliente es un
+         acto visible y auditable; decir una frase no.
+
+    `lineas`: mapa tail-de-9-digitos -> status (ver src/redireccion.build_lineas_map). Un
+    numero NUESTRO no es el agente del cliente: eso es `redireccion`, que es otro caso con su
+    propia regla (19 de las 74 sesiones castigadas caen ahi). SIN el mapa no se exime nada:
+    falla del lado seguro, igual que redireccion.
+
+    Se descartaron MIDIENDO dos corroboraciones alternativas: la etiqueta del contacto
+    (`AGENTE`/`JUGADOR AFILIADO`) solo cubre el 7% de los casos, y `users` no guarda telefono,
+    asi que la BD no puede decir si un operador es ademas agente.
+    """
+    if not lineas:
+        return None
+    # Import diferido: redireccion no depende de signals y no conviene que empiece a hacerlo.
+    from src.redireccion import tails_del_texto
+
+    reales = [m for m in messages if not m.get("is_note")]
+    for i, m in enumerate(reales):
+        if not (_is_operator(m) and _DERIVA_AGENTE_RE.search(m.get("body") or "")):
+            continue
+        tails = set(tails_del_texto(m.get("body")))
+        for siguiente in reales[i + 1:i + 1 + _VENTANA_TELEFONO]:
+            if _is_operator(siguiente):
+                tails |= tails_del_texto(siguiente.get("body"))
+        if not tails:
+            continue
+        # UN SOLO numero nuestro descarta la sesion entera: si el operador mando la linea
+        # propia, el traspaso es interno y lo juzga `redireccion`, no esta rama.
+        if any(t in lineas for t in tails):
+            continue
+        return m
+    return None
+
+
+def cliente_tuvo_la_ultima_palabra(messages: list[dict], cierre_at=None) -> bool:
+    """El cliente escribio el ULTIMO y nadie le contesto, con el ticket todavia abierto.
+
+    Manual de ATC, textual en el cap. 04 y otra vez en el cap. 06: "Es politica obligatoria
+    del departamento que el ultimo mensaje de la conversacion sea enviado por el operador".
+    Y sobre el caso chico: si el cliente responde con un "gracias", emoji o sticker despues
+    de la despedida, "el operador debera responder para mantener el estandar de cierre".
+
+    EL GATE DEL CIERRE ES LO QUE LA VUELVE JUSTA. Solo cuenta si el mensaje del cliente es
+    ANTERIOR al cierre del ticket: despues del cierre el operador ya mando /FIN, espero sus
+    5 minutos y cerro, que es exactamente el procedimiento que el manual pide. MEDIDO el
+    2026-08-19: de las 659 sesiones de 5 estrellas que terminan con el cliente, 548 (83%)
+    escribieron DESPUES de `resolved_at`. Castigar esas seria castigar al que cumplio.
+
+    El borde es inclusivo hacia el operador (un mensaje simultaneo al cierre no prueba que lo
+    haya ignorado). Sin `cierre_at` no hay con que exculpar, pero tampoco se inventa: se mira
+    lo unico que se sabe, que el cliente hablo ultimo.
+
+    OJO CON LAS NOTAS: la nota de cierre del CRM es `from_me` pero NO es un mensaje al
+    cliente. Contarla dejaria sin efecto la señal justo en las sesiones que se cierran bien
+    documentadas, que es lo contrario de lo que se busca.
+
+    `cierre_at` tiene que ser `conversations.resolved_at` de la conversacion cuyo id es el
+    session_id -- NO `conversation_scores.resolved_at`, que el worker reescribe despues de
+    calificar. Es la misma trampa que ya costo una tarde en v17.
+    """
+    reales = [m for m in messages if not m.get("is_note")]
+    if not reales:
+        return False
+    ultimo = max(reales, key=lambda m: m["created_at"])
+    if ultimo.get("from_me"):
+        return False
+    if cierre_at is None:
+        return True
+    # ESTRICTO a proposito: un mensaje simultaneo al cierre no prueba que lo haya ignorado.
+    return ultimo["created_at"] < cierre_at

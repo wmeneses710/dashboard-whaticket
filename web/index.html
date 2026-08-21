@@ -320,6 +320,8 @@
   .why { font-size:13.5px; line-height:1.55; border-left:3px solid var(--accent); padding:4px 0 4px 14px; margin:4px 0 18px; }
   .dims { display:flex; flex-direction:column; gap:12px; } .dim .dh { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin-bottom:3px; } .dim p { margin:0; font-size:12.5px; }
   .errs { margin-top:16px; } .err { font-size:12px; color:var(--r-mala); background:color-mix(in srgb, var(--r-mala) 12%, transparent); padding:7px 11px; border-radius:8px; margin-top:6px; }
+  /* El numero del manual adelante: el supervisor los conoce por numero ("el 9 otra vez"). */
+  .ecod { display:inline-block; min-width:2.4em; margin-right:.5em; font-weight:700; opacity:.72; font-variant-numeric:tabular-nums; }
   .oks { margin-top:16px; } .ok { font-size:12px; color:var(--r-buena); background:color-mix(in srgb, var(--r-buena) 12%, transparent); padding:7px 11px; border-radius:8px; margin-top:6px; }
   .rec { margin-top:16px; } .recbody { font-size:12.5px; background:color-mix(in srgb, var(--faint) 12%, transparent); padding:8px 11px; border-radius:8px; }
   .metagrid { display:grid; grid-template-columns:1fr 1fr; gap:9px 16px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
@@ -936,10 +938,11 @@
             <div class="dims">
               <div class="dim" v-for="(v,k) in dimsOnly(modal.detail.dimensions)" :key="k"><div class="dh">{{ k }}</div><p>{{ v }}</p></div>
             </div>
-            <div class="oks" v-if="dimAciertos(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Lo que hizo bien</div>
+            <div class="oks" v-if="dimAciertos(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Buenas prácticas cumplidas</div>
               <div class="ok" v-for="(a,i) in dimAciertos(modal.detail.dimensions)" :key="i">{{ a.detalle }}</div></div>
-            <div class="errs" v-if="dimErrors(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Errores detectados</div>
-              <div class="err" v-for="(e,i) in dimErrors(modal.detail.dimensions)" :key="i">{{ e }}</div></div>
+            <div class="errs" v-if="dimErrors(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Errores críticos · manual ATC</div>
+              <div class="err" v-for="(e,i) in dimErrors(modal.detail.dimensions)" :key="i" :title="e.detalle">
+                <b v-if="e.codigo" class="ecod">{{ e.codigo }}</b>{{ e.texto }}</div></div>
             <div class="rec" v-if="dimRecom(modal.detail.dimensions)"><div class="dh" style="margin-bottom:4px">Recomendación</div>
               <div class="recbody">{{ dimRecom(modal.detail.dimensions) }}</div></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
@@ -1307,6 +1310,10 @@ createApp({
     const expand = reactive({ qual:false, convPasv:false, qualMotivo:false });
     let loadedCount = 0;
     const modal = reactive({ open:false, loading:false, detail:null, title:"" });
+    // EL VOCABULARIO DE ATC, traido de /api/catalogo. No se hardcodea aca: la fuente es
+    // src/catalogo_atc.py (verbatim del manual) y tenerlo dos veces garantiza que un dia
+    // digan cosas distintas. Vacio = el tablero cae al texto crudo y sigue funcionando.
+    const catalogo = reactive({ errores:{}, practicas:{}, rr:{} });
     const drill = reactive({ open:false, op:"", loading:false, rows:[] });
     // Modal de operadores. El token se guarda en localStorage: es un secreto compartido que
     // el humano tipea una vez, no una sesión con login. NUNCA viaja en la página servida —
@@ -1740,7 +1747,18 @@ createApp({
     // que filtrada. El resto del jsonb ya se muestra en su lugar (chips, tiempos, recomendación).
     const DIM_PROSA = { resolucion:"Resolución", iniciativa:"Iniciativa", cortesia:"Cortesía" };
     function dimsOnly(dims) { const o={}; for (const [k,t] of Object.entries(DIM_PROSA)) { const v=(dims||{})[k]; if (typeof v==="string" && v.trim()) o[t]=v; } return o; }
-    function dimErrors(dims) { return (dims&&dims.errores)||[]; }
+    // UN ERROR, COMO LO NOMBRA ATC. Desde v21 el modelo emite CODIGOS del catalogo del
+    // manual (E01-E12) en vez de prosa: antes la misma falta salia escrita de cinco formas
+    // -- 7.019 errores en 3.680 textos distintos-- y el negocio no podia contar nada.
+    // FALLBACK AL TEXTO CRUDO: las 65.599 filas ya scoreadas traen prosa libre y se siguen
+    // mostrando tal cual. Un rescore no puede ser requisito para cambiar una pantalla.
+    function dimErrors(dims) {
+      return ((dims&&dims.errores)||[]).map(e => {
+        const f = catalogo.errores[e];
+        return f ? { codigo:f.codigo, chip:f.chip, texto:f.texto, detalle:f.detalle }
+                 : { codigo:"", chip:"", texto:e, detalle:"" };
+      });
+    }
     // Tiempos que dejo la rubrica determinista del motivo, ya con etiqueta legible.
     function dimTiempos(dims) {
       const out = [];
@@ -1965,6 +1983,12 @@ createApp({
     onMounted(async () => {
       document.addEventListener("keydown", e => { if(e.key==="Escape") { closeModal(); closeDrill(); closeOps(); } });
       setInterval(checkNew, 60000);
+      // El catalogo primero y sin bloquear: si falla, las filas muestran el texto crudo.
+      fetchJSON("/api/catalogo").then(c => {
+        for (const e of (c.errores||[])) catalogo.errores[e.codigo] = e;
+        for (const b of (c.practicas||[])) catalogo.practicas[b.codigo] = b;
+        catalogo.rr = c.respuestas_rapidas || {};
+      }).catch(() => {});
       let accts = [];
       try { accts = await fetchJSON("/api/accounts"); } catch(e) {}
       accounts.value = accts;
@@ -1985,7 +2009,7 @@ createApp({
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
-      bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom,
+      bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
       fmtDur, dimTiempos, dimConteos, dimHechos,
       dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores,
       nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,

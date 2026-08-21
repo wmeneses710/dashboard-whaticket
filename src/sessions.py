@@ -28,7 +28,6 @@ from collections import defaultdict
 from datetime import timedelta
 
 from src.metrics import message_stats
-from src.redireccion import es_redireccion_total
 from src.router import decide_eligibility, decide_rubric
 from src.signals import client_sin_motivo, operator_resolved
 
@@ -198,12 +197,14 @@ def evaluate_session(messages: list[dict], lineas: dict | None = None):
     # sesion que saber que el cliente solo dijo "hola".
     if eval_status == "evaluated" and client_sin_motivo(messages):
         return stats, rubric, "skipped", "sin_motivo"
-    # `redireccion`: la respuesta del negocio fue SOLO un traspaso a otra linea nuestra,
-    # y esa linea esta viva. Va DESPUES de `sin_motivo` por decision del negocio
-    # (2026-08-07): cuando el cliente tampoco planteo nada, la etiqueta que queda es
-    # `sin_motivo`. Ver src/redireccion.py para los tres buckets y el por que.
-    if eval_status == "evaluated" and es_redireccion_total(messages, lineas):
-        return stats, rubric, "skipped", "redireccion"
+    # `redireccion` YA NO SE SALTEA (decision del negocio, 2026-08-20): es un motivo con
+    # nota determinista propia (src/redireccion.score_redireccion). El skip protegia bien
+    # -- el traspaso puro caia en 2 estrellas por "no atendio el motivo" -- pero BORRABA el
+    # traspaso del tablero, y el negocio lo quiere contar. La proteccion ahora vive en la
+    # rubrica, que da 4 cuando la linea de destino esta viva.
+    # `sin_motivo` sigue ganandole (bucket A, decision del 2026-08-07): si el cliente
+    # tampoco planteo nada, la etiqueta que queda es `sin_motivo`. Por eso el chequeo de
+    # arriba no se toco y este bloque desaparecio en vez de moverse.
     return stats, rubric, eval_status, skip_reason
 
 

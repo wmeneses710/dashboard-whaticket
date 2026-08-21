@@ -11,14 +11,18 @@ import json
 import pytest
 
 from src.fewshot import EJEMPLOS_MOTIVO, Ejemplo, formatear_fewshot
-from src.rubrics import MOTIVOS
+from src.rubrics import MOTIVOS, MOTIVOS_DEL_LLM
 
 
 # --- cobertura: el contrato que faltaba ------------------------------------------
 
 def test_TODOS_los_motivos_tienen_al_menos_un_ejemplo():
+    """Solo los que el modelo puede ELEGIR. `redireccion` la decidimos nosotros con
+    `connections`, no se le pregunta, y por eso no necesita ejemplo few-shot."""
+    from src.rubrics import MOTIVOS, MOTIVOS_DEL_LLM
+
     cubiertos = {e.motivo for e in EJEMPLOS_MOTIVO}
-    faltan = set(MOTIVOS) - cubiertos
+    faltan = set(MOTIVOS_DEL_LLM) - cubiertos
     assert not faltan, f"motivos sin ejemplo few-shot: {sorted(faltan)}"
 
 
@@ -122,7 +126,7 @@ def test_el_prompt_real_sigue_usando_el_fewshot():
     from src.prompts import build_motivo_prompt
     system, _ = build_motivo_prompt([{"from_me": False, "body": "hola", "is_note": False}], "")
     assert "EJEMPLOS" in system
-    for m in MOTIVOS:
+    for m in MOTIVOS_DEL_LLM:
         assert m in system
     # Un texto que SOLO existe en los ejemplos nuevos: si el prompt sigue usando el
     # string viejo, esto falla. Sin esto el test pasaba por casualidad.

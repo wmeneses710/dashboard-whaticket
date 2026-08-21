@@ -168,11 +168,14 @@ def test_redireccion_total_exige_que_la_linea_este_viva():
 
 # --- integracion con la decision de skip ----------------------------------------
 
-def test_evaluate_session_saltea_la_redireccion_valida():
+def test_la_redireccion_valida_YA_NO_se_saltea():
+    """Cambio del 2026-08-20: `redireccion` es un motivo con nota determinista, no un skip.
+    La proteccion contra el 2 estrellas se mudo del gate a la rubrica -- ver
+    tests/test_redireccion_motivo.py::test_la_linea_viva_no_es_una_falla."""
     msgs = [_cli("Buenas para recargar 5"),
             _op("A partir de ahora te estaremos atendiendo desde el 0991194133")]
     _, _, eval_status, skip_reason = evaluate_session(msgs, lineas=LINEAS)
-    assert (eval_status, skip_reason) == ("skipped", "redireccion")
+    assert (eval_status, skip_reason) == ("evaluated", None)
 
 
 def test_la_redireccion_a_linea_muerta_SI_se_evalua():

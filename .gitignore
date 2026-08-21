@@ -29,3 +29,8 @@ scratchpad/
 .mcp.json
 
 .codegraph/
+.env.local2
+
+# Salida del arnes de benchmark de modelos (scripts/bench_modelo.py):
+# la muestra y los resultados son de una corrida, no del repo.
+bench/

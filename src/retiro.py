@@ -17,9 +17,9 @@ la consulta — que es lo esperable, porque ahi no hay nada que entregar. El sep
 es el MONTO: que el cliente diga cuanta plata quiere.
 
 LA ESCALA (definida por el negocio el 2026-08-06):
-    5  respuesta <=2 min + comprobante <=15 min + se aseguro de que no faltara nada
-    4  respuesta <=2 min + comprobante <=15 min
-    3  respuesta 2-5 min, o comprobante 15-30 min
+    5  respuesta <=1 min + comprobante <=15 min + se aseguro de que no faltara nada
+    4  respuesta <=1 min + comprobante <=15 min
+    3  respuesta 1-5 min, o comprobante 15-30 min
     2  respondio pero nunca mando el comprobante, o tardo de mas
     1  ni respondio ni mando comprobante
 
@@ -39,7 +39,9 @@ from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
     is_real_media,
+    cliente_tuvo_la_ultima_palabra,
     operator_asked_and_waited,
+    operador_derivo_al_agente,
     tiene_reloj,
 )
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
@@ -49,7 +51,7 @@ from src.horario import espera_efectiva
 
 MODELO_DETERMINISTA = "determinista/retiro-v1"
 
-AGIL = timedelta(minutes=2)             # respuesta inmediata al pedido
+AGIL = timedelta(minutes=1)             # respuesta inmediata al pedido
 RESPUESTA_TOPE = timedelta(minutes=5)   # mas que esto ya no es "rapido"
 ENTREGA_AGIL = timedelta(minutes=15)    # comprobante dentro del objetivo
 ENTREGA_TOPE = timedelta(minutes=30)    # mas que esto es una demora, no una espera
@@ -72,6 +74,7 @@ class Retiro:
     espera: timedelta | None       # del pedido a la primera respuesta del operador
     entrega: timedelta | None      # del pedido al comprobante del operador
     pregunto_algo_mas: bool
+    derivo_al_agente: bool = False  # el retiro no le correspondia a ATC (ver la rama)
 
 
 # EL CONSEJO APUNTA A LA RAMA, NO A LA ESTRELLA (misma razon que en src/deposito.py). Al 2
@@ -79,7 +82,7 @@ class Retiro:
 # 112 de las 221 sesiones en 2 estrellas (50,7%) SI habian entregado el comprobante y
 # recibian igual el consejo de que "el retiro quedo sin comprobante".
 _COACHING = {
-    3: "El objetivo son 2 minutos para acusar el pedido y 15 para tener el comprobante "
+    3: "El objetivo es 1 minuto para acusar el pedido y 15 para tener el comprobante "
        "arriba. Acusar primero y entregar después cumple las dos cosas.",
     4: "Cerrar con \"¿te falta algo más?\" es la diferencia entre entregar y acompañar: en "
        "retiro el agente suele tener una segunda operación en camino. Conviene dejar unos "
@@ -141,8 +144,12 @@ def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
     return None if pedido is None else interaccion_de(messages, pedido)
 
 
-def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
-    """Nota determinista de la sesion. None si no es una transaccion de retiro."""
+def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None) -> Retiro | None:
+    """Nota determinista de la sesion. None si no es una transaccion de retiro.
+
+    `lineas`: mapa de nuestras lineas (src/redireccion.build_lineas_map), para reconocer la
+    derivacion al agente. Sin el mapa esa rama no se activa: falla del lado seguro.
+    """
     if not es_transaccion(messages):
         return None
     pedido = _pedido_del_cliente(messages)
@@ -173,6 +180,7 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     entrega = (espera_efectiva(inicio, max(comprobante["created_at"], inicio))
                if comprobante else None)
     algo_mas = operator_asked_and_waited(reales, cierre_at)
+    colgado = cliente_tuvo_la_ultima_palabra(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:
         return formato_espera(None if td is None else td.total_seconds())
@@ -180,6 +188,34 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
     if respuesta is None and comprobante is None:
         return Retiro(1, "mala", "El agente pidió el retiro y nadie le respondió.",
                       None, None, algo_mas)
+    if entrega is None and (derivacion := operador_derivo_al_agente(reales, lineas)):
+        # LA RAMA DE LA DERIVACION AL AGENTE, espejo de la de src/deposito.py. El manual de
+        # ATC (cap. 06) prohibe a ATC procesar recargas Y RETIROS de un jugador que pertenece
+        # a un agente, asi que exigirle el comprobante de pago es exigirle el paso prohibido.
+        # Techo en 4 por la misma razon que alla: el 5 es el mejor escenario del motivo, y un
+        # retiro que ATC no podia pagar no lo es.
+        # EL RELOJ DE ESTA RAMA NO ES `AGIL`, y la razon es del manual, no de los datos: antes
+        # de derivar, el operador TIENE que pedir el usuario y verificar en el sistema a que
+        # agencia pertenece (cap. 05, "Solicitud directa de cuenta bancaria", pasos 1 y 2).
+        # Eso es una CONSULTA, no un reflejo, y el minuto de `AGIL` mide la primera respuesta.
+        # Cobrarle el minuto seria cobrarle la verificacion que el manual le exige hacer.
+        # Se usa el mismo tope que la rama del alta imposible de src/registro.py (5 min para
+        # un aviso que requiere mirar el sistema). MEDIDO sobre los 18 casos que la señal
+        # encuentra: p50 4,3 min, 56% dentro de 5 y solo 11% dentro de 1. La muestra es CHICA
+        # y el criterio se apoya en el manual; los 18 solo confirman que no lo contradice.
+        aviso = espera_efectiva(pedido["created_at"], derivacion["created_at"])
+        if aviso is not None and aviso <= RESPUESTA_TOPE:
+            return Retiro(
+                4, "buena",
+                f"El retiro le correspondía a su agente y se lo informó en {_mins(aviso)}, "
+                "con el número para contactarlo.",
+                aviso, None, algo_mas, True)
+        return Retiro(
+            3, "aceptable",
+            "El retiro le correspondía a su agente y se lo informó con el número, pero "
+            f"tardó {_mins(aviso)} en decírselo. El objetivo son 5 minutos, que alcanzan "
+            "para verificar a qué agencia pertenece.",
+            aviso, None, algo_mas, True)
     if entrega is None:
         return Retiro(
             2, "deficiente",
@@ -197,8 +233,16 @@ def calificar_retiro(messages: list[dict], cierre_at=None) -> Retiro | None:
             3, "aceptable",
             f"Entregó el comprobante, pero fuera del objetivo: respondió en "
             f"{_mins(espera)} y entregó {_mins(entrega)} después del pedido. Se apunta "
-            "a responder en 2 minutos y entregar dentro de los 15.",
+            "a responder en 1 minuto y entregar dentro de los 15.",
             espera, entrega, algo_mas)
+    if algo_mas and colgado:
+        # Espejo de la rama de src/deposito.py: techo en 4 (ver tests/test_ultima_palabra.py).
+        return Retiro(
+            4, "buena",
+            f"Respondió el pedido en {_mins(espera)} y entregó el comprobante "
+            f"{_mins(entrega)} después, pero el cliente escribió al final y se quedó con "
+            "la última palabra.",
+            espera, entrega, True)
     if algo_mas:
         return Retiro(
             5, "excelente",
@@ -224,13 +268,13 @@ def _coaching(r: Retiro) -> str:
     return _COACHING[r.stars]
 
 
-def score_retiro(messages: list[dict], cierre_at=None) -> ScoreResult | None:
+def score_retiro(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
     None cuando no es una transaccion: una consulta sobre retiros se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca correspondio.
     """
-    r = calificar_retiro(messages, cierre_at)
+    r = calificar_retiro(messages, cierre_at, lineas)
     if r is None:
         return None
     return ScoreResult(

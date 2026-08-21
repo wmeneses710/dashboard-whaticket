@@ -43,6 +43,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from src.interacciones import interaccion_de
+from src.catalogo_coaching import consejo_de
 from src.rubrics import formato_espera, plural
 from src.scorer import ScoreResult
 from src.signals import (
@@ -60,7 +61,7 @@ from src.horario import HORA_ABRE, HORA_CIERRA, espera_efectiva
 MODELO_DETERMINISTA = "determinista/agilidad-v1"
 
 # Bandas de espera del PEOR pedido de la sesion -> etiqueta de la escala v2.
-AGIL = timedelta(minutes=2)        # <= 2 min  -> excelente (5)
+AGIL = timedelta(minutes=1)        # <= 1 min  -> excelente (5)
 BUENO = timedelta(minutes=5)       # <= 5 min  -> buena     (4)
 ACEPTABLE = timedelta(minutes=15)  # <= 15 min -> aceptable (3)
 #                                    > 15 min -> deficiente (2)
@@ -287,15 +288,10 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
 # 'excelente' queda vacio (igual que el pase con LLM, que no recomienda si no hay que
 # mejorar nada). Es fijo a proposito: la accion correctiva de una operacion de rutina no
 # depende del caso, depende del reloj.
-_COACHING = {
-    "mala": "Quedó un pedido sin responder. En operaciones de caja conviene contestar "
-            "siempre, aunque sea con una línea avisando que ya se está procesando.",
-    "deficiente": "La respuesta tardó más de 15 minutos. Son operaciones de rutina que no "
-                  "necesitan verificación: se puede avisar enseguida y confirmar al acreditar.",
-    "aceptable": "La respuesta tardó más de 5 minutos. Si no se puede procesar en el momento, "
-                 "un mensaje corto alcanza para que el agente no quede esperando sin saber.",
-    "buena": "Muy cerca del objetivo, que es responder dentro de los 2 minutos.",
-}
+# LOS TEXTOS VIVEN EN src/catalogo_coaching.py, no aca. Tenerlos en los dos lados hace
+# que el catalogo mienta en cuanto uno de los dos cambie, y el catalogo es lo que el
+# tablero cuenta. Lo ata tests/test_catalogo_coaching.py::
+# test_score_agilidad_emite_el_texto_del_catalogo.
 
 
 def score_agilidad(messages: list[dict]) -> ScoreResult | None:
@@ -317,6 +313,7 @@ def score_agilidad(messages: list[dict]) -> ScoreResult | None:
     a = calificar_agilidad(messages)
     if a.stars is None:
         return None
+    _consejo = consejo_de("agilidad", a.label)
     return ScoreResult(
         rubric="agilidad",
         motivo=None,
@@ -333,5 +330,6 @@ def score_agilidad(messages: list[dict]) -> ScoreResult | None:
         atencion=None,
         deposit_observed=None,
         floor_applied=False,
-        recomendacion=_COACHING.get(a.label, ""),
+        recomendacion=_consejo.texto if _consejo else "",
+        recomendacion_codigos=[_consejo.codigo] if _consejo else [],
     )

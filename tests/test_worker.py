@@ -385,20 +385,29 @@ def _redireccion_session_messages():
     ]
 
 
-def test_score_session_and_store_saltea_por_redireccion(monkeypatch):
+def test_la_redireccion_se_califica_SIN_llamar_al_LLM(monkeypatch):
+    """Cambio del 2026-08-20: `redireccion` ya no se saltea, se califica -- pero SIGUE sin
+    pasar por el modelo. El traspaso puro lo decide `respuesta_fue_solo_traspaso`, que es
+    una funcion pura, y a donde apunta lo decide `connections`: dos hechos que el modelo no
+    puede verificar. Pagar una inferencia para despues pisarla es gasto puro.
+
+    La intencion del test viejo (`no debe correr el LLM`) se conserva tal cual; lo que
+    cambia es el resultado: nota en vez de skip."""
     monkeypatch.setattr(worker, "fetch_session_messages",
                         lambda cur, sid: _redireccion_session_messages())
 
     def boom(**kw):
-        raise AssertionError("no debe correr el LLM en una redireccion skipeada")
+        raise AssertionError("no debe correr el LLM en una redireccion")
 
     monkeypatch.setattr(worker, "score_by_motivo", boom)
     conn = _CtxConn()
     eval_status, skip_reason, score = score_session_and_store(
         conn, _session_row(), llm=None, op_map={}, lineas={"991194133": "CONNECTED"})
-    assert (eval_status, skip_reason) == ("skipped", "redireccion")
-    assert score is None
-    assert _params_of_upsert(conn)["stars"] is None
+    assert (eval_status, skip_reason) == ("evaluated", None)
+    assert score is not None
+    assert score.motivo == "redireccion"
+    assert score.stars == 4
+    assert _params_of_upsert(conn)["stars"] == 4
 
 
 def test_sin_mapa_de_lineas_la_redireccion_se_evalua_igual(monkeypatch):

@@ -6,7 +6,7 @@ Reglas clave:
   - mostrar la tabla de motivos y pedir el campo `motivo` + reglas de 2 capas.
 """
 from src.prompts import build_motivo_prompt, build_motivo_schema, format_transcript
-from src.rubrics import MOTIVOS
+from src.rubrics import MOTIVOS, MOTIVOS_DEL_LLM
 
 MSGS_HUMAN = [
     {"from_me": False, "is_note": False, "body": "hola, no me llego la recarga"},
@@ -52,10 +52,10 @@ def test_transcript_trunca_conversaciones_muy_largas():
 
 
 # --- pase v2: build_motivo_prompt / build_motivo_schema -----------------------
-def test_motivo_prompt_muestra_la_tabla_de_los_siete_motivos():
+def test_motivo_prompt_muestra_la_tabla_de_los_motivos_que_el_modelo_elige():
     system, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="")
     low = system.lower()
-    for m in MOTIVOS:
+    for m in MOTIVOS_DEL_LLM:
         assert m in low
 
 
@@ -111,7 +111,10 @@ def test_motivo_prompt_hint_de_deposito_es_condicional():
 def test_motivo_schema_pide_motivo_dimensiones_y_hechos():
     sch = build_motivo_schema()
     props = sch["properties"]
-    assert props["motivo"]["enum"] == list(MOTIVOS)
+    # MOTIVOS_DEL_LLM: `redireccion` la decidimos con `connections` y el modelo no puede
+    # verificarla, asi que no entra en el enum. Ver src/rubrics.py.
+    assert props["motivo"]["enum"] == list(MOTIVOS_DEL_LLM)
+    assert "redireccion" not in props["motivo"]["enum"]
     dims = props["dimensions"]["properties"]
     assert {"resolucion", "iniciativa", "cortesia", "errores"} <= set(dims)
     # el LLM emite HECHOS booleanos, NO la etiqueta (la deriva el codigo)

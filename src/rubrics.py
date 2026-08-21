@@ -87,7 +87,28 @@ BOT = RubricSpec(
 Motivo = str
 MOTIVOS: tuple[Motivo, ...] = (
     "deposito", "retiro", "soporte_cuenta", "info", "promo", "registro", "problema",
+    # `redireccion` entro el 2026-08-20 (decision del negocio). Era un SKIP condicionado
+    # desde el 2026-08-07: el traspaso puro a una linea viva se salteaba para no castigar
+    # al operador por una migracion que decidio el negocio. El skip protegia bien pero
+    # BORRABA el traspaso del tablero -- no se podia contar ni comparar entre operadores.
+    # Su nota la pone SIEMPRE la rubrica determinista (src/redireccion.score_redireccion):
+    # el camino generico del LLM es justo el que le ponia 2 estrellas por "no atendio el
+    # motivo", que es lo que el skip evitaba. Ver tests/test_redireccion_motivo.py.
+    "redireccion",
 )
+
+# Los motivos que se le PREGUNTAN al modelo. No son todos, y la diferencia importa.
+#
+# `redireccion` queda AFUERA a proposito: que la respuesta del negocio haya sido solo un
+# traspaso, que el numero de destino sea una linea NUESTRA y que esa linea este CONNECTED
+# son tres hechos que el modelo NO PUEDE VERIFICAR leyendo el transcript -- el ultimo vive
+# en la tabla `connections`. Ponerlo en el enum invita a que lo elija por parecido de texto
+# ("escribime al 099...") en sesiones que no son traspaso, y despues habria que pisarlo.
+# Es el mismo criterio de los hints deterministas de `build_motivo_prompt`, al revés:
+# cuando el hecho es nuestro, no se pregunta.
+#
+# REGLA: un motivo entra a MOTIVOS_DEL_LLM solo si se puede decidir LEYENDO la conversacion.
+MOTIVOS_DEL_LLM: tuple[Motivo, ...] = tuple(m for m in MOTIVOS if m != "redireccion")
 _V2_LABELS = ("excelente", "buena", "aceptable", "deficiente", "mala")
 _V2_STARS = {"excelente": 5, "buena": 4, "aceptable": 3, "deficiente": 2, "mala": 1}
 # Escala de etiquetas comun a TODOS los motivos (para el enum del schema del pase v2).
@@ -159,6 +180,16 @@ MOTIVO_RUBRICS: dict[Motivo, RubricSpec] = {
         "no resuelve ni escala, deja el problema abierto",
         "hace seguimiento, se disculpa proactivamente, previene reincidencia",
         "resuelve lo minimo sin seguimiento"),
+    # La nota de `redireccion` es 100% determinista, asi que estas descripciones NO le
+    # hablan a ningun LLM: existen para que el tablero y `derive_aciertos` tengan las
+    # mismas tres dimensiones que los demas motivos y no haya que ramificar por motivo.
+    # El eje real es el del manual (E07/B09): a donde lo mandaron.
+    "redireccion": _motivo_rubric(
+        "redireccion",
+        "traspasa a una linea nuestra que esta viva, avisandole al cliente",
+        "lo manda a un numero que no existe o a una linea caida: queda a la deriva",
+        "ademas de traspasar, deja el caso encaminado",
+        "solo traspasa"),
 }
 
 RUBRICS: dict[Rubric, RubricSpec] = {"human": HUMAN, "bot": BOT, **MOTIVO_RUBRICS}

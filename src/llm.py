@@ -111,7 +111,15 @@ class OllamaClient:
         return resp.json()["message"].get("content") or ""
 
     def available_models(self) -> list[str]:
-        """Nombres de los modelos presentes en Ollama (GET /api/tags)."""
+        """Nombres de los modelos presentes en Ollama (GET /api/tags).
+
+        SI SONDEAS ESTA RUTA A MANO Y VES UN 403, ES EL WAF Y NO OLLAMA. Medido el
+        2026-08-17 contra el endpoint de produccion, con el mismo token y la misma ruta,
+        cambiando solo el User-Agent: `Python-urllib/3.14` y `Python-urllib/3.11` dan 403;
+        `python-httpx`, `curl`, `wget` y `Mozilla` dan 200. El cliente de este repo usa
+        httpx, asi que no lo toca — pero un diagnostico hecho con `urllib` desde una
+        terminal miente, y costo una tarde creer que el proxy escondia la ruta.
+        """
         url = f"{self.base_url}/api/tags"
         if self._client is not None:
             resp = self._client.get(url, headers=self._headers)

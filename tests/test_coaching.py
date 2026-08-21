@@ -16,9 +16,16 @@ coaching tiene sus propias invariantes, distintas de las de la nota:
 Todo PURO: sin LLM y sin BD.
 """
 import re
+
+from src.catalogo_atc import RESPUESTAS_RAPIDAS
 from datetime import datetime, timedelta, timezone
 
-from src.agilidad import _COACHING as COACHING_AGILIDAD
+# Los textos de `agilidad` se mudaron a src/catalogo_coaching.py el 2026-08-21 (catalogo
+# cerrado con codigo, para poder contarlos). El test sigue mirando los MISMOS textos, ahora
+# desde su unica fuente de verdad.
+from src.catalogo_coaching import CONSEJOS
+
+COACHING_AGILIDAD = {c.situacion: c.texto for c in CONSEJOS if c.rubrica == "agilidad"}
 from src.deposito import score_deposito
 from src.info import score_info
 from src.promo import score_promo
@@ -283,7 +290,8 @@ _IMPERATIVOS_VOSEO = ("confirmale", "mandale", "preguntale", "decile", "avisale"
 
 
 def _todos_los_textos():
-    from src.agilidad import _COACHING as A
+    from src.catalogo_coaching import CONSEJOS as _C_A
+    A = {c.situacion: c.texto for c in _C_A if c.rubrica == 'agilidad'}
     from src.deposito import (_COACHING as D, _COACHING_1 as D1,
                               _COACHING_2_SIN_ACREDITAR as D2A, _COACHING_2_TARDE as D2T)
     from src.info import _COACHING as I, _COACHING_1 as I1
@@ -325,7 +333,25 @@ def test_el_coaching_dice_COMO_no_solo_QUE_paso():
                "indícale", "responder", "contestar", "enviarlo", "enviar", "decirle")
     for clave, texto in _todos_los_textos():
         bajo = texto.lower()
+        # NOMBRAR UNA RESPUESTA RAPIDA DEL MANUAL ES LA FORMA MAS ACCIONABLE DE DECIR COMO,
+        # y por eso vale sola. "/R2verificaciondeboleta apenas entra el comprobante" no deja
+        # nada que interpretar: el operador la tiene en Whaticket y sabe cual es. Se exige
+        # que este EN EL CATALOGO -- si no, seria una plantilla inventada, que es justo el
+        # error critico E10 del manual ("Alterar respuestas rapidas... o informacion oficial").
+        if any(rr.lower() in bajo for rr in RESPUESTAS_RAPIDAS):
+            continue
         assert any(s in bajo for s in señales), f"{clave} no dice COMO: {texto}"
+
+
+def test_ninguna_respuesta_rapida_del_coaching_esta_inventada():
+    """Si un consejo nombra una plantilla que no existe, manda al operador a buscar algo que
+    no va a encontrar -- y peor, contradice al propio manual, que prohibe alterar o inventar
+    respuestas rapidas (error critico E10). El catalogo es src/catalogo_atc.py."""
+    barra = re.compile(r"/[A-Za-z][A-Za-z0-9áéíóúñ]*")
+    conocidas = {rr.lower() for rr in RESPUESTAS_RAPIDAS}
+    for clave, texto in _todos_los_textos():
+        for m in barra.findall(texto):
+            assert m.lower() in conocidas, f"{clave} nombra {m!r}, que no está en el catálogo"
 
 
 def _ngramas(texto: str, n: int = 5) -> set[str]:

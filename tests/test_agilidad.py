@@ -155,11 +155,14 @@ def test_sin_comprobante_ni_confirmacion_el_abandono_SIGUE_siendo_1():
 
 def test_solo_la_media_REAL_fuerza_el_pedido():
     # Adjuntos de verdad: exigen confirmacion aunque el texto sea cortesia.
-    for tipo in ("image", "image/jpeg", "video", "audio", "document", "sticker"):
+    for tipo in ("image", "image/jpeg", "video", "audio", "document"):
         assert es_pedido([_cli(0, "Gracias", media=tipo)]) is True, tipo
     # Tipos que NO son un adjunto del agente: no fuerzan nada (misma lista que
     # src/signals.py, que ya excluia 'chat'/'missed'/'template'/'location').
-    for tipo in ("chat", "missed", "template", "location"):
+    # `sticker` SE MUDO ACA el 2026-08-17: es el emoji de WhatsApp, no un documento, y
+    # adentro de MEDIA_TYPES hacia que un sticker del agente fuera "un pedido que hay que
+    # confirmar" (7 de las 439 filas de 1 estrella). Ver tests/test_sticker_no_es_adjunto.py.
+    for tipo in ("chat", "missed", "template", "location", "sticker"):
         assert es_pedido([_cli(0, "Gracias", media=tipo)]) is False, tipo
 
 
@@ -220,8 +223,9 @@ def test_la_madrugada_no_baja_la_nota():
 
 # --- bandas --------------------------------------------------------------------
 
-def test_hasta_2_minutos_es_excelente():
-    a = calificar_agilidad([_cli(0, "Una recarga"), _op(2)])
+def test_hasta_un_minuto_es_excelente():
+    # 1 min, no 2: es el maximo del manual de ATC. Ver tests/test_umbral_un_minuto.py.
+    a = calificar_agilidad([_cli(0, "Una recarga"), _op(1)])
     assert (a.stars, a.label) == (5, "excelente")
 
 
@@ -241,7 +245,7 @@ def test_mas_de_15_minutos_es_deficiente():
 
 
 def test_los_bordes_son_inclusivos_hacia_la_banda_mejor():
-    assert calificar_agilidad([_cli(0, "Recarga"), _op(2)]).stars == 5    # 2min exactos
+    assert calificar_agilidad([_cli(0, "Recarga"), _op(1)]).stars == 5    # 1min exacto
     assert calificar_agilidad([_cli(0, "Recarga"), _op(5)]).stars == 4    # 5min exactos
     assert calificar_agilidad([_cli(0, "Recarga"), _op(15)]).stars == 3   # 15min exactos
 

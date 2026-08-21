@@ -134,9 +134,11 @@ def test_rubricas_legacy_human_bot_presentes():
     assert {"human", "bot"} <= set(RUBRICS)
 
 
-def test_rubricas_incluyen_los_siete_motivos():
+def test_rubricas_incluyen_los_ocho_motivos():
+    # `redireccion` entro el 2026-08-20: era un skip y paso a motivo con nota determinista.
     assert set(MOTIVOS) == {
         "deposito", "retiro", "soporte_cuenta", "info", "promo", "registro", "problema",
+        "redireccion",
     }
     assert set(MOTIVOS) <= set(RUBRICS)
 

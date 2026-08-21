@@ -18,9 +18,9 @@ material que exigir, ni conversion que perseguir (el uplift se le saco a proposi
 controla es contestar, y hacerlo rapido.
 
 ESCALA:
-    5  respondio <=2 min + se aseguro de que no faltara nada
-    4  respondio <=2 min
-    3  respondio entre 2 y 5 min
+    5  respondio <=1 min + se aseguro de que no faltara nada
+    4  respondio <=1 min
+    3  respondio entre 1 y 5 min
     2  respondio despues de 5 min
     1  no respondio
 
@@ -35,7 +35,13 @@ from datetime import timedelta
 
 from src.rubrics import formato_espera
 from src.scorer import ScoreResult
-from src.signals import _is_operator, operator_asked_and_waited, tiene_reloj
+from src.signals import (
+    _is_operator,
+    cliente_tuvo_la_ultima_palabra,
+    operator_asked_and_waited,
+    planteo_del_cliente,
+    tiene_reloj,
+)
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
 # deficientes eran clientes que escribieron de madrugada y operadores que contestaron
 # ni bien abrio el turno. La noche no es una demora del operador.
@@ -44,7 +50,7 @@ from src.operators import inicio_del_reloj
 
 MODELO_DETERMINISTA = "determinista/info-v1"
 
-AGIL = timedelta(minutes=2)
+AGIL = timedelta(minutes=1)
 TOLERABLE = timedelta(minutes=5)
 
 
@@ -61,7 +67,7 @@ class Info:
 _COACHING = {
     2: "Quien pregunta todavía está decidiendo si se queda. Conviene responder con lo "
        "que se sabe y completar después, antes que demorar la primera respuesta.",
-    3: "El objetivo son 2 minutos para la primera respuesta, aunque sea parcial: quien "
+    3: "El objetivo es 1 minuto para la primera respuesta, aunque sea parcial: quien "
        "consulta está comparando y la demora se nota.",
     4: "Cerrar con \"¿te falta algo más?\" rinde acá: en una consulta suele quedar "
        "una segunda duda sin plantear. Conviene esperar unos 5 minutos antes de cerrar el "
@@ -79,8 +85,10 @@ def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:
                     key=lambda m: m["created_at"])
     # El reloj arranca en el PLANTEO del cliente, no en el primer mensaje de la
     # sesion: en la prospeccion saliente el operador escribe primero, y ese tiempo
-    # no se le puede imputar.
-    planteo = next((m for m in reales if not m.get("from_me")), None)
+    # no se le puede imputar. Y tampoco en un "Hola" o un "Gracias", que no exigen
+    # respuesta: el ancla vive en `signals.planteo_del_cliente`, que la comparte con
+    # `promo` y explica los dos guards que la vuelven segura.
+    planteo = planteo_del_cliente(reales)
     if planteo is None:
         return None
     respuesta = next(
@@ -95,6 +103,7 @@ def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:
     espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
               if respuesta else None)
     algo_mas = operator_asked_and_waited(reales, cierre_at)
+    colgado = cliente_tuvo_la_ultima_palabra(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:
         return formato_espera(None if td is None else td.total_seconds())
@@ -108,8 +117,14 @@ def calificar_info(messages: list[dict], cierre_at=None) -> Info | None:
                     espera, algo_mas)
     if espera > AGIL:
         return Info(3, "aceptable",
-                    f"Respondió en {_mins(espera)}. El objetivo son 2 minutos.",
+                    f"Respondió en {_mins(espera)}. El objetivo es 1 minuto.",
                     espera, algo_mas)
+    if algo_mas and colgado:
+        # Espejo de la rama de src/deposito.py: techo en 4 (ver tests/test_ultima_palabra.py).
+        return Info(4, "buena",
+                    f"Respondió en {_mins(espera)} y preguntó si faltaba algo, pero el "
+                    "cliente escribió después y se quedó con la última palabra.",
+                    espera, True)
     if algo_mas:
         return Info(5, "excelente",
                     f"Respondió en {_mins(espera)} y antes de cerrar se aseguró de que "

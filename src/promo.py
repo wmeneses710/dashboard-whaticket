@@ -40,6 +40,7 @@ from src.signals import (
     _is_operator,
     is_real_media,
     operator_pushed,
+    planteo_del_cliente,
     tiene_reloj,
 )
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
@@ -50,7 +51,7 @@ from src.operators import inicio_del_reloj
 
 MODELO_DETERMINISTA = "determinista/promo-v1"
 
-AGIL = timedelta(minutes=2)        # respuesta inmediata
+AGIL = timedelta(minutes=1)        # respuesta inmediata (el manual de ATC lo fija dos veces)
 RAZONABLE = timedelta(minutes=5)   # hasta aca el material sigue llegando a tiempo
 TOLERABLE = timedelta(minutes=15)  # mas que esto, la consulta ya se enfrio
 
@@ -71,7 +72,7 @@ class Promo:
 _COACHING = {
     2: "Una consulta de promo se enfría rápido. Conviene responder aunque sea con lo que "
        "se sabe y completar después, en vez de esperar a tener todo el detalle.",
-    3: "En promo la ventana es corta: un primer mensaje dentro de los 2 minutos —aunque "
+    3: "En promo la ventana es corta: un primer mensaje dentro del minuto —aunque "
        "sea \"ya te confirmo el detalle\"— evita que la consulta se enfríe.",
     4: "Una imagen marcando dónde tocar, o un video corto, hace lo que el texto no "
        "puede: le muestra el camino. Es lo que más mueve que la promo se aproveche.",
@@ -113,7 +114,15 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
         return None
     reales = sorted((m for m in messages if not m.get("is_note")),
                     key=lambda m: m["created_at"])
-    primero_cliente = next((m for m in reales if not m.get("from_me")), None)
+    # EL RELOJ ARRANCA EN EL PLANTEO, NO EN EL SALUDO. Anclaba en el primer mensaje del
+    # cliente igual que `info`, y la poblacion de `promo` es cinco veces mas grande: **658 de
+    # las 10.163 sesiones deterministas (6,5%) abren con una cortesia y traen la consulta
+    # despues** (medido el 2026-08-17 sobre la corrida v16). Caso `07b642b4`: la nota decia
+    # 8,6 HORAS de espera y el operador contesto la consulta real **6 segundos** despues de
+    # que llegara. Los dos guards que lo vuelven seguro viven en `signals.planteo_del_cliente`
+    # -- en particular, el ancla NO se mueve a un mensaje que nadie contesto, porque si no el
+    # arreglo fabrica 1 estrella ("nadie le respondió") sobre una despedida.
+    primero_cliente = planteo_del_cliente(reales)
     if primero_cliente is None:
         return None
     respuesta = next(
@@ -158,7 +167,7 @@ def calificar_promo(messages: list[dict]) -> Promo | None:
     if espera > AGIL:
         return Promo(3, "aceptable",
                      f"Respondió en {_mins(espera)} y solo con texto. Se apunta a "
-                     "contestar en 2 minutos, o a mostrarle cómo con una captura.",
+                     "contestar en 1 minuto, o a mostrarle cómo con una captura.",
                      espera, material, empuje)
     return Promo(4, "buena",
                  f"Respondió en {_mins(espera)}, pero le explicó la promo solo con "

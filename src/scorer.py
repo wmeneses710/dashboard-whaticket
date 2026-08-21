@@ -63,6 +63,12 @@ class ScoreResult:
     motivo: str | None = None       # pase v2: motivo clasificado por el LLM (None en el pase viejo)
     floor_applied: bool = False     # True si un override determinista cambio un HECHO (ver score_by_motivo)
     recomendacion: str = ""         # consejo accionable para el operador (coaching); "" si excelente
+    # Los CODIGOS del coaching que se emitio (C## del consejo base + F## de los fragmentos).
+    # Existe para poder CONTAR: el texto solo no se puede sumar entre operadores, que es el
+    # mismo problema que tenian los `errores` en prosa antes de v21 (7.019 errores en 3.680
+    # textos). Vacio = el consejo no vino del catalogo todavia (las seis rubricas que faltan
+    # migrar) o no hubo consejo. Ver src/catalogo_coaching.py.
+    recomendacion_codigos: list = field(default_factory=list)
     claridad: str = "dudoso"        # eje claridad EFECTIVO (claro|confuso|dudoso) que modulo la nota
     friccion: bool = False          # True si el cliente tuvo que reinsistir sin respuesta (determinista)
     aciertos: list = field(default_factory=list)  # el "por que" POSITIVO (espejo de errores[])
@@ -115,6 +121,7 @@ def score_by_motivo(
     deposit_hint: bool = False,
     recommender=None,
     cierre_at=None,
+    lineas=None,
 ) -> ScoreResult:
     """Pase v2: el LLM clasifica el MOTIVO (de la tabla) y califica en 2 capas.
 
@@ -194,11 +201,11 @@ def score_by_motivo(
     if motivo == "deposito":
         from src.deposito import score_deposito
 
-        determinista = score_deposito(target_messages, cierre_at)
+        determinista = score_deposito(target_messages, cierre_at, lineas)
     elif motivo == "retiro":
         from src.retiro import score_retiro
 
-        determinista = score_retiro(target_messages, cierre_at)
+        determinista = score_retiro(target_messages, cierre_at, lineas)
     elif motivo == "registro":
         from src.registro import score_registro
 

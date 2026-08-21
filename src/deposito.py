@@ -20,9 +20,9 @@ LA ESCALA (definida por el negocio el 2026-08-06: "con que se haga bien y rapido
 suficiente"; el comprobante se exige por AUDITORIA y proteccion de la confianza, no
 como metrica de satisfaccion del cliente):
 
-    5  acuse <=2 min + confirmo la acreditacion + se aseguro de que no faltara nada
-    4  acuse <=2 min + confirmo la acreditacion
-    3  confirmo, pero el acuse tardo 2-5 min
+    5  acuse <=1 min + confirmo la acreditacion + se aseguro de que no faltara nada
+    4  acuse <=1 min + confirmo la acreditacion
+    3  confirmo, pero el acuse tardo 1-5 min
     2  el acuse tardo >5 min, o nunca confirmo la acreditacion
     1  ni respondio ni confirmo
 
@@ -46,7 +46,9 @@ from src.signals import (
     is_real_media,
     operator_acreditacion,
     operator_acuso_comprobante,
+    cliente_tuvo_la_ultima_palabra,
     operator_asked_and_waited,
+    operador_derivo_al_agente,
     tiene_reloj,
 )
 # La espera se mide en HORARIO DE ATENCION (ver src/horario.py): 26 por ciento de los
@@ -75,7 +77,7 @@ _RECHAZO_RE = re.compile(
     r"|(debe|debes|necesitas|tiene que|tienes que)[^.!?\n]{0,25}verificar",
     re.IGNORECASE)
 
-AGIL = timedelta(minutes=2)       # <= 2 min -> el acuse fue inmediato
+AGIL = timedelta(minutes=1)       # <= 1 min -> el acuse fue inmediato
 ACEPTABLE = timedelta(minutes=5)  # <= 5 min -> tolerable; mas que eso, no
 
 
@@ -88,6 +90,7 @@ class Deposito:
     espera: timedelta | None      # del comprobante a la primera respuesta del operador
     acredito: bool
     pregunto_algo_mas: bool
+    derivo_al_agente: bool = False  # la recarga no le correspondia a ATC (ver la rama)
 
 
 # EL CONSEJO APUNTA A LA RAMA, NO A LA ESTRELLA. Al 2 se llega por DOS caminos —nunca
@@ -104,11 +107,12 @@ _COACHING = {
 }
 _COACHING_2_SIN_ACREDITAR = (
     "Conviene confirmar que la plata entró con una línea al cierre: \"listo, ya tienes "
-    "tu saldo\". "
-    "Un \"en breve\" deja esa pregunta sin responder.")
+    "tu saldo\". Un \"en breve\" deja esa pregunta sin responder, y el cierre con /FIN "
+    "recién corresponde cuando la gestión terminó.")
 _COACHING_2_TARDE = (
-    "El primer aviso tardó demasiado. Conviene separar los dos momentos: acusar el "
-    "comprobante apenas entra, y avisar la acreditación cuando esté lista.")
+    "El primer aviso tardó demasiado. El manual separa los dos momentos y les da una "
+    "respuesta rápida a cada uno: /R2verificaciondeboleta apenas entra el comprobante, y "
+    "/R3Recarga cuando la carga ya está en curso.")
 # LA RAMA DEL RECHAZO (ver calificar_deposito): la plata no podia entrar y el operador lo
 # aviso. El consejo NO puede ser el del 4/3 normal, que habla del bono o del acuse.
 _COACHING_RECHAZO_RAPIDO = (
@@ -119,6 +123,14 @@ _COACHING_RECHAZO_TARDE = (
     "está en camino. Un mensaje corto en cuanto se ve el problema evita esa espera a ciegas.")
 _COACHING_1 = ("El comprobante quedó sin respuesta. En caja conviene contestar siempre: una "
                "línea mientras se procesa evita que el cliente crea que se perdió su plata.")
+# LA RAMA DE LA DERIVACION: el jugador es de un agente y ATC tiene PROHIBIDO recargarle
+# (manual, cap. 06). El consejo no puede pedir la acreditacion -- pediria justo lo prohibido.
+_COACHING_DERIVACION_RAPIDA = (
+    "La derivación salió rápido. Suma indicarle también que puede recargar desde la "
+    "plataforma, así tiene la opción a mano si no ubica a su agente.")
+_COACHING_DERIVACION_TARDE = (
+    "Cuando la recarga le corresponde al agente, conviene decirlo enseguida y pasar su "
+    "número: mientras espera, el cliente cree que su plata ya está en camino.")
 
 
 def _comprobantes_del_cliente(messages: list[dict]) -> list[dict]:
@@ -206,8 +218,12 @@ def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
     return None if comprobante is None else interaccion_de(messages, comprobante)
 
 
-def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
-    """Nota determinista de la sesion. None si no es una transaccion de deposito."""
+def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None) -> Deposito | None:
+    """Nota determinista de la sesion. None si no es una transaccion de deposito.
+
+    `lineas`: mapa de nuestras lineas (src/redireccion.build_lineas_map), para reconocer la
+    derivacion al agente del cliente. Sin el mapa esa rama no se activa: falla del lado
+    seguro, igual que `redireccion`."""
     if not es_transaccion(messages):
         return None
     comprobante = _comprobante_del_cliente(messages)
@@ -247,6 +263,10 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
               if respuesta else None)
     acredito = operator_acreditacion(reales)
     algo_mas = operator_asked_and_waited(reales, cierre_at)
+    colgado = cliente_tuvo_la_ultima_palabra(reales, cierre_at)
+    # Se busca en la VENTANA, no en la sesion: la derivacion tiene que pertenecer a la misma
+    # interaccion que el comprobante que se esta juzgando.
+    derivacion = operador_derivo_al_agente(reales, lineas)
 
     def _mins(td: timedelta | None) -> str:
         return formato_espera(None if td is None else td.total_seconds())
@@ -254,6 +274,42 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
     if respuesta is None and not acredito:
         return Deposito(1, "mala", "El cliente mandó el comprobante y nadie le respondió.",
                         None, False, algo_mas)
+    if not acredito and derivacion is not None:
+        # LA RAMA DE LA DERIVACION AL AGENTE. Manual de ATC cap. 06: "Si un jugador pertenece
+        # a un agente, el operador NO debe realizar recargas ni retiros". Exigirle la
+        # acreditacion es exigirle el paso PROHIBIDO. MEDIDO el 2026-08-19: 152 sesiones de
+        # `deposito` con derivacion, media 3,08 estrellas y 70 en 1-2 (46%); 3 de 3
+        # transcripts leidos son el procedimiento correcto castigado (`009312d9`, `03566bc9`,
+        # `09c1b759`).
+        # SE CALIFICA LA VELOCIDAD DEL AVISO, igual que la rama del rechazo de aca abajo y
+        # que la del alta imposible en src/registro.py, y con el mismo TECHO EN 4: el 5 es "el
+        # mejor escenario del motivo", y una recarga que ATC no podia hacer no lo es.
+        # VA ANTES DEL RECHAZO GENERICO porque es la razon mas especifica: un mismo mensaje
+        # puede sonar a rechazo y ser una derivacion, y el consejo de cada rama es distinto.
+        # NO APLICA SI ACREDITO: ahi corre la excepcion del manual ("si el jugador expresa que
+        # desea que le ayudemos con la recarga podemos proceder") y la nota normal ya es justa.
+        # EL RELOJ DE ESTA RAMA NO ES `AGIL`, y la razon es del manual, no de los datos: antes
+        # de derivar, el operador TIENE que pedir el usuario y verificar en el sistema a que
+        # agencia pertenece (cap. 05, "Solicitud directa de cuenta bancaria", pasos 1 y 2).
+        # Eso es una CONSULTA, no un reflejo, y el minuto de `AGIL` mide la primera respuesta.
+        # Cobrarle el minuto seria cobrarle la verificacion que el manual le exige hacer.
+        # Se usa el mismo tope que la rama del alta imposible de src/registro.py (5 min para
+        # un aviso que requiere mirar el sistema). MEDIDO sobre los 18 casos que la señal
+        # encuentra: p50 4,3 min, 56% dentro de 5 y solo 11% dentro de 1. La muestra es CHICA
+        # y el criterio se apoya en el manual; los 18 solo confirman que no lo contradice.
+        aviso = espera_efectiva(comprobante["created_at"], derivacion["created_at"])
+        if aviso is not None and aviso <= ACEPTABLE:
+            return Deposito(
+                4, "buena",
+                f"La recarga le correspondía a su agente y se lo informó en {_mins(aviso)}, "
+                "con el número para contactarlo.",
+                aviso, False, algo_mas, True)
+        return Deposito(
+            3, "aceptable",
+            "La recarga le correspondía a su agente y se lo informó con el número, pero "
+            f"tardó {_mins(aviso)} en decírselo. El objetivo son 5 minutos, que alcanzan "
+            "para verificar a qué agencia pertenece.",
+            aviso, False, algo_mas, True)
     if not acredito:
         # LA RAMA DEL RECHAZO. Si la plata no podia entrar por una razon valida (titular
         # incorrecto, boleta repetida, cuenta sin verificar), el trabajo del operador es
@@ -274,7 +330,7 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
             return Deposito(
                 3, "aceptable",
                 f"La recarga no se pudo acreditar y se lo informó, pero tardó "
-                f"{_mins(aviso)} en decírselo. El objetivo son 2 minutos.",
+                f"{_mins(aviso)} en decírselo. El objetivo es 1 minuto.",
                 aviso, False, algo_mas)
         return Deposito(
             2, "deficiente",
@@ -291,8 +347,18 @@ def calificar_deposito(messages: list[dict], cierre_at=None) -> Deposito | None:
         return Deposito(
             3, "aceptable",
             f"Confirmó la acreditación, pero tardó {_mins(espera)} en el primer aviso. "
-            "El objetivo son 2 minutos.",
+            "El objetivo es 1 minuto.",
             espera, True, algo_mas)
+    if algo_mas and colgado:
+        # PREGUNTO Y SE FUE. El 5 dice, literal, "antes de cerrar se aseguró de que no le
+        # faltara nada": no se puede afirmar de una sesion donde el cliente contesto esa
+        # pregunta y nadie le respondio. Es un TECHO, no un castigo -- el trabajo se hizo y
+        # la nota lo refleja en el 4. Ver tests/test_ultima_palabra.py.
+        return Deposito(
+            4, "buena",
+            f"Avisó en {_mins(espera)} y le confirmó al cliente que la plata entró, pero "
+            "el cliente escribió después y se quedó con la última palabra.",
+            espera, True, True)
     if algo_mas:
         return Deposito(
             5, "excelente",
@@ -317,19 +383,22 @@ def _coaching(d: Deposito) -> str:
         return _COACHING_2_SIN_ACREDITAR if not d.acredito else _COACHING_2_TARDE
     # 4 o 3 SIN acreditacion = la rama del rechazo (en la normal el 4 y el 3 siempre
     # acreditaron). Su consejo apunta al rechazo, no al bono ni al acuse.
+    if d.derivo_al_agente:
+        return (_COACHING_DERIVACION_RAPIDA if d.stars == 4
+                else _COACHING_DERIVACION_TARDE)
     if not d.acredito:
         return _COACHING_RECHAZO_RAPIDO if d.stars == 4 else _COACHING_RECHAZO_TARDE
     return _COACHING[d.stars]
 
 
-def score_deposito(messages: list[dict], cierre_at=None) -> ScoreResult | None:
+def score_deposito(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
     None cuando la sesion no es una transaccion de deposito: ahi decide el caller
     (hoy, el pase con LLM), porque una consulta sobre recargas se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca existio.
     """
-    d = calificar_deposito(messages, cierre_at)
+    d = calificar_deposito(messages, cierre_at, lineas)
     if d is None:
         return None
     return ScoreResult(
