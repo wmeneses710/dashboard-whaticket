@@ -77,9 +77,10 @@ def test_la_cortesia_le_sigue_ganando_al_traspaso():
     era un skip y ganaba en `evaluate_session`; ahora se evalua (estandar de cierre, ver
     src/solo_cortesia.py) y la prioridad vive en el ORDEN del worker, que chequea
     `client_sin_motivo` ANTES de `respuesta_fue_solo_traspaso`. Lo que este test fija es la
-    señal que sostiene esa prioridad."""
-    """Bucket A: si el cliente tampoco planteo nada, la etiqueta sigue siendo `sin_motivo`.
-    Decision del negocio del 2026-08-07 que este cambio NO toca."""
+    señal que sostiene esa prioridad.
+
+    Bucket A del traspaso: la decision del negocio del 2026-08-07 sigue en pie, y lo que la
+    sostiene ahora es el orden del worker."""
     msgs = [_cli(0, "Hola"), _op(1, TRASPASO)]
     _s, _r, eval_status, skip_reason = evaluate_session(msgs, lineas=VIVA)
     # La señal es lo que sostiene la prioridad, y el worker la chequea antes que el

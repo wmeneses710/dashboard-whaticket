@@ -602,7 +602,7 @@
                un agujero: es el segmento `agente`, que se califica por agilidad y no tiene
                motivo. Se separan las dos causas porque solo una es un problema. -->
           <div v-if="motivoCobertura.evaluadas" class="cobertura"
-               :title="'La tarjeta promedia únicamente las sesiones con motivo clasificado. Las del segmento agente no tienen motivo por diseño: se califican por agilidad de respuesta, no por rúbrica de motivo.'">
+               :title="'La tarjeta promedia únicamente las sesiones con motivo clasificado. Desde el 2026-08-21 el segmento agente TAMBIÉN tiene motivo (depósito, retiro e info, según el manual); lo que queda sin motivo son las sesiones sin señal probable, que se califican por agilidad de respuesta.'">
             Promedia <b>{{ fmtN(motivoCobertura.con_motivo) }}</b> de {{ fmtN(motivoCobertura.evaluadas) }} evaluadas ({{ motivoCobertura.pct }}%)<template v-if="motivoCobertura.sin_motivo_agente">; {{ fmtN(motivoCobertura.sin_motivo_agente) }} del segmento agente no llevan motivo</template><template v-if="motivoCobertura.sin_motivo_otro">. <b style="color:var(--r-malo)">{{ fmtN(motivoCobertura.sin_motivo_otro) }} sin motivo y sin explicación</b></template>
           </div>
         </div>
@@ -943,8 +943,20 @@
             <div class="errs" v-if="dimErrors(modal.detail.dimensions).length"><div class="dh" style="margin-bottom:4px">Errores críticos · manual ATC</div>
               <div class="err" v-for="(e,i) in dimErrors(modal.detail.dimensions)" :key="i" :title="e.detalle">
                 <b v-if="e.codigo" class="ecod">{{ e.codigo }}</b>{{ e.texto }}</div></div>
+            <!-- LA SITUACION va ARRIBA de todo lo demas: cuando la fila es "nadie respondio"
+                 o "solo cortesia", es el hecho que explica la nota entera, y sin el la fila
+                 se lee como una nota sin causa. -->
+            <div class="errs" v-if="dimSituacion(modal.detail.dimensions)">
+              <div class="dh" style="margin-bottom:4px">Situación</div>
+              <div class="err" :title="dimSituacion(modal.detail.dimensions).texto">
+                <b class="ecod">{{ dimSituacion(modal.detail.dimensions).chip }}</b>{{ dimSituacion(modal.detail.dimensions).texto }}</div></div>
             <div class="rec" v-if="dimRecom(modal.detail.dimensions)"><div class="dh" style="margin-bottom:4px">Recomendación</div>
-              <div class="recbody">{{ dimRecom(modal.detail.dimensions) }}</div></div>
+              <div class="recbody">{{ dimRecom(modal.detail.dimensions) }}</div>
+              <!-- A que buena practica del manual apunta. Es lo que vuelve el coaching
+                   contable en el idioma de ATC. -->
+              <div class="ok" v-if="dimPractica(modal.detail.dimensions)" style="margin-top:6px"
+                   :title="dimPractica(modal.detail.dimensions).texto">
+                <b class="ecod">{{ dimPractica(modal.detail.dimensions).codigo }}</b>{{ dimPractica(modal.detail.dimensions).chip || dimPractica(modal.detail.dimensions).texto }}</div></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
             <div class="est">★ estimada por LLM — no es un dato de la plataforma.</div>
           </div>
@@ -1217,7 +1229,10 @@ const DESENLACE_TIP = {
 };
 const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada", redireccion:"derivada a otra línea nuestra" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
-const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", sin_motivo:"Sin motivo" };
+// `redireccion` entro el 2026-08-20: era un SKIP y paso a ser motivo con rubrica propia.
+// `sin_motivo` se conserva porque las filas ya scoreadas lo traen como causa de skip; desde
+// el 2026-08-21 esas sesiones se EVALUAN (estandar de cierre) y dejan de producir la etiqueta.
+const MOTIVO_LABEL = { deposito:"Depósito / recarga", retiro:"Retiro", soporte_cuenta:"Soporte de cuenta", info:"Info / consulta", promo:"Promo / bono", registro:"Registro", problema:"Problema / reclamo", redireccion:"Redirección / traspaso", sin_motivo:"Sin motivo" };
 // El SEGMENTO dice QUIÉN está del otro lado del chat, no quién atiende. "Agente" es el
 // cliente vendedor/afiliador (cola "Agente 👨👩"), no nuestro personal: quien atiende es
 // siempre el OPERADOR. Se etiqueta explícito para que la palabra no se lea al revés.
@@ -1759,6 +1774,42 @@ createApp({
                  : { codigo:"", chip:"", texto:e, detalle:"" };
       });
     }
+    // A QUE BUENA PRACTICA APUNTA EL CONSEJO (B01-B12). Cierra el circulo del vocabulario de
+    // ATC: el error dice E0x y el consejo dice a que B0x apunta, asi que un supervisor puede
+    // contar el coaching en el idioma de ellos. Sale del MISMO catalogo que ya se pide a
+    // /api/catalogo -- no se hardcodea nada.
+    // FALLBACK: las filas viejas no traen el campo y devuelven null, asi que el bloque no se
+    // dibuja. Un rescore no puede ser requisito para cambiar una pantalla (misma regla que
+    // dimErrors).
+    function dimPractica(dims) {
+      const cod = dims && dims.recomendacion_practica;
+      if (!cod) return null;
+      const p = catalogo.practicas[cod];
+      return p ? { codigo:p.codigo, chip:p.chip, texto:p.texto }
+               : { codigo:cod, chip:"", texto:"" };
+    }
+    // LOS DOS CASOS QUE ANTES ERAN UN SKIP y ahora llevan nota. Sin esto un supervisor ve una
+    // fila de 1 estrella sin motivo y no puede saber por que -- y el `skip_reason` ya no esta,
+    // porque el CHECK de la tabla lo borra en las filas evaluadas. La razon viaja en
+    // `dimensions` (ver src/sin_respuesta.py y src/solo_cortesia.py).
+    function dimSituacion(dims) {
+      const d = dims || {};
+      if (d.sin_respuesta_del_negocio)
+        return { chip:"Nadie le respondió",
+                 texto:"El cliente escribió y nadie del negocio le contestó. La conversación "
+                     + "se cerró sin responderle (manual ATC, E06)." };
+      if (d.solo_cortesia)
+        return { chip: d.cliente_colgado ? "Solo cortesía · quedó colgado" : "Solo cortesía",
+                 texto: d.cliente_colgado
+                   ? "El cliente no planteó nada y su último mensaje quedó sin respuesta."
+                   : "El cliente no planteó nada y el operador cerró como corresponde." };
+      if (d.destino_utilizable !== undefined)
+        return { chip: d.destino_utilizable ? "Traspaso a línea activa" : "Traspaso sin destino",
+                 texto: d.destino_utilizable
+                   ? "El operador derivó a otra línea nuestra que está activa."
+                   : "El operador derivó sin dejarle al cliente una línea a la que escribir." };
+      return null;
+    }
     // Tiempos que dejo la rubrica determinista del motivo, ya con etiqueta legible.
     function dimTiempos(dims) {
       const out = [];
@@ -2010,6 +2061,7 @@ createApp({
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
+      dimPractica, dimSituacion,
       fmtDur, dimTiempos, dimConteos, dimHechos,
       dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores,
       nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,

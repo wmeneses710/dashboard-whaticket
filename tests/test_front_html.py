@@ -480,3 +480,51 @@ def test_TODO_filtro_de_FILTER_DEFAULTS_dispara_una_recarga():
     for clave in claves - exentos:
         assert f"filters.{clave}" in observados, \
             f"'{clave}' esta en FILTER_DEFAULTS pero no dispara la recarga: el chip cambia y no pasa nada"
+
+
+# --- EL FRONT TIENE QUE CONOCER TODO EL VOCABULARIO DEL BACKEND -------------------------
+def test_todo_motivo_del_codigo_tiene_etiqueta_en_el_front():
+    """`redireccion` entro como motivo el 2026-08-20 y NADA obligaba al front a nombrarlo:
+    habria salido crudo en el filtro y en la tarjeta de calidad. Espeja
+    `test_todo_skip_reason_del_codigo_tiene_etiqueta_en_el_front`, que si existia.
+
+    SE PARSEA EL OBJETO, no se busca el string en el HTML. La primera version buscaba
+    `"<motivo>:"` en todo el archivo y PASABA CON EL BUG PUESTO -- la palabra aparecia en
+    otro lado. Un test que no falla con el defecto presente no protege nada.
+    """
+    from src.rubrics import MOTIVOS
+
+    html = _html()
+    i = html.index("const MOTIVO_LABEL = {")
+    cuerpo = html[i:html.index("};", i)]
+    faltan = [m for m in MOTIVOS if f"{m}:" not in cuerpo]
+    assert not faltan, f"motivos sin etiqueta en MOTIVO_LABEL: {faltan}"
+
+
+def test_el_front_muestra_la_practica_del_manual_del_coaching():
+    """El enganche con B01-B12 es lo que vuelve contable el coaching en el idioma de ATC.
+
+    SE EXIGE LA DEFINICION, no la mencion. La primera version pedia `"dimPractica" in html`
+    y PASABA aunque la funcion no existiera, porque el TEMPLATE la nombra igual -- y en Vue
+    eso no es un error, renderiza vacio. Hay que verificar que este DEFINIDA y expuesta.
+    """
+    html = _html()
+    assert "function dimPractica(" in html, "el template la llama y no esta definida"
+    i = html.index("    return { accounts")
+    ret = html[i:html.index("};", i)]
+    assert " dimPractica," in ret, "definida pero fuera del return: renderiza vacio"
+    # y sale del catalogo pedido a /api/catalogo, no hardcodeado
+    assert "catalogo.practicas[cod]" in html
+
+
+def test_el_front_explica_las_situaciones_que_antes_eran_un_skip():
+    """`no_agent_reply` y `sin_motivo` dejaron de saltearse y ahora llevan nota. El
+    `skip_reason` ya no esta en la fila -- el CHECK de la tabla lo borra en las evaluadas --,
+    asi que sin este bloque un supervisor ve una nota sin causa."""
+    html = _html()
+    assert "function dimSituacion(" in html, "el template la llama y no esta definida"
+    i = html.index("    return { accounts")
+    assert " dimSituacion," in html[i:html.index("};", i)], "fuera del return: renderiza vacio"
+    assert "sin_respuesta_del_negocio" in html
+    assert "solo_cortesia" in html
+    assert "destino_utilizable" in html
