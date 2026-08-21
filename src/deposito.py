@@ -191,7 +191,8 @@ def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
     return None if comprobante is None else interaccion_de(messages, comprobante)
 
 
-def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None) -> Deposito | None:
+def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None,
+                       segmento: str = "jugador") -> Deposito | None:
     """Nota determinista de la sesion. None si no es una transaccion de deposito.
 
     `lineas`: mapa de nuestras lineas (src/redireccion.build_lineas_map), para reconocer la
@@ -235,7 +236,15 @@ def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None) -> Dep
     espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
               if respuesta else None)
     acredito = operator_acreditacion(reales)
-    algo_mas = operator_asked_and_waited(reales, cierre_at)
+    # EL AGENTE ESTA RELEVADO DE LA PREGUNTA DE CIERRE, textual en el manual: "En
+    # conversaciones con agentes, y debido a que muchos no responden despues de recibir la
+    # informacion, el operador PUEDE cerrar el chat cuando el caso haya sido resuelto".
+    # MEDIDO el 2026-08-21 sobre 800 sesiones de agente: sin este relevo, el gate topaba
+    # 283 de 522 filas de recarga (54,2%) y se llevaba 0,54 estrellas de la nota -- castigando al operador por no preguntar
+    # algo que el propio manual perdona. Lo que el manual SI exige (el minuto y confirmar la
+    # operacion) NO se releva: sigue contando igual.
+    algo_mas = (True if segmento == "agente"
+                else operator_asked_and_waited(reales, cierre_at))
     colgado = cliente_tuvo_la_ultima_palabra(reales, cierre_at)
     # Se busca en la VENTANA, no en la sesion: la derivacion tiene que pertenecer a la misma
     # interaccion que el comprobante que se esta juzgando.
@@ -367,14 +376,15 @@ def _situacion(d: Deposito) -> str | None:
     return str(d.stars)
 
 
-def score_deposito(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResult | None:
+def score_deposito(messages: list[dict], cierre_at=None, lineas=None,
+                   segmento: str = "jugador") -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
     None cuando la sesion no es una transaccion de deposito: ahi decide el caller
     (hoy, el pase con LLM), porque una consulta sobre recargas se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca existio.
     """
-    d = calificar_deposito(messages, cierre_at, lineas)
+    d = calificar_deposito(messages, cierre_at, lineas, segmento)
     if d is None:
         return None
     _consejo = consejo_de("deposito", _situacion(d) or "")

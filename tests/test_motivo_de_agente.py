@@ -108,10 +108,20 @@ def test_preguntar_por_la_clave_del_back_office_es_info():
 
 
 # --- lo que NO se clasifica -------------------------------------------------------------
-def test_sin_pedido_ni_pregunta_no_hay_motivo():
-    """None = se lo queda `agilidad`. 12% de las sesiones de agente no tienen ninguna
-    señal, y no se les inventa un motivo para que la fila se vea completa."""
+def test_sin_pedido_ni_tema_no_hay_motivo():
+    """None = se lo queda `agilidad`. No se inventa un motivo para que la fila se vea
+    completa."""
     msgs = [_cli(0, "buenas"), _op(1, "buenas, a la orden")]
+    assert motivo_de_agente(msgs) is None
+
+
+def test_un_pedido_de_recarga_sin_comprobante_NO_es_info():
+    """EL CASO QUE ROMPIO LA PRIMERA VERSION. "me cargas 30 a la agencia?" termina en signo
+    de interrogacion pero es un PEDIDO, no una consulta. Con `client_asked_question` a secas
+    caia en `info`, que pregunta "respondio la consulta de forma correcta y completa" cuando
+    lo que habia que evaluar era si CUMPLIO -- que es lo que mide `agilidad`.
+    Sin comprobante tampoco es transaccion: no hay nada que acreditar todavia."""
+    msgs = [_cli(0, "me cargas 30 a la agencia?"), _op(1, "a la orden")]
     assert motivo_de_agente(msgs) is None
 
 

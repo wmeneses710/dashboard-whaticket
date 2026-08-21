@@ -52,6 +52,12 @@ class Consejo:
     chip: str             # etiqueta corta para el tablero (nuestra)
     texto: str            # VERBATIM lo que ya se emitia -- no editar
     practica: str         # el B## del manual al que apunta (catalogo_atc.PRACTICAS)
+    # EL SEGMENTO ES PARTE DE LA CLAVE, no un adorno. El MISMO motivo le habla distinto a un
+    # jugador que a un agente, y no es cuestion de tono: el manual le da al agente una regla
+    # de cierre propia ("debido a que muchos no responden despues de recibir la informacion,
+    # el operador PUEDE cerrar el chat cuando el caso haya sido resuelto"). Default `jugador`
+    # para que las seis rubricas que ya llaman `consejo_de(rubrica, situacion)` no se toquen.
+    segmento: str = "jugador"
 
 
 @dataclass(frozen=True)
@@ -274,8 +280,40 @@ _SOPORTE: tuple[Consejo, ...] = (
 # LAS SIETE RUBRICAS DETERMINISTAS, COMPLETAS. Lo que queda afuera del catalogo es la
 # recomendacion del LLM (12.163 filas, 84,9% de textos unicos): ahi corresponde que el
 # modelo ELIJA de B01-B12 en vez de escribir, y es un cambio de prompt con su propio test.
+# --- INFO, VARIANTE DE AGENTE ------------------------------------------------------------
+# `info` empezo a cubrir las consultas propias del agente el 2026-08-21 (comision 1.383
+# sesiones, diseño 745, interesado en ser agente 437, Back Office 89, cierre de agencia 21,
+# inconsistencias 8). Los textos del jugador NO sirven ahi: hablan de alguien "decidiendo si
+# se queda" y "comparando", y un agente es un socio con contrato.
+# Y el cambio no es de tono. El manual le da al agente DOS reglas propias:
+#   "Toda informacion proporcionada por un agente debe ser verificada antes de proceder
+#    (montos, tickets, datos del jugador). No se deben ejecutar procesos sin confirmar."
+#   "Debido a que muchos no responden despues de recibir la informacion, el operador PUEDE
+#    cerrar el chat cuando el caso haya sido resuelto" -- con /Fin y 5 minutos de espera.
+# La segunda es la que cambia el consejo del 4: al agente NO se le exige la pregunta de
+# cierre, porque el propio manual lo releva de esperar una respuesta que suele no llegar.
+_INFO_AGENTE: tuple[Consejo, ...] = (
+    Consejo("C36", "info", "1", "nadie respondió al agente",
+            "El agente preguntó y nadie le respondió. Es una agencia esperando para poder "
+            "atender a sus propios jugadores: conviene contestar aunque sea parcialmente.",
+            practica="B10", segmento="agente"),
+    Consejo("C37", "info", "2", "demoró la respuesta al agente",
+            "El agente quedó esperando. Conviene contestar con lo que se sabe y completar "
+            "después: cada minuto que espera es un jugador suyo que también espera.",
+            practica="B10", segmento="agente"),
+    Consejo("C38", "info", "3", "pasó del minuto con el agente",
+            "El objetivo es 1 minuto para la primera respuesta, aunque sea parcial: "
+            "/Bienvenida alcanza para que el agente sepa que su consulta entró.",
+            practica="B10", segmento="agente"),
+    Consejo("C39", "info", "4", "cerró sin /FIN ni la espera",
+            "Con agentes el manual permite cerrar cuando el caso está resuelto, sin esperar "
+            "respuesta. Lo que sí pide es cerrar con /FIN y dejar 5 minutos antes de "
+            "finalizar el chat.",
+            practica="B12", segmento="agente"),
+)
+
 CONSEJOS: tuple[Consejo, ...] = (
-    _AGILIDAD + _INFO + _PROMO + _DEPOSITO + _RETIRO + _REGISTRO + _SOPORTE
+    _AGILIDAD + _INFO + _PROMO + _DEPOSITO + _RETIRO + _REGISTRO + _SOPORTE + _INFO_AGENTE
 )
 
 
@@ -300,18 +338,26 @@ FRAGMENTO_POR_CODIGO: dict[str, Fragmento] = {f.codigo: f for f in FRAGMENTOS}
 
 # (rubrica, situacion) -> Consejo. Se arma una vez: `consejo_de` se llama por cada sesion
 # scoreada y recorrer la tupla en cada llamada no aporta nada.
-_POR_SITUACION: dict[tuple[str, str], Consejo] = {
-    (c.rubrica, c.situacion): c for c in CONSEJOS
+_POR_SITUACION: dict[tuple[str, str, str], Consejo] = {
+    (c.rubrica, c.situacion, c.segmento): c for c in CONSEJOS
 }
 
 
-def consejo_de(rubrica: str, situacion: str) -> Consejo | None:
+def consejo_de(rubrica: str, situacion: str, segmento: str = "jugador") -> Consejo | None:
     """El consejo de esa rama, o None si esa rama no lleva consejo.
 
-    None NO es un error: `excelente` no tiene nada que mejorar, y una rubrica que todavia
-    no se migro al catalogo tampoco. El llamador cae a su texto de siempre.
+    None NO es un error: `excelente` no tiene nada que mejorar, y una rama retirada por no
+    tener respaldo en el manual tampoco. El llamador emite "" y no inventa nada.
+
+    Si el segmento pedido no tiene variante propia, CAE al del jugador: es el default
+    historico y es mejor que quedarse sin consejo. Lo que no puede pasar es lo contrario --
+    darle el texto del jugador a un agente cuando SI hay variante-- y de eso se encarga la
+    clave.
     """
-    return _POR_SITUACION.get((rubrica, situacion))
+    exacto = _POR_SITUACION.get((rubrica, situacion, segmento))
+    if exacto is not None:
+        return exacto
+    return _POR_SITUACION.get((rubrica, situacion, "jugador"))
 
 
 def texto_de(codigo: str) -> str:

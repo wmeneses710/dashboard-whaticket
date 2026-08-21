@@ -160,9 +160,68 @@ def test_ninguna_rubrica_migrada_conserva_su_propio_COACHING():
             f"catalogo miente en cuanto una cambie")
 
 
-def test_cada_situacion_del_catalogo_es_unica_por_rubrica():
+def test_cada_situacion_del_catalogo_es_unica_por_rubrica_y_segmento():
+    """El SEGMENTO entra en la clave desde el 2026-08-21: el mismo (rubrica, situacion) tiene
+    una variante por segmento a proposito -- `info/4` le pide al jugador la pregunta de
+    cierre y al agente /FIN mas los 5 minutos, porque el manual los trata distinto. Lo que
+    sigue sin poder repetirse es la tripleta completa."""
     vistos = set()
     for c in CONSEJOS:
-        clave = (c.rubrica, c.situacion)
+        clave = (c.rubrica, c.situacion, c.segmento)
         assert clave not in vistos, f"{clave} duplicada: consejo_de() devolveria uno al azar"
         vistos.add(clave)
+
+
+# --- EL MISMO MOTIVO, OTRO SEGMENTO ------------------------------------------------------
+# `info` empezo a cubrir las consultas del AGENTE (comision, diseño, interesado en ser
+# agente, Back Office...) por decision del negocio del 2026-08-21. Pero sus textos estaban
+# escritos para el jugador: "quien pregunta todavia esta decidiendo si se queda" (C06),
+# "quien consulta esta comparando" (C07). Un agente que pregunta por su comision es un socio
+# con contrato, no un prospecto -- emitirle eso es coaching falso.
+# Y NO ES SOLO REDACCION: el manual le da al agente una regla de cierre DISTINTA. "Debido a
+# que muchos no responden despues de recibir la informacion, el operador PUEDE cerrar el chat
+# cuando el caso haya sido resuelto", con /Fin y 5 minutos. Al agente no se lo presiona con
+# la pregunta de cierre como al jugador.
+def test_info_tiene_variante_de_agente_para_las_cuatro_situaciones():
+    for sit in ("1", "2", "3", "4"):
+        c = consejo_de("info", sit, segmento="agente")
+        assert c is not None, f"info/{sit} sin variante de agente"
+        assert c.segmento == "agente"
+
+
+def test_el_default_sigue_siendo_el_del_jugador():
+    """Los 6 modulos que ya llaman `consejo_de(rubrica, situacion)` no se tocan."""
+    c = consejo_de("info", "3")
+    assert c is not None
+    assert c.segmento == "jugador"
+
+
+def test_la_variante_de_agente_no_habla_de_prospectos():
+    """El framing de adquisicion no aplica a un socio con contrato."""
+    prohibido = ("decidiendo si se queda", "esta comparando", "si se queda")
+    for sit in ("1", "2", "3", "4"):
+        t = consejo_de("info", sit, segmento="agente").texto.lower()
+        for p in prohibido:
+            assert p not in t, f"info/{sit} de agente sigue hablandole a un prospecto: {t}"
+
+
+def test_el_cierre_del_agente_no_le_exige_la_pregunta():
+    """El manual permite cerrar al agente sin esperar respuesta. Pedirle "¿te falta algo
+    más?" seria exigirle algo que el propio manual releva."""
+    t = consejo_de("info", "4", segmento="agente").texto.lower()
+    assert "algo más" not in t
+    assert "/fin" in t or "5 minutos" in t
+
+
+def test_cada_variante_de_agente_apunta_a_una_practica_del_manual():
+    for sit in ("1", "2", "3", "4"):
+        c = consejo_de("info", sit, segmento="agente")
+        assert c.practica in CODIGOS_PRACTICA
+
+
+def test_la_clave_es_rubrica_situacion_y_segmento():
+    """Sin el segmento en la clave, la variante de agente pisaria la del jugador."""
+    jug = consejo_de("info", "3", segmento="jugador")
+    age = consejo_de("info", "3", segmento="agente")
+    assert jug.codigo != age.codigo
+    assert jug.texto != age.texto

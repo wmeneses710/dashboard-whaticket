@@ -13,11 +13,15 @@ import traceback
 from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
 from src.deposito import es_transaccion as es_transaccion_deposito
+from src.deposito import score_deposito
 from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
 from src.deposits import deposit_candidate_count
 from src.interacciones import tiempos_de
 from src.registro import interaccion_juzgada as interaccion_juzgada_registro
+from src.info import score_info
+from src.motivo_de_agente import motivo_de_agente
 from src.retiro import interaccion_juzgada as interaccion_juzgada_retiro
+from src.retiro import score_retiro
 from src.llm import OllamaClient
 from src.metrics import message_stats, primary_operator, reparto_por_interaccion
 from src.operators import build_operator_map, nombre_de_notas, operator_name
@@ -220,14 +224,38 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     score = None
     if eval_status == "evaluated":
         if segment_for_queue(sess.get("queue_name")) == "agente":
-            # AGENTE: rating DETERMINISTA de agilidad, SIN LLM (ver src/agilidad.py). Es
-            # un revendedor que opera una caja: la calidad es cuanto tardo el operador en
-            # cumplir el pedido, y eso se mide con timestamps. Correr el pase con LLM
-            # aca aplicaria la vara COMERCIAL del jugador (uplift, empujo/pasivo), que
-            # topaba el 94% de las sesiones de agente en 3 estrellas por diseño.
-            # score None = la sesion no tiene pedidos medibles en horario; se persiste
-            # igual, sin nota, en vez de inventar una.
-            score = score_agilidad(msgs)
+            # AGENTE: SIEMPRE determinista, SIN LLM. Correr el pase con LLM aca aplicaria la
+            # vara COMERCIAL del jugador (uplift, empujo/pasivo) y topaba el 94% de las
+            # sesiones de agente en 3 estrellas por diseño. Eso no cambia.
+            # LO QUE CAMBIO el 2026-08-21: el segmento pasa a tener MOTIVO. Hasta esa fecha
+            # sus 61.949 filas evaluadas tenian `motivo = NULL` y las calificaba `agilidad`,
+            # que mide UNICAMENTE el reloj -- y el manual le dedica un capitulo entero, con
+            # una seccion literal ("Procesos que si gestionamos para agentes") que nombra
+            # recargas, pagos, reclamos, diseño, servicios activos, revision de informacion
+            # y apoyo operativo.
+            # El motivo lo decide `motivo_de_agente` (determinista, ver ese modulo) y rutea a
+            # la rubrica que corresponde; `info` absorbe las consultas propias del agente por
+            # decision del negocio, porque todas son gente preguntando por algo.
+            # `agilidad` SE QUEDA con el 12,9% que no tiene motivo probable: ahi no se
+            # inventa uno para que la fila se vea completa.
+            # EL SEGMENTO VIAJA A LA RUBRICA porque el manual trata distinto el cierre del
+            # agente (ver el relevo en src/deposito.py y src/retiro.py).
+            motivo_ag = motivo_de_agente(msgs)
+            if motivo_ag == "deposito":
+                score = score_deposito(msgs, sess.get("resolved_at"), lineas,
+                                       segmento="agente")
+            elif motivo_ag == "retiro":
+                score = score_retiro(msgs, sess.get("resolved_at"), lineas,
+                                     segmento="agente")
+            elif motivo_ag == "info":
+                score = score_info(msgs, sess.get("resolved_at"))
+            else:
+                score = score_agilidad(msgs)
+            # Las rubricas transaccionales CEDEN el turno cuando no es transaccion. Medido
+            # sobre 800 sesiones de agente eso no paso ni una vez, pero si pasara la sesion
+            # no puede quedar sin nota ni caer al LLM: vuelve a `agilidad`.
+            if score is None:
+                score = score_agilidad(msgs)
         elif respuesta_fue_solo_traspaso(msgs):
             # REDIRECCION: la respuesta del negocio fue SOLO un traspaso a otra linea.
             # Motivo determinista y SIN LLM (decision del negocio, 2026-08-20). Hasta esa

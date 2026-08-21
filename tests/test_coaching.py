@@ -459,7 +459,15 @@ def _coaching_del_cuatro():
     import importlib
 
     from src.catalogo_coaching import CONSEJOS
-    del_catalogo = {c.rubrica: c.texto for c in CONSEJOS if c.situacion == "4"}
+
+    # SOLO EL SEGMENTO JUGADOR. Este invariante es el estandar de cierre DEL JUGADOR: "¿te
+    # falta algo más?" mas la espera. El manual le da al agente otro -- "debido a que muchos
+    # no responden despues de recibir la informacion, el operador PUEDE cerrar el chat cuando
+    # el caso haya sido resuelto" --, asi que exigirle la pregunta seria pedirle algo que el
+    # propio manual releva. La variante de agente la cubre
+    # tests/test_catalogo_coaching.py::test_el_cierre_del_agente_no_le_exige_la_pregunta.
+    del_catalogo = {c.rubrica: c.texto for c in CONSEJOS
+                    if c.situacion == "4" and c.segmento == "jugador"}
     for nombre in _MODULOS_CON_CIERRE:
         if nombre in del_catalogo:
             yield nombre, del_catalogo[nombre]

@@ -131,7 +131,8 @@ def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
     return None if pedido is None else interaccion_de(messages, pedido)
 
 
-def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None) -> Retiro | None:
+def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None,
+                     segmento: str = "jugador") -> Retiro | None:
     """Nota determinista de la sesion. None si no es una transaccion de retiro.
 
     `lineas`: mapa de nuestras lineas (src/redireccion.build_lineas_map), para reconocer la
@@ -166,7 +167,15 @@ def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None) -> Retir
               if respuesta else None)
     entrega = (espera_efectiva(inicio, max(comprobante["created_at"], inicio))
                if comprobante else None)
-    algo_mas = operator_asked_and_waited(reales, cierre_at)
+    # EL AGENTE ESTA RELEVADO DE LA PREGUNTA DE CIERRE, textual en el manual: "En
+    # conversaciones con agentes, y debido a que muchos no responden despues de recibir la
+    # informacion, el operador PUEDE cerrar el chat cuando el caso haya sido resuelto".
+    # MEDIDO el 2026-08-21 sobre 800 sesiones de agente: sin este relevo, el gate topaba
+    # 34 de 89 filas de pago (38,2%) y se llevaba 0,38 estrellas de la nota -- castigando al operador por no preguntar
+    # algo que el propio manual perdona. Lo que el manual SI exige (el minuto y confirmar la
+    # operacion) NO se releva: sigue contando igual.
+    algo_mas = (True if segmento == "agente"
+                else operator_asked_and_waited(reales, cierre_at))
     colgado = cliente_tuvo_la_ultima_palabra(reales, cierre_at)
 
     def _mins(td: timedelta | None) -> str:
@@ -255,13 +264,14 @@ def _situacion(r: Retiro) -> str | None:
     return str(r.stars)
 
 
-def score_retiro(messages: list[dict], cierre_at=None, lineas=None) -> ScoreResult | None:
+def score_retiro(messages: list[dict], cierre_at=None, lineas=None,
+                 segmento: str = "jugador") -> ScoreResult | None:
     """La nota como ScoreResult, lista para build_score_record. SIN LLM.
 
     None cuando no es una transaccion: una consulta sobre retiros se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca correspondio.
     """
-    r = calificar_retiro(messages, cierre_at, lineas)
+    r = calificar_retiro(messages, cierre_at, lineas, segmento)
     if r is None:
         return None
     _consejo = consejo_de("retiro", _situacion(r) or "")

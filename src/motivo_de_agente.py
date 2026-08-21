@@ -20,10 +20,11 @@ patron sobre las 68.094 sesiones (cota SUPERIOR, no verdad): comision/meta/arras
 interesado en ser agente 437 (0,6%), clave o datos del Back Office 89, cierre o reingreso de
 agencia 21, inconsistencias 8.
 
-ESTE MODULO NO RUTEA, Y ESO ES DELIBERADO. `agilidad` existe porque correr el pase con LLM en
-este segmento aplicaba la vara COMERCIAL del jugador (uplift, empujo/pasivo) y **topaba el 94%
-de las sesiones de agente en 3 estrellas por diseño**. Re-rutear sin medir repite ese error.
-Primero se clasifica, se mide donde caerian las notas, y despues se decide.
+EL RUTEO VIVE EN src/worker.py Y SE MIDIO ANTES DE ACTIVARLO. `agilidad` existe porque correr
+el pase con LLM en este segmento aplicaba la vara COMERCIAL del jugador (uplift,
+empujo/pasivo) y **topaba el 94% de las sesiones de agente en 3 estrellas por diseño**. El
+ruteo NO toca eso: manda a rubricas DETERMINISTAS, nunca al LLM, y `agilidad` se queda con lo
+que no tiene motivo probable.
 
 `problema` NO ENTRA, y no por olvido: **no hay una sola señal determinista de reclamo en el
 repo**. Es el unico motivo sin rubrica determinista, el que siempre cae al LLM. Clasificarlo
@@ -31,11 +32,11 @@ aca exigiria una señal nueva o el modelo, y las dos son otro cambio. Un reclamo
 comision cae hoy en `info`, que es impreciso pero no es una acusacion: `info` juzga si la
 respuesta fue correcta y a tiempo, no si el reclamo se tramito.
 
-ANTES DE ACTIVAR EL RUTEO, EL COACHING DE `info` NECESITA VARIANTE DE AGENTE. Sus textos
-estan escritos para el jugador: "quien pregunta todavia esta decidiendo si se queda" (C06),
-"quien consulta esta comparando" (C07). Un agente que pregunta por su comision es un socio con
-contrato, no un prospecto. La clave del consejo en src/catalogo_coaching.py es
-(rubrica, situacion), asi que hay lugar para la variante sin tocar la estructura.
+EL COACHING DE `info` YA TIENE VARIANTE DE AGENTE (C36-C39). Los textos del jugador hablaban
+de alguien "decidiendo si se queda" y "comparando", y un agente es un socio con contrato. Y no
+era solo redaccion: el manual le da al agente otra regla de cierre, asi que el consejo del 4
+le pide /FIN y los 5 minutos en vez de la pregunta. La clave del catalogo es
+(rubrica, situacion, segmento).
 """
 from __future__ import annotations
 
@@ -44,12 +45,12 @@ import unicodedata
 
 from src.deposito import es_transaccion as es_transaccion_deposito
 from src.retiro import es_transaccion as es_transaccion_retiro
-from src.signals import client_asked_question
 
-# Los temas propios del agente que el negocio decidio mandar a `info`. NO deciden el motivo
-# por si solos -- lo decide `client_asked_question` --, sirven para no depender de que la
-# pregunta traiga un signo de interrogacion: "cuanto me quedo de comision" no lo tiene, y en
-# la data real el agente escribe corrido y sin puntuacion.
+# Los temas propios del agente que el negocio decidio mandar a `info`. SON los que deciden:
+# se exige el TEMA y no una pregunta generica, porque en este segmento el pedido tambien viene
+# con signo de interrogacion ("me cargas 30 a la agencia?") y eso no es una consulta. Y no se
+# depende de la puntuacion en el otro sentido: "cuanto me quedo de comision" no lleva signo, y
+# en la data real el agente escribe corrido.
 _TEMAS_DE_AGENTE = re.compile(
     r"comisi[oó]n|arrastre|mi meta|porcentaje base"
     r"|dise[nñ]o|flyer|banner|arte|logo|video personalizado|auspicio"
@@ -96,8 +97,14 @@ def motivo_de_agente(messages: list[dict]) -> str | None:
         return "deposito"
     if es_transaccion_retiro(messages):
         return "retiro"
-    # `info` = el agente pregunto algo. Alcanza con la pregunta generica O con uno de los
-    # temas propios del agente, porque en la data real escribe sin puntuacion.
-    if client_asked_question(messages) or _pregunto_un_tema_de_agente(messages):
+    # `info` EXIGE UN TEMA PROPIO DEL AGENTE, no cualquier pregunta. La primera version
+    # aceptaba `client_asked_question` a secas y eso rompia el caso mas comun del segmento:
+    # "me cargas 30 a la agencia?" es un PEDIDO que termina en signo de interrogacion, no una
+    # consulta. Mandarlo a `info` le pregunta "respondio la consulta de forma correcta y
+    # completa" cuando lo que habia que evaluar era si CUMPLIO el pedido -- y eso es
+    # exactamente lo que mide `agilidad`.
+    # Un pedido de recarga sin comprobante no es transaccion (no hay que acreditar nada
+    # todavia) y tampoco es consulta: se lo queda `agilidad`, que es su lugar.
+    if _pregunto_un_tema_de_agente(messages):
         return "info"
     return None
