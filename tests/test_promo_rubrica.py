@@ -128,14 +128,28 @@ def test_score_promo_devuelve_un_ScoreResult_usable():
     assert r.recomendacion == ""
 
 
-def test_la_recomendacion_del_4_pide_ALGO_CONCRETO():
-    # El consejo tiene que nombrar QUE mandar en el idioma del equipo. Decia "falta el
-    # material ... el flyer o el enlace" y atencion al cliente no entendia a que se referia
-    # (2026-08-11): no usan ninguno de esos dos artefactos. Ver
-    # tests/test_vocabulario_retroalimentacion.py.
+def test_el_4_de_promo_YA_NO_EMITE_CONSEJO():
+    """CAMBIO DEL 2026-08-21: la rama se quedo sin consejo. Antes exigia que nombrara QUE
+    mandar, y el texto decia "una imagen marcando donde tocar, o un video corto".
+
+    LA HISTORIA QUE ESTE TEST GUARDABA, Y QUE SE CONSERVA. La version previa a esa decia
+    "falta el material ... el flyer o el enlace", y **atencion al cliente no entendia a que
+    se referia (2026-08-11): no usan ninguno de esos dos artefactos**. De ahi salio
+    "imagen o video" -- o sea el vocabulario lo puso ATC, no nosotros. Ver
+    tests/test_vocabulario_retroalimentacion.py.
+
+    POR QUE SE RETIRO IGUAL. La auditoria del 2026-08-21 contra el manual mostro que
+    prescribir imagen o video para explicar una promo NO esta en ninguna parte: el manual
+    solo lo pide en el tutorial de actualizacion de numero en BackOffice y en las
+    "solicitudes de videos personalizados" que hace un agente. Eran 6.300 recomendaciones.
+    El negocio decidio que un consejo sin respaldo escrito no se emite, sabiendo que este no
+    era inventado sino heredado de una conversacion. **Si vuelve, vuelve con la cita.**
+
+    Lo que este test sigue garantizando es que la rama no se rellene: ni con "flyer" (el
+    vocabulario que ATC rechazo) ni con una frase generica de reemplazo.
+    """
     msgs = [_cli(0), _op(1, EXPLICA)]
     r = score_promo(msgs)
     assert r.stars == 4
-    consejo = r.recomendacion.lower()
-    assert "flyer" not in consejo
-    assert any(p in consejo for p in ("imagen", "video")), consejo
+    assert r.recomendacion == ""
+    assert "flyer" not in r.rating_rationale.lower()

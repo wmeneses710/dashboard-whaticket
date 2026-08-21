@@ -89,13 +89,23 @@ def test_soporte_sin_salida_concreta_habla_SOLO_de_la_salida():
     assert "lenta" not in consejo, "la atencion fue rapida: no puede decir que fue lenta"
 
 
-def test_soporte_lento_habla_SOLO_del_tiempo():
+def test_soporte_lento_YA_NO_EMITE_CONSEJO():
+    """CAMBIO DEL 2026-08-21. La rama emitia "Conviene avisar antes de cada consulta interna"
+    y el manual no lo respalda (cero hits; lo que dice sobre escalamiento es todo INTERNO).
+    Se retiro por decision del negocio -- 373 recomendaciones -- y la rama se queda SIN
+    consejo en vez de con uno generico de relleno.
+
+    Lo que ESTE test cuidaba sigue cuidado en otro lado: que el consejo hablara solo del
+    tiempo y no metiera dos temas con un " o ". Ahora no hay consejo, asi que la unica
+    afirmacion posible es que este vacio. El DIAGNOSTICO del tiempo no se perdio: vive en el
+    rationale, que este test tambien verifica."""
     r = score_soporte([_cli(0, "no puedo entrar a mi cuenta"),
                        _op(3600, "ingresa de nuevo y probamos")])
     assert r.stars == 2
-    consejo = r.recomendacion.lower()
-    assert " o " not in consejo
-    assert any(p in consejo for p in ("tard", "esper", "minuto", "tiempo"))
+    assert r.recomendacion == ""
+    # el tiempo sigue nombrado donde corresponde: en el rationale
+    assert any(p in r.rating_rationale.lower()
+               for p in ("tard", "esper", "minuto", "tiempo")), r.rating_rationale
 
 
 # LA RAMA DEL RECHAZO tiene su propio consejo. Sin esto, un 4 de rechazo recibia el consejo

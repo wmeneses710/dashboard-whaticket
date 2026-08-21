@@ -145,9 +145,14 @@ _COACHING = {
 _COACHING_2_SIN_INTENTO = (
     "El cliente no se llevó ningún paso a seguir. Aunque el desbloqueo dependa de otra "
     "área, conviene decirle qué sigue y en cuánto tiempo.")
-_COACHING_2_LENTO = (
-    "Hubo trabajo en el caso, pero cada ida y vuelta tardó demasiado. Conviene avisar "
-    "antes de cada consulta interna: \"déjame revisar esto y te confirmo en unos minutos\".")
+# RETIRADO el 2026-08-21. `_COACHING_2_LENTO` decia "Hubo trabajo en el caso, pero cada ida
+# y vuelta tardo demasiado. Conviene avisar antes de cada consulta interna: 'dejame revisar
+# esto y te confirmo en unos minutos'". Eran 373 recomendaciones y el manual no lo respalda:
+# cero hits en cualquier fraseo. Y lo que SI dice sobre escalamiento es todo INTERNO
+# (consultar al supervisor antes de escalar, usar el grupo oficial, dejar evidencia); nada
+# sobre avisarle al CLIENTE que se esta haciendo una consulta interna.
+# EL DIAGNOSTICO DE LA RAMA NO SE PERDIO: "cada ida y vuelta tardo demasiado" tiene respaldo
+# en el minuto del manual y sigue vivo en el rationale. Lo que se fue es la prescripcion.
 _COACHING_1 = ("El cliente reportó un problema con su cuenta y nadie le respondió. Conviene "
                "acusar el recibo aunque la solución dependa de otra área.")
 
@@ -251,8 +256,10 @@ def _coaching(s: Soporte) -> str:
     if s.stars == 1:
         return _COACHING_1
     if s.stars == 2:
-        return _COACHING_2_SIN_INTENTO if not s.intento else _COACHING_2_LENTO
-    return _COACHING[s.stars]
+        # Con `intento` la rama se queda SIN consejo: su texto se retiro por no tener
+        # respaldo (ver arriba). NO cae a `_COACHING[2]`, que no existe.
+        return _COACHING_2_SIN_INTENTO if not s.intento else ""
+    return _COACHING.get(s.stars, "")
 
 
 def score_soporte(messages: list[dict], cierre_at=None) -> ScoreResult | None:

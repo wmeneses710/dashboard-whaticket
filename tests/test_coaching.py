@@ -299,15 +299,17 @@ def _todos_los_textos():
     from src.registro import _COACHING as R, _COACHING_1 as R1
     from src.retiro import (_COACHING as T, _COACHING_1 as T1,
                             _COACHING_2_SIN_COMPROBANTE as T2S, _COACHING_2_TARDE as T2T)
+    # `_COACHING_2_LENTO` se retiro el 2026-08-21 por no tener respaldo en el manual
+    # (ver tests/test_coaching_sin_respaldo.py). Ya no hay texto que auditar en esa rama.
     from src.soporte import (_COACHING as S, _COACHING_1 as S1,
-                             _COACHING_2_LENTO as S2L, _COACHING_2_SIN_INTENTO as S2I)
+                             _COACHING_2_SIN_INTENTO as S2I)
     out = []
     for d in (A, D, I, P, R, T, S):
         out += [(f"{k}", v) for k, v in d.items()]
     for nombre, v in (("dep_1", D1), ("dep_2_sin", D2A), ("dep_2_tarde", D2T),
                       ("info_1", I1), ("promo_1", P1), ("reg_1", R1),
                       ("ret_1", T1), ("ret_2_sin", T2S), ("ret_2_tarde", T2T),
-                      ("sop_1", S1), ("sop_2_lento", S2L), ("sop_2_sin", S2I)):
+                      ("sop_1", S1), ("sop_2_sin", S2I)):
         out.append((nombre, v))
     return out
 
