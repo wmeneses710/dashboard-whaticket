@@ -318,9 +318,20 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                 # NUESTRA" (que es `redireccion` y tiene su propia regla).
                 lineas=lineas,
             )
-            if score is not None:
-                acotar = _ANCLA_POR_MOTIVO.get(score.motivo)
-                ventana_juzgada = acotar(msgs) if acotar else None
+    # EL ACOTADO VALE PARA TODOS LOS CAMINOS, no solo para el del jugador. Hasta el
+    # 2026-08-24 esta consulta vivia DENTRO del `else` de arriba, asi que en el segmento
+    # `agente` `ventana_juzgada` quedaba en None siempre. Medido en la copia:
+    #     segment = jugador -> 100% con ancla (deposito 27/27, registro 33/33, retiro 3/3)
+    #     segment = agente  ->   0% con ancla (deposito 0/90, retiro 0/23)
+    # Arrastraba las TRES cosas que `ventana_juzgada` gobierna: la marca de que interaccion se
+    # juzgo (el tablero no podia senalarla), los tiempos (describian la sesion entera en vez
+    # del tramo) y sobre todo LA ATRIBUCION -- el bloque de mas abajo que reasigna la nota al
+    # dueño de la ventana no se ejecutaba. **2 de 113 filas de agente quedaron mal
+    # atribuidas**, las dos de 5 estrellas: alguien cobrando el trabajo de otro. En las otras
+    # 111 acertaba por CASUALIDAD, porque el dominante de la sesion solia ser el mismo.
+    if score is not None and ventana_juzgada is None:
+        acotar = _ANCLA_POR_MOTIVO.get(score.motivo)
+        ventana_juzgada = acotar(msgs) if acotar else None
     # LOS TIEMPOS Y EL OPERADOR DESCRIBEN LA INTERACCION QUE SE JUZGO, no el envase.
     # Los campos del CRM son del ENVASE: MEDIDO el 2026-08-12 sobre `f9b31f4f` (17
     # interacciones), `created_at` sale de la primera, `first_sent_message_at` de la segunda

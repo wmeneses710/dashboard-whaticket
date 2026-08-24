@@ -902,3 +902,83 @@ def test_cuando_el_lock_SE_LIBERA_el_worker_arranca_solo(monkeypatch):
     texto = "\n".join(lineas)
     assert "lock de scoring adquirido" in texto, (
         f"nunca tomo el lock aunque se libero:\n{texto}")
+
+
+# --- LA RAMA `agente` TAMBIEN TIENE QUE ACOTAR LA VENTANA ------------------------------
+# EL AGUJERO: `_ANCLA_POR_MOTIVO` se consultaba SOLO dentro del `else` (el camino del
+# jugador), asi que en el segmento `agente` `ventana_juzgada` quedaba en None SIEMPRE. Medido
+# en la copia del 2026-08-24:
+#     segment = jugador  -> 100% con ancla (deposito 27/27, registro 33/33, retiro 3/3)
+#     segment = agente   ->   0% con ancla (deposito 0/90, retiro 0/23)
+# Arrastra TRES cosas, porque `ventana_juzgada` gobierna las tres:
+#   1. `interaccion_juzgada_desde` no se persiste -> el tablero no puede marcar CUAL de las
+#      interacciones se califico. Caso real traido por el negocio: una sesion de 5
+#      interacciones y 2 operadores donde la nota hablaba de la tercera y no habia forma de
+#      saberlo.
+#   2. `tiempos_de(ventana)` describe la SESION entera en vez de la interaccion juzgada.
+#   3. EL OPERADOR. El bloque que reatribuye la nota al dueño de la ventana (`if
+#      ventana_juzgada:`) no se ejecuta, asi que la nota va al operador dominante de toda la
+#      sesion. Medido: **2 de 113 filas de agente estan mal atribuidas** -- las dos de 5
+#      estrellas, o sea alguien cobrando el trabajo de otro (`62fdbf2b` la nota a Mel cuando
+#      la ventana era de Joseph, `9a3ce7c1` a Arturo cuando era de Mel). Acertaba en 111 por
+#      CASUALIDAD: el dominante de la sesion solia ser el mismo.
+
+def _session_row_agente():
+    fila = _session_row()
+    fila["queue_name"] = "Agente 🍀"   # segment_for_queue -> "agente"
+    return fila
+
+
+def _dos_recargas():
+    """Dos interacciones de recarga separadas por el cierre del CRM, con operadores
+    DISTINTOS. Espeja la sesion real `d5c68b78` que trajo el negocio."""
+    from datetime import timedelta
+
+    def m(seg, from_me, body, *, note=False, uid=None, media=None):
+        return {"created_at": _T0 + timedelta(seconds=seg), "from_me": from_me,
+                "is_note": note, "body": body, "sent_from": "OP" if from_me else None,
+                "user_id": uid, "media_type": media}
+
+    return [
+        m(0, False, None, media="image"), m(1, False, "Abono $5 a deuda"),
+        m(60, True, "ing", uid="mel"),
+        m(63, True, "Mel *resuelto* la conversación", note=True),
+        # segunda recarga, veinte minutos despues y con OTRO operador
+        m(1200, False, None, media="image"), m(1201, False, "Abono $5 a deuda"),
+        m(1560, True, "ingreso", uid="joseph"),
+        m(1563, True, "Joseph *resuelto* la conversación", note=True),
+    ]
+
+
+def test_una_sesion_de_agente_declara_QUE_interaccion_juzgo(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _dos_recargas())
+
+    def boom(**kw):
+        raise AssertionError("el segmento agente no debe llamar al LLM")
+
+    monkeypatch.setattr(worker, "score_by_motivo", boom)
+    conn = _CtxConn()
+    worker.score_session_and_store(conn, _session_row_agente(), llm=None, op_map={})
+    params = _params_of_upsert(conn)
+    # `upsert_score` envuelve el jsonb en `psycopg.types.json.Jsonb`; el dict vive en `.obj`.
+    crudo = params["dimensions"]
+    dims = getattr(crudo, "obj", crudo)
+    assert "interaccion_juzgada_desde" in dims, (
+        "la fila no dice cuál de las interacciones se calificó: en una sesión con varias y "
+        "con operadores distintos, el que mira no puede verificar la nota")
+
+
+def test_la_nota_de_agente_va_al_operador_de_la_VENTANA(monkeypatch):
+    """Sin esto la nota va al dominante de toda la sesión, y en la copia eso ya puso 2 notas
+    de 5 estrellas en la persona equivocada."""
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _dos_recargas())
+    monkeypatch.setattr(worker, "score_by_motivo",
+                        lambda **kw: (_ for _ in ()).throw(AssertionError("sin LLM")))
+    conn = _CtxConn()
+    worker.score_session_and_store(conn, _session_row_agente(), llm=None,
+                                   op_map={"mel": "Mel", "joseph": "Joseph"})
+    params = _params_of_upsert(conn)
+    # El ancla de deposito es el ULTIMO comprobante (ancla-ultima, v12): la ventana juzgada es
+    # la SEGUNDA recarga, que atendio Joseph.
+    assert params["user_name"] == "Joseph", (
+        f"la nota describe la interacción de Joseph y se la llevó {params['user_name']!r}")
