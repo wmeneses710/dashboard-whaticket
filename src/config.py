@@ -28,6 +28,11 @@ class Config:
     api_host: str
     api_port: int
     log_level: str
+    # LA API AUTODOCUMENTADA, APAGADA POR DEFECTO. El tablero vive en un dominio publico y
+    # las lecturas son anonimas, asi que /openapi.json le entrega a cualquiera el mapa de que
+    # pedir para leer nombres, telefonos y transcripts. En local se prende con API_DOCS=true;
+    # el default tiene que ser el seguro, no el comodo.
+    api_docs: bool
     # --- Worker de scoring (mismo contenedor, configurable en EasyPanel) ---
     scoring_enabled: bool
     scoring_accounts: tuple[str, ...]
@@ -68,6 +73,7 @@ def load_config() -> Config:
         api_host=os.environ.get("API_HOST", "0.0.0.0"),
         api_port=int(os.environ.get("API_PORT", "8080")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
+        api_docs=_bool(os.environ.get("API_DOCS")),
         scoring_enabled=_bool(os.environ.get("SCORING_ENABLED")),
         scoring_accounts=_csv(os.environ.get("SCORING_ACCOUNTS"), ("sistemas", "datos")),
         scoring_batch_size=int(os.environ.get("SCORING_BATCH_SIZE", "20")),

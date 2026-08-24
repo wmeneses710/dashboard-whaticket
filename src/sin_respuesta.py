@@ -36,6 +36,7 @@ aislando, la razon viaja en `dimensions.sin_respuesta_del_negocio`.
 """
 from __future__ import annotations
 
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 
 MODELO_DETERMINISTA = "determinista/sin-respuesta-v1"
@@ -44,14 +45,11 @@ _RATIONALE = (
     "El cliente escribió y nadie del negocio le respondió: la conversación se cerró sin "
     "contestarle."
 )
-# El consejo NOMBRA EL HECHO. Una frase de relleno aca seria peor que el silencio, porque es
-# la falla mas grave que el sistema mide. Apunta a B10 (los tiempos de respuesta) igual que
-# los `_1` de las otras rubricas, que son la misma situacion vista por motivo.
-_COACHING = (
-    "El cliente quedó sin ninguna respuesta y la conversación se cerró igual. Aunque no se "
-    "pueda resolver en el momento, conviene contestar siempre: una línea alcanza, y el "
-    "manual pide que el último mensaje lo envíe el operador."
-)
+# EL CONSEJO VIVE EN EL CATALOGO (C40, apunta a B10). Nacio aca el 2026-08-21, cuando el
+# catalogo ya estaba cerrado, y por eso las filas salian con `recomendacion_codigos: []`: el
+# tablero mostraba el texto pero no se podia sumar por practica del manual. Migrado el
+# 2026-08-24 VERBATIM -- no cambia ninguna nota. Ver src/catalogo_coaching.py.
+_CONSEJO = consejo_de("sin_respuesta", "mala")
 
 
 def hubo_respuesta_del_negocio(messages: list[dict]) -> bool:
@@ -92,7 +90,9 @@ def score_sin_respuesta(messages: list[dict]) -> ScoreResult | None:
         atencion="no_respondio",
         deposit_observed=None,
         floor_applied=False,
-        recomendacion=_COACHING,
+        recomendacion=_CONSEJO.texto if _CONSEJO else "",
+        recomendacion_codigos=[_CONSEJO.codigo] if _CONSEJO else [],
+        recomendacion_practica=_CONSEJO.practica if _CONSEJO else "",
         claridad="dudoso",
         friccion=False,
         aciertos=[],

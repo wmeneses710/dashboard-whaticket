@@ -137,3 +137,36 @@ def ambiente_incluye_sin_cola(ambiente: str) -> bool:
     segment_for_queue(None) == 'interno' — para no tener dos fuentes de verdad.
     """
     return segment_for_queue(None) in segments_for_ambiente(ambiente)
+
+
+# --- QUIEN ESTA DEL OTRO LADO: persona o GRUPO ----------------------------------------
+# Las personas de la copia tienen numeros de 7 a 13 digitos; los grupos, de 18 a 23. Nadie
+# vive entre 14 y 17, asi que el umbral cae en un hueco limpio y no en un borde.
+LARGO_MAXIMO_DE_PERSONA = 15
+
+
+def es_grupo_de_whatsapp(is_group: bool | None, numero: str | None) -> bool:
+    """Es un GRUPO de WhatsApp? `tickets.is_group` manda; el numero es el respaldo.
+
+    POR QUE HAY RESPALDO. El skip `grupo_de_whatsapp` (src/router.decide_eligibility) vive
+    de `tickets.is_group`, y esa marca no siempre esta. Medido sobre las 17.041 sesiones
+    pendientes SIN COLA de la copia: 608 la traen en `true`, 16.168 la traen NULL -- y de
+    esas 214 tienen numero de grupo. El resto (13.052) no tiene contacto y de esas no se
+    puede saber nada: ahi se devuelve False, que es fallar del lado seguro. Saltear "por
+    las dudas" seria borrarlas del padron sin evidencia.
+
+    LA SEÑAL ES EXACTA, no una heuristica. WhatsApp identifica un grupo con un JID que
+    viaja en `contacts.number` (ej. `120363217408052038`). Medido sobre las 93.705
+    conversaciones con ticket:
+        is_group = true    5.060 -> 5.060 con numero de 18-23 digitos  (100% cubierto)
+        is_group = false  88.645 ->     0 con numero de mas de 15      (0 falsos positivos)
+    Los JID viejos son `telefono-timestamp` (255 de los grupos tienen guion) y entran por
+    el mismo umbral: 23 caracteres. No hace falta una regla propia para ellos.
+
+    Los separadores no cuentan: un numero formateado ("+593 98 765 4321") no puede volverse
+    grupo por los espacios.
+    """
+    if is_group is not None:
+        return bool(is_group)
+    limpio = "".join((numero or "").split())
+    return len(limpio) > LARGO_MAXIMO_DE_PERSONA

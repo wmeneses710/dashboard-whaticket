@@ -418,17 +418,24 @@ def test_las_dos_vistas_viven_en_UNA_tarjeta_con_switch():
     assert 'vistaMotivo=\'sin_evaluar\'' in trio, "falta el boton de la vista de sin evaluar"
 
 
-def test_la_alerta_de_jugador_sin_respuesta_solo_mira_no_agent_reply():
-    # En `datos` casi todo lo salteado es del segmento jugador (429 de 431 en sin_motivo), asi
-    # que marcarlo en cada renglon seria ruido. La alerta significa algo distinto: un jugador
-    # escribio y NADIE contesto. Medido: 102 de las 313 `no_agent_reply` son personas en colas
-    # de jugador; las otras 160 son grupos de WhatsApp, donde nadie debe contestar.
+def test_la_alerta_de_jugador_sin_respuesta_solo_mira_UNA_situacion():
+    # La INTENCION del test se conserva entera: la alerta se cuelga de UNA sola causa y no de
+    # todas. En `datos` casi todo es del segmento jugador (429 de 431 en `sin_motivo`, 14 de 15
+    # en `solo_cortesia`), asi que marcarlo en cada renglon seria ruido. La alerta significa
+    # algo distinto: un jugador escribio y NADIE contesto.
+    # LO QUE CAMBIO el 2026-08-24 es DE DONDE sale. `no_agent_reply` dejo de ser un skip el
+    # 2026-08-21 y paso a llevar 1 estrella, asi que el codigo lo emite CERO veces y la alerta
+    # quedaba en 0 para siempre. Ahora sale de `situacion_stats`, sobre filas evaluadas.
+    # (Y los 160 grupos que vivian en ese mismo renglon ya no llegan: se saltean antes con
+    # `grupo_de_whatsapp`, ver src/router.py.)
     html = HTML.read_text(encoding="utf-8")
     assert "jugadorSinRespuesta" in html
     m = re.search(r"const jugadorSinRespuesta = computed\((.*?)\);", html, re.S)
     assert m, "cambio la forma de jugadorSinRespuesta, revisar este test"
-    assert "'no_agent_reply'" in m.group(1), \
-        "la alerta tiene que colgarse SOLO de no_agent_reply"
+    assert "'sin_respuesta_del_negocio'" in m.group(1), \
+        "la alerta tiene que colgarse SOLO de sin_respuesta_del_negocio"
+    assert "'solo_cortesia'" not in m.group(1), \
+        "`solo_cortesia` es casi todo jugador: marcarlo ahi es ruido, no alerta"
 
 
 def test_la_alerta_de_jugador_se_pinta_como_problema():
@@ -528,3 +535,101 @@ def test_el_front_explica_las_situaciones_que_antes_eran_un_skip():
     assert "sin_respuesta_del_negocio" in html
     assert "solo_cortesia" in html
     assert "destino_utilizable" in html
+
+
+# --- LA TARJETA QUE SE MURIO CUANDO EL SKIP SE VOLVIO NOTA -----------------------------
+# `jugadorSinRespuesta` buscaba `skip_reason === 'no_agent_reply'`, y desde el 2026-08-21 el
+# codigo emite ese skip CERO veces: la alerta "N de canal jugador sin respuesta del negocio"
+# no se podia mostrar nunca mas. El chip POR FILA si se habia migrado (`dimSituacion`), pero
+# el agregado no -- y el agregado era lo que el negocio habia pedido el 2026-08-13.
+
+def test_el_front_lee_las_situaciones_del_summary():
+    html = HTML.read_text(encoding="utf-8")
+    assert "situacion_stats" in html, (
+        "el agregado viaja en /api/summary y el front no lo lee: la alerta sigue muerta")
+
+
+def test_la_alerta_del_jugador_NO_se_cuelga_de_un_skip_que_ya_no_existe():
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const jugadorSinRespuesta")
+    bloque = html[i:i + 400]
+    assert "no_agent_reply" not in bloque, (
+        "sigue buscando un skip_reason que el codigo emite 0 veces -> siempre 0")
+    assert "sin_respuesta_del_negocio" in bloque, (
+        "la situacion vive en dimensions desde el 2026-08-21")
+
+
+def test_las_situaciones_tienen_etiqueta_en_el_front():
+    """Mismo agujero que `SKIP_LABEL` en su momento: sin etiqueta el tablero muestra la
+    clave cruda (`sin_respuesta_del_negocio`) al que mira."""
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const SITUACION_LABEL = {")
+    bloque = html[i:html.index("};", i)]
+    for clave in ("sin_respuesta_del_negocio", "solo_cortesia"):
+        assert clave in bloque, f"falta la etiqueta de {clave}"
+    for clave, texto in re.findall(r'(\w+)\s*:\s*"([^"]*)"', bloque):
+        assert len(texto) >= 12, f"la etiqueta de {clave!r} es demasiado corta: {texto!r}"
+        assert texto.lower() != clave.lower().replace("_", " "), \
+            f"la etiqueta de {clave!r} repite la clave"
+
+
+def test_las_situaciones_del_codigo_TIENEN_etiqueta_en_el_front():
+    """Ata la lista del front a lo que la consulta REALMENTE puede devolver, en vez de a una
+    lista escrita a mano. Es el mismo contrato que
+    `test_todo_skip_reason_del_codigo_tiene_etiqueta_en_el_front`."""
+    from src.queries import _SITUACION_FLAGS
+
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index("const SITUACION_LABEL = {")
+    bloque = html[i:html.index("};", i)]
+    faltan = [f for f in _SITUACION_FLAGS if f not in bloque]
+    assert not faltan, f"estas situaciones se muestran crudas: {faltan}"
+
+
+def test_las_situaciones_se_LISTAN_con_su_numero_y_no_solo_la_alerta():
+    """La alerta dice cuantas son de jugador; sin la lista, el fenomeno completo sigue sin
+    numero. Es lo que se perdio el 2026-08-21."""
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index('v-if="situacionStats.length"')
+    bloque = html[i:i + 900]
+    assert "SITUACION_LABEL[s.situacion]" in bloque, "muestra la clave cruda"
+    assert "fmtN(s.n)" in bloque, "no muestra el conteo"
+    assert "s.estrellas" in bloque, "no muestra el promedio de estrellas"
+
+
+def test_las_situaciones_NO_se_suman_al_total_de_sin_evaluar():
+    """Estas filas SI se evaluan: meterlas en `skipTotal` rompe el cierre contra el KPI, que
+    es lo unico que avisa si el desglose se desincroniza."""
+    html = HTML.read_text(encoding="utf-8")
+    m = re.search(r"const skipTotal = computed\((.*?)\);", html, re.S)
+    assert m, "cambio la forma de skipTotal"
+    assert "situacion" not in m.group(1)
+
+
+# --- /api/ambientes: el endpoint que existia y nadie llamaba ---------------------------
+# Su docstring en src/app.py dice literal: "Es la respuesta a 'no se sabe de que son que': el
+# front puede decir que compone el numero que esta mostrando, en vez de que el usuario lo
+# deduzca". Estaba escrito, probado y SIN CABLEAR -- el front no lo llamaba ni una vez.
+# Auditoria del 2026-08-24, pedida por el usuario ("siento que hay info faltante").
+
+def test_el_front_llama_a_api_ambientes():
+    html = HTML.read_text(encoding="utf-8")
+    assert "/api/ambientes" in html, "el endpoint sigue sin cablear"
+
+
+def test_la_composicion_se_pide_UNA_vez_por_cuenta_no_por_filtro():
+    """Es estable por cuenta (el agregado recorre las conversaciones), asi que pedirla en
+    cada cambio de filtro seria gasto puro. Mismo criterio que /api/options."""
+    html = HTML.read_text(encoding="utf-8")
+    m = re.search(r"/api/ambientes\?[^\"']*", html)
+    assert m, "no se encontro la llamada"
+    assert "ambiente=" not in m.group(0), (
+        "la composicion NO se filtra por ambiente: devuelve los cuatro de una")
+
+
+def test_la_composicion_se_MUESTRA_con_la_cola_y_su_volumen():
+    html = HTML.read_text(encoding="utf-8")
+    i = html.index('v-if="composicionActual.length"')
+    bloque = html[i:i + 700]
+    assert "c.cola" in bloque, "no nombra la cola"
+    assert "c.conversaciones" in bloque, "no muestra el volumen de la cola"

@@ -768,6 +768,74 @@ def skip_stats(cur, account: str, **filters) -> list[dict]:
     return _build_skip_stats(cur.fetchall())
 
 
+# LAS SITUACIONES QUE DEJARON DE SER SKIP. El 2026-08-21 `no_agent_reply` y `sin_motivo`
+# pasaron de saltearse a llevar nota (src/sin_respuesta.py, src/solo_cortesia.py). El chip POR
+# FILA se migro, pero el AGREGADO se murio en silencio: la tarjeta del front buscaba
+# `skip_reason = 'no_agent_reply'` y el codigo dejo de emitirlo -> la alerta que el negocio
+# habia pedido el 2026-08-13 ("si es de canal de jugador si quiero que haya una alerta ahi")
+# no se podia mostrar nunca mas. Esta consulta la devuelve, ahora sobre filas EVALUADAS.
+#
+# POR QUE NO ALCANZA CON EL PROMEDIO DE ESTRELLAS. Un 1 estrella no dice QUE paso; estas dos
+# situaciones son de dueño distinto y se leen distinto: "nadie le contesto" es una falla
+# nuestra con una persona esperando, y "el cliente no planteo nada" es un cierre que se juzga
+# por el estandar y casi siempre esta bien (98,3% medido).
+#
+# LA COLUMNA `jugador` ES LA ALERTA, por la misma razon que en `_SKIP_STATS_SQL`:
+# `segment_for_queue` devuelve 'interno' cuando la cola es NULL o vacia, asi que 'interno' no
+# afirma nada -- `jugador` SI se afirma por nombre de cola. Y desde el 2026-08-24 los GRUPOS
+# ya no llegan aca: se saltean antes (`grupo_de_whatsapp`), que es lo que separaba las 160
+# sesiones de grupo de las 102 de jugador que vivian en el mismo renglon.
+_SITUACION_FLAGS = ("sin_respuesta_del_negocio", "solo_cortesia")
+
+_SITUACION_STATS_SQL = """
+SELECT CASE
+         WHEN (cs.dimensions->>'sin_respuesta_del_negocio')::bool
+           THEN 'sin_respuesta_del_negocio'
+         WHEN (cs.dimensions->>'solo_cortesia')::bool THEN 'solo_cortesia'
+       END AS situacion,
+       count(*) AS n,
+       count(*) FILTER (WHERE cs.segment = 'jugador') AS jugador,
+       avg(cs.stars) AS estrellas""" + _SCORES_JOINS + """
+   AND cs.eval_status = 'evaluated'
+   AND (coalesce((cs.dimensions->>'sin_respuesta_del_negocio')::bool, false)
+        OR coalesce((cs.dimensions->>'solo_cortesia')::bool, false))
+ GROUP BY 1"""
+
+
+def _build_situacion_stats(rows) -> list[dict]:
+    """[{situacion, n, pct, jugador, estrellas}] ordenado por volumen.
+
+    `pct` es sobre el total de ESTAS situaciones y no sobre la poblacion evaluada: la
+    pregunta de la tarjeta es "de lo que antes era un skip, cuanto es cada cosa" -- mismo
+    criterio que `_build_skip_stats`.
+
+    El guard de `jugador > n` es el mismo de skip_stats y por lo mismo: si alguien toca el
+    FILTER, la alerta hablaria de una poblacion que no existe. Reventar es mejor que mostrar
+    un numero imposible.
+    """
+    total = sum(int(n) for _, n, _, _ in rows)
+    if not total:
+        return []
+    out = []
+    for situacion, n, jug, estrellas in rows:
+        n, jug = int(n), int(jug or 0)
+        if jug > n:
+            raise ValueError(f"{situacion!r}: {jug} de jugador sobre {n} sesiones")
+        out.append({"situacion": situacion, "n": n,
+                    "pct": round(100 * n / total, 1), "jugador": jug,
+                    "estrellas": round(float(estrellas), 2) if estrellas is not None
+                    else None})
+    out.sort(key=lambda x: -x["n"])
+    return out
+
+
+def situacion_stats(cur, account: str, **filters) -> list[dict]:
+    """Las situaciones que antes eran un skip y hoy llevan nota (respeta filtros)."""
+    where, params = _scores_filters(account, **filters)
+    cur.execute(_SITUACION_STATS_SQL.format(where=where), params)
+    return _build_situacion_stats(cur.fetchall())
+
+
 def summary(cur, account: str, **filters) -> dict:
     """Todos los agregados de las tarjetas/cuadros filtro-aware en una llamada: KPIs,
     distribución, tabla de operadores, % depósito por canal, evolución de calidad y
@@ -781,6 +849,7 @@ def summary(cur, account: str, **filters) -> dict:
         "motivo_stats": motivo_stats(cur, account, **filters),
         "motivo_cobertura": motivo_cobertura(cur, account, **filters),
         "skip_stats": skip_stats(cur, account, **filters),
+        "situacion_stats": situacion_stats(cur, account, **filters),
         "ops_motivo": operators_by_motivo(cur, account, **filters),
         "quality_motivo": quality_by_motivo_month(cur, account, **filters),
     }

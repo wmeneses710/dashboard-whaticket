@@ -7,6 +7,7 @@ Estos tests hacen de esa cobertura un CONTRATO: si alguien agrega un motivo y se
 del ejemplo, el test rompe antes de que el modelo empiece a adivinar.
 """
 import json
+import re
 
 import pytest
 
@@ -132,3 +133,82 @@ def test_el_prompt_real_sigue_usando_el_fewshot():
     # string viejo, esto falla. Sin esto el test pasaba por casualidad.
     assert "nathaly365" in system, "el prompt no esta usando src/fewshot.py"
     assert "Agencia Burkina" in system
+
+
+# --- LOS CODIGOS DE ERROR DEL MANUAL TIENEN QUE ESTAR EN LOS EJEMPLOS ------------------
+# MEDIDO el 2026-08-24 contra el host real (192.168.100.183) con `gemma4:12b`, prompt de
+# produccion, 4 sesiones reales de 2 estrellas: `errores` volvio **[] en 4 de 4**, y volvio
+# vacio TAMBIEN con `errores` metido en el `required` del schema -- un array vacio cumple.
+# En la copia son 0 codigos E en 435 filas, cuando historicamente el 31% producia errores.
+#
+# LA CAUSA NO ERA EL SCHEMA. `OllamaClient.chat_json` nivel 1 usa `response_format="json"`
+# GENERICO (el enum de CODIGOS_ERROR solo ata en el fallback, y el bench dio fallback=0), asi
+# que lo unico que pedia los codigos era el prompt. Y el bloque de ejemplos -- 5.263
+# caracteres, la parte mas concreta de todo el prompt -- **no mencionaba `errores` ni una
+# vez**. Se le estaba enseñando a no ponerlo.
+#
+# SE MUESTRAN EN TODOS LOS EJEMPLOS, con `[]` en los limpios. Es la distribucion honesta (la
+# mayoria de las atenciones no tiene falla) y protege de lo contrario: este repo ya pago caro
+# por acusaciones desmedidas, y un few-shot donde el campo SIEMPRE trae codigo enseñaria a
+# inventarlos.
+
+def test_cada_ejemplo_declara_sus_errores_aunque_sea_vacio():
+    for e in EJEMPLOS_MOTIVO:
+        assert isinstance(e.errores, tuple), f"{e.motivo}: errores tiene que ser tupla"
+
+
+def test_los_codigos_de_los_ejemplos_son_del_catalogo_de_ATC():
+    from src.catalogo_atc import CODIGOS_ERROR
+
+    for e in EJEMPLOS_MOTIVO:
+        for codigo in e.errores:
+            assert codigo in CODIGOS_ERROR, (
+                f"{codigo!r} no esta en el catalogo del manual: el modelo copiaria un "
+                f"codigo que el front no sabe traducir")
+
+
+def test_hay_al_menos_dos_ejemplos_CON_codigo_y_varios_sin():
+    """Con uno solo el campo se ve como una rareza; con todos, se ensena a inventar."""
+    con = [e for e in EJEMPLOS_MOTIVO if e.errores]
+    sin = [e for e in EJEMPLOS_MOTIVO if not e.errores]
+    assert len(con) >= 2, "el modelo necesita ver el campo USADO mas de una vez"
+    assert len(sin) >= 2, "y tambien vacio, o aprende a poner codigo siempre"
+
+
+def test_el_ejemplo_que_NO_atendio_lleva_codigo():
+    """Si el ejemplo mas claro de falla sale con `errores: []`, el bloque sigue ensenando
+    que el campo no se usa ni cuando hay algo que reprochar."""
+    no_atendieron = [e for e in EJEMPLOS_MOTIVO
+                     if e.hechos.get("atendio_el_motivo") is False]
+    assert no_atendieron, "hace falta al menos un ejemplo de no-atencion"
+    for e in no_atendieron:
+        assert e.errores, f"el ejemplo {e.transcript[:40]!r} no atendio y no declara error"
+
+
+def test_los_errores_van_ANIDADOS_en_dimensions_no_en_la_raiz():
+    """La trampa de este cambio: los ejemplos se renderizan PLANOS (`motivo` + los 4
+    hechos), asi que meter `errores` ahi le ensenaria al modelo una forma que el schema
+    rechaza -- y el codigo lo lee de `raw["dimensions"]["errores"]` (src/scorer.py)."""
+    bloque = formatear_fewshot()
+    for linea in [x for x in bloque.splitlines() if x.startswith("-> ")]:
+        salida = json.loads(linea[3:])
+        assert "errores" not in salida, (
+            f"`errores` quedo en la raiz del ejemplo: {linea[:90]}")
+        assert "dimensions" in salida, "el ejemplo tiene que mostrar el objeto dimensions"
+        assert "errores" in salida["dimensions"]
+
+
+def test_el_bloque_formateado_muestra_codigos_E_de_verdad():
+    bloque = formatear_fewshot()
+    assert re.search(r"E\d\d", bloque), (
+        "el bloque de ejemplos no tiene un solo codigo E: es exactamente el estado que "
+        "dejaba `errores` vacio en 435 de 435 filas")
+
+
+def test_la_forma_del_json_no_ofrece_el_vacio_como_salida_facil():
+    """La linea del shape decia `["<codigos E01-E12, o vacio>"]`. Lo ultimo que el modelo
+    leia era la invitacion al vacio. El vacio sigue siendo VALIDO -- pero como excepcion."""
+    from src.prompts import _MOTIVO_JSON_SHAPE
+
+    assert "E01-E12" in _MOTIVO_JSON_SHAPE
+    assert "o vacio" not in _MOTIVO_JSON_SHAPE

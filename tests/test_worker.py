@@ -280,9 +280,11 @@ def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
         scoring_accounts=("sistemas",), scoring_batch_size=20, scoring_poll_seconds=1,
         ollama_num_ctx=16384, ollama_num_predict=768, llm_fast_attempts=2,
     )
-    worker.run_worker_loop(cfg, should_stop=lambda: True)
+    # Una sola vuelta del loop: alcanza para ver que intento el lock y no scoreo.
+    vueltas = iter([False, True])
+    worker.run_worker_loop(cfg, should_stop=lambda: next(vueltas, True))
 
-    assert called["batch"] == 0        # no scoreó: se retiró por el lock
+    assert called["batch"] == 0        # no scoreó: el lock lo tiene otro
     assert len(connects) == 1          # solo la conexión del lock, no llegó a migración/refresh
 
 
@@ -706,3 +708,197 @@ def test_la_NOTA_le_gana_a_la_asignacion(monkeypatch):
     sess["user_id"] = "abc"
     score_session_and_store(conn, sess, llm=None, op_map={"abc": "Michelle"})
     assert _params_of_upsert(conn)["user_name"] == "Anya Alexandra"
+
+
+# --- UN GRUPO DE WHATSAPP NO SE CALIFICA -------------------------------------------
+# El gate vive en src/router.decide_eligibility, pero sin el dato no protege nada: la
+# marca `tickets.is_group` tiene que VIAJAR desde la BD hasta la llamada. Es la misma
+# leccion que `ack` y `created_at` en tests/test_context.py -- si la columna no viene, la
+# señal se degrada en silencio y ningun test de la capa pura lo ve.
+# Medido en la copia del 2026-08-24: 4 de las 6 filas con 1 estrella eran grupos.
+
+def test_el_sql_de_pendientes_trae_la_marca_de_grupo():
+    cur = _FakeCursor([], description=[])
+    fetch_pending_sessions(cur, "datos", 30)
+    query, _ = cur.executed[0]
+    assert "is_group" in query, "sin is_group en el SELECT el gate de grupos nunca dispara"
+    assert "tickets" in query, "is_group vive en tickets: falta el JOIN"
+    # LEFT JOIN a proposito: la mitad de las sesiones pendientes no tiene fila en
+    # `tickets` (70.880 de 139.708 medidas), y un JOIN duro las borraria del padron.
+    assert "LEFT JOIN tickets" in query
+
+
+def test_una_sesion_de_grupo_se_saltea_sin_llamar_al_llm(monkeypatch):
+    """El caso real: spam entrante de tipsters, el operador lo cerro sin contestar."""
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: [
+        {"created_at": _T0, "from_me": False, "is_note": False,
+         "body": "*RETO ESCALERA VERDE, 13.500 pesos ganados EN SOLO 3 apuestas*",
+         "sent_from": None, "user_id": None, "media_type": None},
+    ])
+
+    def boom(**kw):
+        raise AssertionError("no debe correr el LLM en un grupo")
+
+    monkeypatch.setattr(worker, "score_by_motivo", boom)
+    conn = _CtxConn()
+    row = _session_row()
+    row["is_group"] = True
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, row, llm=None, op_map={})
+    assert (eval_status, skip_reason) == ("skipped", "grupo_de_whatsapp")
+    assert score is None, "un grupo no lleva nota: no hay UN cliente al que atender"
+
+
+def test_la_misma_sesion_sin_la_marca_sigue_llevando_su_estrella(monkeypatch):
+    """El cambio NO tapa la falla real: solo deja de cobrarsela a quien atendio un grupo."""
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: [
+        {"created_at": _T0, "from_me": False, "is_note": False,
+         "body": "me ayudas con una recarga?", "sent_from": None,
+         "user_id": None, "media_type": None},
+    ])
+    conn = _CtxConn()
+    row = _session_row()
+    row["is_group"] = False
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, row, llm=None, op_map={})
+    assert (eval_status, skip_reason) == ("evaluated", None)
+    assert score is not None and score.stars == 1
+
+
+# --- EL WORKER TIENE QUE PODER VERSE EN LOS LOGS ---------------------------------------
+# EL SINTOMA REAL (2026-08-24): el negocio dejo el scoring corriendo todo el fin de semana,
+# volvio con ~500 filas y en los logs del contenedor **no habia una sola linea `[worker]`**:
+# solo el access log de uvicorn. Sin eso no hay forma de saber si el worker esta trabajando,
+# fallando en cada sesion, o muerto -- y las tres cosas se ven igual desde afuera, porque el
+# worker corre como THREAD DAEMON dentro del mismo proceso que la API (src/app.py:110): la web
+# sigue contestando 200 aunque el thread se haya detenido.
+#
+# LA CAUSA: `emit` usaba `print` pelado. El stdout de un contenedor NO es un TTY, asi que
+# Python lo deja block-buffered y las lineas se quedan en un buffer de 4-8 KB sin salir nunca.
+# uvicorn no sufre esto porque escribe por `logging`. El pre-flight `check_model()` -- el que
+# avisa si el modelo configurado no existe en Ollama -- caia en el mismo pozo: el aviso mas
+# importante del arranque era el mas invisible.
+
+class _StreamQueRegistraFlush:
+    def __init__(self):
+        self.escrito, self.flushes = [], 0
+
+    def write(self, s):
+        self.escrito.append(s)
+        return len(s)
+
+    def flush(self):
+        self.flushes += 1
+
+
+def test_el_log_del_worker_hace_flush(monkeypatch):
+    stream = _StreamQueRegistraFlush()
+    monkeypatch.setattr("sys.stdout", stream)
+    worker._emit_stdout("[worker] hola")
+    assert "".join(stream.escrito).strip() == "[worker] hola"
+    assert stream.flushes >= 1, (
+        "sin flush la linea queda en el buffer del contenedor y el operador no ve nada")
+
+
+def test_el_loop_usa_ese_log_por_defecto():
+    """Si el default vuelve a ser `print` pelado, el worker se vuelve invisible otra vez."""
+    import inspect
+
+    firma = inspect.signature(worker.run_worker_loop)
+    assert firma.parameters["log"].default is worker._emit_stdout
+
+
+# --- EL LOCK TIENE QUE REINTENTARSE, NO RENDIRSE --------------------------------------
+# LO QUE PASO DE VERDAD (logs de produccion del 2026-08-21):
+#   19:26:04 [worker] lock de scoring adquirido (instancia única)
+#   ... 4 ciclos sanos, err=0 en todos, preflight ok con gemma4:12b ...
+#   21:58:45 Started server process [1]          <- el contenedor REINICIO
+#   21:58:45 [worker] otra instancia ya tiene el lock de scoring; esta instancia NO scorea
+# El advisory lock sigue atado a la SESION de Postgres de la instancia vieja, y si el proceso
+# muere de golpe esa conexion puede tardar en que el servidor la reape (keepalives de TCP).
+# La instancia nueva lo intento UNA vez, escribio esa linea y `return` -> el thread murio.
+# Resultado: la web sirviendo 200 todo el fin de semana y CERO filas nuevas. Tres dias
+# perdidos por un reintento que no existia.
+
+def _cfg_de_prueba():
+    import types
+    return types.SimpleNamespace(
+        database_url="postgresql://x", ollama_url="http://x", ollama_model="qwen",
+        ollama_token="", recom_subagent_enabled=False,
+        scoring_accounts=("sistemas",), scoring_batch_size=20, scoring_poll_seconds=1,
+        ollama_num_ctx=16384, ollama_num_predict=768, llm_fast_attempts=2,
+    )
+
+
+def _fake_llm(monkeypatch):
+    class _FakeLLM:
+        def __init__(self, *a, **k):
+            self.model = "qwen"
+            self.calls = {"fast": 0, "fallback": 0, "empty": 0}
+
+        def check_model(self):
+            return (True, "ok")
+
+    monkeypatch.setattr(worker, "OllamaClient", _FakeLLM)
+
+
+def test_el_worker_REINTENTA_el_lock_en_vez_de_retirarse(monkeypatch):
+    """Sin esto, un reinicio con el lock viejo todavía colgado cuesta todo hasta que alguien
+    lo note a mano."""
+    import types
+
+    import psycopg
+
+    intentos = {"n": 0}
+
+    class _LockConn:
+        autocommit = False
+
+        def execute(self, *a, **k):
+            intentos["n"] += 1
+            return types.SimpleNamespace(fetchone=lambda: [False])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _LockConn())
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    _fake_llm(monkeypatch)
+
+    vueltas = iter([False, False, False, True])
+    worker.run_worker_loop(_cfg_de_prueba(), should_stop=lambda: next(vueltas, True))
+    assert intentos["n"] >= 2, (
+        f"solo intento el lock {intentos['n']} vez/veces: se rindio en vez de reintentar")
+
+
+def test_cuando_el_lock_SE_LIBERA_el_worker_arranca_solo(monkeypatch):
+    """Es el punto del reintento: que la instancia nueva se recupere sin que nadie reinicie
+    nada cuando la sesion zombi de Postgres por fin se cae."""
+    import types
+
+    import psycopg
+
+    respuestas = iter([False, True])
+
+    class _LockConn:
+        autocommit = False
+
+        def execute(self, *a, **k):
+            return types.SimpleNamespace(fetchone=lambda: [next(respuestas, True)])
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _LockConn())
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    _fake_llm(monkeypatch)
+    lineas = []
+    # `_dormir` tambien consulta `should_stop` en cada tramo de 1s, asi que la cuenta no es
+    # "una vuelta = una consulta": se le da margen y se corta cuando ya tomo el lock.
+    def should_stop():
+        return any("adquirido" in x for x in lineas)
+
+    worker.run_worker_loop(_cfg_de_prueba(), should_stop=should_stop, log=lineas.append)
+    texto = "\n".join(lineas)
+    assert "lock de scoring adquirido" in texto, (
+        f"nunca tomo el lock aunque se libero:\n{texto}")

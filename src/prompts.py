@@ -345,7 +345,7 @@ _MOTIVO_JSON_SHAPE = (
     "forma EXACTA (los 4 HECHOS son booleanos; NO incluyas rating_label, lo calcula el sistema):\n"
     '{"motivo": "<uno de: ' + "|".join(MOTIVOS_DEL_LLM) + '">, '
     '"dimensions": {"resolucion": "<nota 1 frase>", "iniciativa": "<nota 1 frase>", '
-    '"cortesia": "<nota 1 frase>", "errores": ["<codigos E01-E12, o vacio>"]}, '
+    '"cortesia": "<nota 1 frase>", "errores": ["<codigos E01-E12 de la lista; [] SOLO si no hubo ninguna falla>"]}, '
     '"atendio_el_motivo": <true|false>, '
     '"hizo_accion_extra": <true|false>, '
     '"cortesia_destacada": <true|false>, '

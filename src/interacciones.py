@@ -29,6 +29,27 @@ puede verificar mirando el chat -- que es exactamente lo que paso con el caso de
 from __future__ import annotations
 
 import re
+from datetime import timedelta
+
+# SEIS HORAS DE SILENCIO CIERRAN LA INTERACCION, aunque el CRM nunca la haya cerrado.
+# Decision del negocio (2026-08-24): "que el tiempo sea solo de 6 horas por si alguien
+# escribio una respuesta, y de ahi que todo se agarren como interacciones diferentes,
+# porque cada interaccion tiene un operador a calificar".
+#
+# POR QUE HACIA FALTA. El corte por `*resuelto*` es del OBJETO y es el correcto, pero no
+# tiene piso: si el operador nunca cierra, todo el transcript es UNA interaccion sin tope de
+# ninguna clase. Y `assign_sessions` no lo salva -- su SPAN_CAP de 12h corta entre EPISODIOS
+# (filas de `conversations`), asi que en una sesion de un solo episodio no hay frontera donde
+# aplicarlo. MEDIDO en la copia del 2026-08-24 sobre 1.431 sesiones cerradas en 4 dias:
+# el 10,3% arrastra un stream de MAS DE SIETE DIAS (maximo 6.765 h = 282 dias), y 164 de esas
+# 170 tienen un solo episodio. Ahi nacian las filas que declaran "33 interacciones · 10
+# operadores" al lado de una nota que juzgo tres minutos de UNA persona.
+#
+# LAS 6 HORAS SON LA GRACIA DE LA RESPUESTA TARDIA, no un tope arbitrario: dentro de la
+# ventana el mensaje todavia pertenece a la interaccion que lo motivo, asi que partir no
+# puede fabricar un "nadie le contesto". Pasada la ventana, empieza otra atencion con su
+# propio operador a calificar.
+SILENCIO_MAX = timedelta(hours=6)
 
 # La nota que el CRM escribe cuando el operador CIERRA. Es la frontera.
 _CIERRE_RE = re.compile(r"\*resuelto\*", re.IGNORECASE)
@@ -80,6 +101,62 @@ def _cierre_rebotado(ordenados: list[dict], i: int) -> bool:
     return False
 
 
+def _hubo_negocio(interaccion: list[dict]) -> bool:
+    """Alguien del negocio le escribio AL CLIENTE dentro del fragmento.
+
+    LA NOTA DEL CRM NO CUENTA: es `from_me` pero no es un mensaje al cliente. Si contara,
+    un fragmento cerrado con `*resuelto*` pareceria respondido y no se pegaria con el que SI
+    tiene la respuesta -- o sea, la estrella falsa se fabricaria igual.
+
+    ES EL MISMO PREDICADO que `sin_respuesta.hubo_respuesta_del_negocio` y esta escrito dos
+    veces a proposito: este modulo es de base (lo importan deposito, retiro, agilidad,
+    registro, metrics, worker y queries) e importar `sin_respuesta` arrastraria `scorer`
+    hasta aca. Que no se separen lo fija
+    tests/test_continuidad_entre_fragmentos.py::test_la_regla_de_respuesta_del_negocio_es_LA_MISMA_que_la_de_sin_respuesta.
+    """
+    return any(m.get("from_me") and not m.get("is_note") for m in interaccion)
+
+
+def _empieza_el_negocio(interaccion: list[dict]) -> bool:
+    """El PRIMER mensaje real del fragmento es del negocio -> esta contestando."""
+    for m in interaccion:
+        if not m.get("is_note"):
+            return bool(m.get("from_me"))
+    return False
+
+
+def _pegar_continuaciones(partes: list[list[dict]]) -> list[list[dict]]:
+    """Un fragmento sin respuesta del negocio se pega al siguiente si ahi arranca el negocio.
+
+    POR QUE. La frontera del CRM cae a veces ENTRE lo que el cliente dijo y la respuesta del
+    operador: cierra despues del comprobante y acredita diez minutos mas tarde, o contesta
+    pasadas las 6 horas. Las dos mitades son la MISMA atencion, y calificarlas por separado
+    produce dos filas falsas: una que acusa de no responder a quien respondio, y otra sin
+    cliente. MEDIDO sobre 1.200 sesiones multi-episodio de la copia: de 3.404 interacciones,
+    806 (23,68%) no tenian negocio adentro y **254 tenian la acreditacion en el vecino**.
+
+    ES LA GENERALIZACION DE `GRACIA_CIERRE_SEG`, que ya pegaba hacia adelante el comprobante
+    adjuntado en el mismo gesto (dentro de 120s). Aca la evidencia viaja al reves y sin tope
+    de tiempo: lo que decide no es el reloj sino QUIEN habla primero del otro lado.
+
+    UN SOLO SALTO. Si el fragmento siguiente arranca con el CLIENTE, el cliente volvio -- esa
+    es una visita nueva por definicion del negocio y la anterior si quedo sin responder. La
+    falla real se conserva entera; encadenar hacia atras reconstruiria el stream sin tope que
+    SILENCIO_MAX vino a matar.
+
+    Se recorre de atras hacia adelante para que el fragmento ya pegado sea el que el anterior
+    mira: asi una cadena no se colapsa sola, porque en cuanto se pega uno el resultado deja
+    de empezar con el negocio.
+    """
+    out: list[list[dict]] = []
+    for frag in reversed(partes):
+        if out and not _hubo_negocio(frag) and _empieza_el_negocio(out[0]):
+            out[0] = frag + out[0]
+        else:
+            out.insert(0, frag)
+    return out
+
+
 def partir_en_interacciones(messages: list[dict]) -> list[list[dict]]:
     """Parte el transcript en INTERACCIONES, cortando despues de cada nota de cierre.
 
@@ -95,6 +172,11 @@ def partir_en_interacciones(messages: list[dict]) -> list[list[dict]]:
     out: list[list[dict]] = []
     actual: list[dict] = []
     cierre_at = None  # cierre visto, esperando a ver si el operador todavia adjunta algo
+    # EL SILENCIO SE MIDE ENTRE MENSAJES REALES, y las notas no lo tocan: el ETL las archiva
+    # en momentos que no describen la atencion. Es la misma leccion que `_fin_de_actividad`
+    # en src/sessions.py, donde una nota corrida al futuro mergeaba dos interacciones
+    # genuinamente separadas. Una nota no abre la ventana ni la mantiene viva.
+    ultimo_real_at = None
     for i, m in enumerate(ordenados):
         if cierre_at is not None:
             if (m.get("from_me") and not m.get("is_note")
@@ -104,12 +186,25 @@ def partir_en_interacciones(messages: list[dict]) -> list[list[dict]]:
             out.append(actual)     # habla el cliente, o se paso la gracia: corte real
             actual = []
             cierre_at = None
+            ultimo_real_at = None
+        es_real = not m.get("is_note")
+        if (es_real and ultimo_real_at is not None
+                and m["created_at"] - ultimo_real_at > SILENCIO_MAX):
+            # Nadie hablo en 6 horas: la atencion anterior termino, empieza otra.
+            out.append(actual)
+            actual = []
+            ultimo_real_at = None
         actual.append(m)
+        if es_real:
+            ultimo_real_at = m["created_at"]
         if es_cierre(m) and not _cierre_rebotado(ordenados, i):
             cierre_at = m["created_at"]
     if actual:
         out.append(actual)
-    return [i for i in out if any(not m.get("is_note") for m in i)]
+    reales = [i for i in out if any(not m.get("is_note") for m in i)]
+    # El pegado va DESPUES del filtro: un fragmento de puras notas no es una atencion y no
+    # puede quedar en el medio decidiendo si dos mitades se juntan.
+    return _pegar_continuaciones(reales)
 
 
 def tiempos_de(interaccion: list[dict]) -> tuple:

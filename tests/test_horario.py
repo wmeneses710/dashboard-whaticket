@@ -77,3 +77,70 @@ def test_tolera_UTC_y_convierte():
 def test_sin_fecha_devuelve_None():
     assert espera_efectiva(None, _ec(7, 10, 0)) is None
     assert espera_efectiva(_ec(7, 10, 0), None) is None
+
+
+# --- LA MEDICION SE COMPARA A LA PRECISION DEL OBJETIVO --------------------------------
+# EL DAÑO, MEDIDO en la copia del 2026-08-24 sobre las 380 filas deterministas: dos
+# operadores perdieron DOS ESTRELLAS por 365 y 312 milisegundos.
+#   17e15c5c (Christian): espera 60,365 s contra AGIL de 60 s -> `60,365 > 60` -> 3 estrellas.
+#   Tenia `acredito=true` y `pregunto_algo_mas=true`: por contrato es 5.
+# Y la fila no se podia verificar: `src/deposito.py` persiste `int(60,365) = 60`, asi que el
+# tablero mostraba "60 s" al lado de un texto que decia "tardó 1 minuto... el objetivo es 1
+# minuto" y le bajaba dos estrellas. La frase se contradecia sola.
+#
+# LA CAUSA es un choque de precisiones: el manual fija los objetivos en MINUTOS ENTEROS y el
+# codigo los comparaba contra timestamps de WhatsApp con MILISEGUNDOS. Medir en milisegundos
+# una vara escrita en minutos no es rigor, es medir ruido.
+#
+# SE ARREGLA ACA y no en cada rubrica: `espera_efectiva` es el punto unico por donde pasan las
+# siete (promo, agilidad, soporte, retiro, info, deposito, registro). Redondeando aca, el
+# numero que se COMPARA, el que se PERSISTE y el que se ESCRIBE en el texto son el mismo.
+# NO BAJA LA VARA: solo alcanza a lo que estaba a menos de medio segundo del umbral. Medido:
+# 2 filas de 380 (0,5%). Una tolerancia de 30 s habria movido el 12%, y eso si seria otra vara.
+
+def test_la_espera_se_redondea_a_segundos_enteros():
+    from datetime import datetime, timedelta, timezone
+
+    from src.horario import espera_efectiva
+
+    # Un martes 10:00 en horario de atencion, para que el recorte no interfiera.
+    desde = datetime(2026, 8, 25, 15, 0, tzinfo=timezone.utc)
+    for extra, esperado in ((0.365, 60), (0.312, 60), (0.6, 61), (0.0, 60)):
+        td = espera_efectiva(desde, desde + timedelta(seconds=60 + extra))
+        assert td.total_seconds() == float(esperado), (
+            f"60+{extra}s deberia medir {esperado}s y midio {td.total_seconds()}")
+        assert td.microseconds == 0, "quedaron microsegundos en la medicion"
+
+
+def test_el_caso_real_deja_de_exceder_el_objetivo():
+    """`60,365 > 60` era True y costaba dos estrellas; a la precision del objetivo, no excede."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.horario import espera_efectiva
+
+    desde = datetime(2026, 8, 25, 15, 0, tzinfo=timezone.utc)
+    medida = espera_efectiva(desde, desde + timedelta(seconds=60.365))
+    assert not (medida > timedelta(minutes=1)), "sigue excediendo el objetivo por milisegundos"
+
+
+def test_medio_segundo_de_mas_SI_excede():
+    """El redondeo no puede volverse una tolerancia: mas de medio segundo sigue siendo tarde."""
+    from datetime import datetime, timedelta, timezone
+
+    from src.horario import espera_efectiva
+
+    desde = datetime(2026, 8, 25, 15, 0, tzinfo=timezone.utc)
+    medida = espera_efectiva(desde, desde + timedelta(seconds=60.9))
+    assert medida > timedelta(minutes=1)
+
+
+def test_las_puntas_faltantes_y_el_cero_no_cambian():
+    from datetime import datetime, timedelta, timezone
+
+    from src.horario import espera_efectiva
+
+    d = datetime(2026, 8, 25, 15, 0, tzinfo=timezone.utc)
+    assert espera_efectiva(None, d) is None
+    assert espera_efectiva(d, None) is None
+    assert espera_efectiva(d, d) == timedelta(0)
+    assert espera_efectiva(d, d - timedelta(seconds=5)) == timedelta(0)

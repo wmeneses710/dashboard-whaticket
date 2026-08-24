@@ -335,3 +335,40 @@ def test_el_html_del_tablero_no_se_cachea():
     r = client.get("/")
     assert r.status_code == 200
     assert "no-cache" in r.headers.get("cache-control", ""), r.headers.get("cache-control")
+
+
+# --- LA API AUTODOCUMENTADA EN UN DOMINIO PUBLICO -------------------------------------
+# El tablero vive en un dominio abierto (https://whaticket-dashboard.zgames.store/) y los
+# logs del 2026-08-24 muestran escaneo automatico real: /wp-login.php, /.env, /.git/config,
+# /api/v1/settings. Todos dieron 404 porque no hay static root que los alcance.
+# PERO FastAPI publica /docs, /redoc y /openapi.json por defecto, y las LECTURAS de esta API
+# son anonimas. `/openapi.json` le entrega a cualquiera el mapa completo de que pedir, y
+# `/api/tickets` y `/api/conversation/{cid}` devuelven `customer_name`, `customer_number` y el
+# transcript entero. No hace falta adivinar nada.
+# Se apagan por DEFECTO y se prenden con una variable, no al reves: el default tiene que ser
+# el seguro. `/docs` sigue disponible en local poniendo API_DOCS=true.
+
+def test_los_docs_de_la_api_estan_apagados_por_defecto():
+    from src.app import app
+
+    rutas = {r.path for r in app.routes}
+    for ruta in ("/docs", "/redoc", "/openapi.json"):
+        assert ruta not in rutas, (
+            f"{ruta} publica el mapa de la API en un dominio abierto con lecturas anonimas")
+
+
+def test_se_pueden_reactivar_con_una_variable(monkeypatch):
+    """En local hacen falta. Lo que no puede pasar es que el default los deje prendidos."""
+    from src.config import load_config
+
+    monkeypatch.setenv("API_DOCS", "true")
+    assert load_config().api_docs is True
+    monkeypatch.setenv("API_DOCS", "false")
+    assert load_config().api_docs is False
+
+
+def test_el_default_de_api_docs_es_false(monkeypatch):
+    from src.config import load_config
+
+    monkeypatch.delenv("API_DOCS", raising=False)
+    assert load_config().api_docs is False

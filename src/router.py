@@ -34,15 +34,24 @@ def decide_eligibility(
     business_message_count: int,
     customer_text_count: int | None = None,
     operator_resolved: bool = False,
+    es_grupo: bool | None = False,
 ) -> tuple[str, str | None]:
     """Devuelve (eval_status, skip_reason).
 
     `business_message_count` = mensajes del negocio (humano + bot, from_me).
     `customer_text_count` = mensajes del cliente con TEXTO legible (opcional por
     compatibilidad). `operator_resolved` = senal determinista de que el operador atendio
-    (confirmo la transaccion o mando el comprobante; ver src/signals.py). Orden: sin
+    (confirmo la transaccion o mando el comprobante; ver src/signals.py).
+    `es_grupo` = `tickets.is_group`, la marca que trae WhatsApp. Orden: GRUPO -> sin
     contenido real -> sin cliente -> cliente solo media (y operador NO resolvio) ->
     sin respuesta del negocio -> tamaño anomalo -> evaluable.
+
+    UN GRUPO NO ES UNA ATENCION, y va PRIMERO porque no es una cuestion de contenido sino
+    de unidad de analisis: las rubricas preguntan si SE LE acredito / SE LE respondio a UN
+    cliente, y en un grupo no hay uno. Entro el 2026-08-24 tras medir el daño en la copia:
+    de las 6 filas con 1 estrella que el worker alcanzo a escribir, **4 eran grupos** --
+    spam de tipsters que el operador cerro sin contestar, que es lo correcto. La marca
+    separa las 6 sin un error. Ver tests/test_grupo_de_whatsapp.py.
 
     Sin respuesta del negocio no hay accion que evaluar (p. ej. una visita con
     solo un "Gracias" del cliente). Si el cliente SOLO mando imagenes/audio
@@ -52,6 +61,8 @@ def decide_eligibility(
     inferible del operador y NO se debe saltear (la auditoria mostro que este skip
     tiraba a la basura el motivo de mayor volumen).
     """
+    if es_grupo:
+        return "skipped", "grupo_de_whatsapp"
     if real_message_count == 0:
         return "skipped", "internal_notes_only"
     if customer_message_count == 0:

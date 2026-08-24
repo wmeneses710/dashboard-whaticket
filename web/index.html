@@ -464,6 +464,17 @@
     <b>Jugadores</b> para verlas.
   </div>
 
+  <!-- DE QUE ESTA HECHO EL NUMERO QUE ESTOY MIRANDO. Sale de /api/ambientes, que existia
+       desde antes y el front no llamaba: su docstring dice "es la respuesta a 'no se sabe de
+       que son que'". El switch de ambiente dice el NOMBRE del recorte; esto dice su
+       CONTENIDO, que es lo que no habia forma de saber sin abrir la base. -->
+  <div class="no-aplica" v-if="composicionActual.length" style="opacity:.85"
+       :title="'Las colas que componen este ambiente en esta cuenta, con su volumen de conversaciones. El switch de arriba elige el recorte; esto dice qué hay adentro.'">
+    ⓘ <b>{{ ambienteLbl }}</b> son
+    <span v-for="(c,i) in composicionActual" :key="c.cola">{{ i? ' · ' : '' }}<b>{{ c.cola }}</b>
+      <span class="num" style="opacity:.7">{{ fmtN(c.conversaciones) }}</span></span>
+  </div>
+
   <div class="snapshot" v-html="snapText"></div>
 
   <div class="filters">
@@ -639,6 +650,20 @@
           <div v-if="skipTotal" class="cobertura"
                :title="'Suma exactamente el KPI de sin evaluar. Una sesión salteada queda registrada para explicar la cobertura, pero no ensucia el promedio.'">
             <b>{{ fmtN(skipTotal) }}</b> sesiones sin evaluar, repartidas en {{ skipStats.length }} {{ skipStats.length===1?'causa':'causas' }}
+          </div>
+          <!-- LO QUE ANTES ERA UN SKIP Y HOY LLEVA NOTA. Va en un bloque APARTE y no como
+               renglón de la tarjeta a propósito: estas sesiones SÍ se evalúan, así que
+               sumarlas arriba rompería el cierre contra el KPI de sin evaluar, que es lo
+               único que avisa si el desglose se desincroniza.
+               Existe porque estas dos situaciones se volvieron invisibles en el agregado el
+               2026-08-21: dejaron de aparecer en "sin evaluar" y no aparecieron en ningún
+               otro lado. El chip por fila estaba; el número no. -->
+          <div v-if="situacionStats.length" class="cobertura"
+               :title="'Situaciones que hasta el 2026-08-21 se salteaban y hoy se califican. Ya entran en el ★ promedio, así que NO están en el total de arriba: se listan acá para que el fenómeno siga teniendo un número.'">
+            <div v-for="s in situacionStats" :key="s.situacion" style="margin:2px 0">
+              {{ SITUACION_LABEL[s.situacion]||s.situacion }}: <b>{{ fmtN(s.n) }}</b>
+              <span style="color:var(--faint)">· {{ s.estrellas }}★ promedio<span v-if="s.jugador"> · {{ fmtN(s.jugador) }} de canal jugador</span></span>
+            </div>
           </div>
         </div>
       </div>
@@ -1227,8 +1252,14 @@ const DESENLACE_TIP = {
   no_le_llego: "El pedido NO se entregó (número dado de baja, bloqueo, o falla de envío). No es del operador ni del cliente: revisar el número o la conexión.",
   dijo_no: "El cliente SÍ contestó, y contestó que no. No es un abandono: es un lead perdido y no hay nada que corregirle al operador.",
 };
-const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada", redireccion:"derivada a otra línea nuestra" };
+const SKIP_LABEL = { no_customer_reply:"sin respuesta del cliente", no_agent_reply:"sin respuesta del negocio", internal_notes_only:"solo notas internas", anomalous_size:"tamaño anómalo", customer_media_only:"solo multimedia", sin_motivo:"el cliente no planteó nada", redireccion:"derivada a otra línea nuestra", grupo_de_whatsapp:"grupo: no hay un cliente a quien atender" };
 const ATENCION_LABEL = { empujo:"empujó", pasivo:"pasivo", no_respondio:"no respondió" };
+// LAS DOS SITUACIONES QUE DEJARON DE SER SKIP el 2026-08-21 y pasaron a llevar nota.
+// El chip por fila ya existía (`dimSituacion`); lo que faltaba era el AGREGADO, que se
+// murió en silencio porque la tarjeta buscaba un `skip_reason` que el código dejó de
+// emitir. Viajan en `dimensions`, no en `skip_reason`: el CHECK de la tabla borra la
+// causa en las filas evaluadas (ver src/sin_respuesta.py y src/solo_cortesia.py).
+const SITUACION_LABEL = { sin_respuesta_del_negocio:"nadie le respondió al cliente", solo_cortesia:"el cliente no planteó nada" };
 // `redireccion` entro el 2026-08-20: era un SKIP y paso a ser motivo con rubrica propia.
 // `sin_motivo` se conserva porque las filas ya scoreadas lo traen como causa de skip; desde
 // el 2026-08-21 esas sesiones se EVALUAN (estandar de cierre) y dejan de producir la etiqueta.
@@ -1298,6 +1329,7 @@ createApp({
     const account = ref(null);
     const filters = reactive({ ...FILTER_DEFAULTS });
     const options = reactive({ segments:[], channels:[], operators:[] });
+    const ambientes = reactive({});
     const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]}, quality_motivo:{months:[],motivos:[]} });
     const conversion = reactive({ by_operator:{operators:[],total_potential:0,total_converted:0,pct:0,total_returned:0,ret_pct:0}, by_month:{months:[],potential:[],converted:[],pct:[],returned:[],ret_pct:[]}, evolution:{months:[],operators:[]} });
     const tickets = reactive({ cards:[], total:0, page:1, pages:1 });
@@ -1314,6 +1346,12 @@ createApp({
     const ayudaModal = ref(false);
     // Palabras que cambian con el ambiente. "Cliente" solo aplica a jugadores.
     const contraparte = computed(() => CONTRAPARTE[filters.ambiente] || CONTRAPARTE.todos);
+    // Las colas que componen el ambiente elegido, ordenadas por volumen (las ordena el
+    // backend). Vacío mientras no llegó la respuesta, así el bloque no parpadea.
+    const composicionActual = computed(() => {
+      const a = (ambientes.ambientes || {})[filters.ambiente];
+      return (a && a.colas) || [];
+    });
     const ambienteLbl = computed(() =>
       (AMBIENTES.find(a => a.k === filters.ambiente) || {}).lbl || filters.ambiente);
     // Cuántos mini-gráficos se muestran cuando la tarjeta está PLEGADA.
@@ -1400,6 +1438,15 @@ createApp({
       } catch(e) { if (seq === seqs.tickets && acc === account.value) loadError.value = "No se pudieron cargar los clientes — se muestra lo anterior."; }
       finally { if (seq === seqs.tickets) loadingTickets.value = false; }
     }
+    // QUE COMPONE EL AMBIENTE QUE ESTOY MIRANDO. `/api/ambientes` existía desde antes y el
+    // front no lo llamaba: su docstring dice "es la respuesta a 'no se sabe de qué son qué'".
+    // Se pide UNA vez por cuenta y sin `ambiente`: devuelve los cuatro de una, y el agregado
+    // recorre las conversaciones -- pedirlo en cada cambio de filtro es gasto puro.
+    async function fetchAmbientes() {
+      try { const d = await fetchJSON("/api/ambientes?account=" + encodeURIComponent(account.value));
+             Object.assign(ambientes, d); }
+      catch(e) {}
+    }
     async function fetchOptions() {
       try { const d = await fetchJSON("/api/options?account=" + encodeURIComponent(account.value) + "&ambiente=" + encodeURIComponent(filters.ambiente)); Object.assign(options, d); }
       catch(e) {}
@@ -1437,7 +1484,7 @@ createApp({
       const a = accounts.value.find(x=>x.account===acc); loadedCount = a? a.count : 0;
       // después del reset de filtros, inactivos vuelve a "ocultar" -> esa es la clave
       charts.value = chartsCache[acc + "|" + filters.inactivos]?.data || null;
-      await Promise.all([fetchOptions(), fetchSummary(), fetchTickets(), fetchConversion()]);
+      await Promise.all([fetchOptions(), fetchAmbientes(), fetchSummary(), fetchTickets(), fetchConversion()]);
       loadCharts();
     }
     // Un filtro está ACTIVO si su valor difiere de SU default en FILTER_DEFAULTS. Antes se
@@ -1668,9 +1715,16 @@ createApp({
     const motivoCobertura = computed(() => summary.motivo_cobertura||{});
     const skipStats = computed(() => summary.skip_stats||[]);
     const skipTotal = computed(() => skipStats.value.reduce((a,r) => a+r.n, 0));
-    // Solo `no_agent_reply`: es la unica causa donde "de jugador" significa una falla nuestra.
+    // LAS SITUACIONES QUE ANTES ERAN UN SKIP. Sale de `situacion_stats` y no de `skipStats`:
+    // hasta el 2026-08-21 esto buscaba `skip_reason === 'no_agent_reply'`, y cuando ese skip
+    // se convirtio en nota de 1 estrella el codigo dejo de emitirlo -> la alerta quedo en 0
+    // para siempre sin que nada avisara. Contrato en tests/test_front_html.py.
+    const situacionStats = computed(() => summary.situacion_stats||[]);
+    // Solo `sin_respuesta_del_negocio`: es la unica situacion donde "de jugador" significa
+    // una falla nuestra. `solo_cortesia` es casi todo jugador (14 de 15 medidas) y marcarlo
+    // ahi seria ruido, igual que lo era en `sin_motivo`.
     const jugadorSinRespuesta = computed(() =>
-      (skipStats.value.find(r => r.skip_reason === 'no_agent_reply')||{}).jugador || 0);
+      (situacionStats.value.find(r => r.situacion === 'sin_respuesta_del_negocio')||{}).jugador || 0);
     const opsMotivo = computed(() => { const o = summary.ops_motivo||{}; return { motivos:o.motivos||[], operators:o.operators||[] }; });
     const qualOps = computed(() => (summary.quality_evolution&&summary.quality_evolution.operators)||[]);
     const qualMotivoOps = computed(() => (summary.quality_motivo&&summary.quality_motivo.motivos)||[]);
@@ -2050,7 +2104,7 @@ createApp({
     return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
       loadingSummary, loadingTickets, loadingConversion, loadError, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, qualMotivoCanvases, convMonth, convPasvCanvases,
-      kpiTiles, distRows, depByChannel, operators, motivoStats, motivoCobertura, skipStats, skipTotal, jugadorSinRespuesta, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
+      kpiTiles, distRows, depByChannel, operators, motivoStats, motivoCobertura, skipStats, skipTotal, situacionStats, jugadorSinRespuesta, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
       OPS_CAP, expand, qualShown, convPasvShown, qualMotivoShown, hasPoints,
       convOps, convMaxPct, convByOp, convGlobal,
       SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL, DESENLACE_CHIP, DESENLACE_TIP,
@@ -2063,10 +2117,10 @@ createApp({
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
       dimPractica, dimSituacion,
       fmtDur, dimTiempos, dimConteos, dimHechos,
-      dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores,
+      dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores, SITUACION_LABEL,
       nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,
       ayudaAbierta, ayudaModal, AMBIENTES, setAmbiente, horaEc, bubGap,
-      CONTRAPARTE, contraparte, ambienteLbl, SEGMENT_LABEL,
+      CONTRAPARTE, contraparte, ambienteLbl, composicionActual, SEGMENT_LABEL,
       tagsDeLaSesion };
   }
 }).mount("#app");

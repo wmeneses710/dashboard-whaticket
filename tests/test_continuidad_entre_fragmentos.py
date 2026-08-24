@@ -1,0 +1,151 @@
+"""La respuesta que quedo del otro lado de la frontera se pega a lo que respondio.
+
+EL DAÑO QUE ESTE TEST CIERRA, MEDIDO ANTES DE ESCRIBIRLO. Partir en interacciones es lo que
+el negocio decidio el 2026-08-24 ("cada interaccion tiene un operador a calificar"), pero
+medido sobre 1.200 sesiones multi-episodio de la copia, de 3.404 interacciones resultantes
+**806 (23,68%) no tienen respuesta del negocio adentro** -- y de esas **254 tienen la
+acreditacion en el fragmento VECINO**. Calificar ese fragmento solo le pone 1 estrella a
+quien SI hizo el trabajo. En agosto se estimaron 25 casos y por eso se rechazo partir
+(docs/handoff.md §10); son diez veces mas.
+
+LA REGLA. Un fragmento sin NINGUN mensaje del negocio no es una atencion propia si el
+negocio habla al principio del fragmento siguiente: esas palabras contestan lo que el
+cliente acaba de decir, asi que las dos mitades son la MISMA atencion y el CRM las corto al
+medio. Se pegan.
+
+ES LA GENERALIZACION DE `GRACIA_CIERRE_SEG`, que ya hacia esto mismo hacia adelante con el
+comprobante que el operador adjunta despues de cerrar (42 retiros con 2 estrellas por buscar
+evidencia del otro lado de la frontera). Aca la evidencia viaja al reves: el cliente quedo
+en un fragmento y la respuesta en el que sigue.
+
+POR QUE UN SOLO SALTO Y NO UNA CADENA. Si el fragmento siguiente ARRANCA con el cliente, el
+cliente volvio -- eso es una visita nueva por definicion del negocio, y el fragmento anterior
+si quedo sin responder. Encadenar hacia atras reconstruiria justo el stream sin tope que el
+corte de 6h vino a matar (10,3% de las sesiones pasaban los 7 dias, maximo 282).
+
+EL CASO DEL VECINO ANTERIOR NO ENTRA ACA, y no es un olvido: "el operador acredito, el
+cliente dijo gracias, nadie le contesto" ya tiene su rubrica -- `solo_cortesia`, con el
+estandar de cierre (4 estrellas si cerro bien, 3 si dejo al cliente colgado). De los 806
+fragmentos, 239 son exactamente eso.
+"""
+from datetime import datetime, timedelta, timezone
+
+from src.interacciones import partir_en_interacciones
+
+T0 = datetime(2026, 8, 24, 9, 0, tzinfo=timezone.utc)
+
+
+def _m(minutos, from_me, body="hola", *, is_note=False, media_type=None, user_id=None):
+    return {"created_at": T0 + timedelta(minutes=minutos), "from_me": from_me,
+            "is_note": is_note, "body": body,
+            "sent_from": "OPERATOR" if (from_me and not is_note) else None,
+            "user_id": user_id or ("u1" if from_me else None), "media_type": media_type}
+
+
+def _nota_cierre(minutos, quien="Ana"):
+    return _m(minutos, True, f"{quien} *resuelto* la conversación", is_note=True)
+
+
+# --- el caso de los 254 ---------------------------------------------------------------
+
+def test_el_comprobante_y_su_acreditacion_no_se_parten_por_un_cierre_del_crm():
+    """El CRM cierra DESPUES de que el cliente manda el comprobante y ANTES de que el
+    operador acredite. Sin la regla son dos interacciones: una con 1 estrella para quien
+    acredito, y otra sin cliente."""
+    # La acreditacion llega 9 MINUTOS despues del cierre: fuera de `GRACIA_CIERRE_SEG` (120s),
+    # que es la que ya cubria el comprobante adjuntado en el mismo gesto. Ahi vivian los 254.
+    msgs = [_m(0, False, None, media_type="image"),      # el comprobante
+            _nota_cierre(1),
+            _m(10, True, "listo, ya está tu saldo disponible")]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 1, "el comprobante y su acreditación son la MISMA atención"
+    assert partes[0][0]["media_type"] == "image"
+    assert "saldo" in partes[0][-1]["body"]
+
+
+def test_una_respuesta_tardia_es_UNA_atencion_lenta_no_un_abandono():
+    """Pasadas las 6h el corte dispara, pero el operador SI contesto. La nota honesta es
+    "tardó", no "nadie le respondió": esta es la unica que puede acusar de no responder."""
+    msgs = [_m(0, False, "me ayudas con una recarga?"),
+            _m(60 * 9, True, "perdón la demora, ya te cargo")]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 1
+    assert len(partes[0]) == 2
+
+
+def test_si_el_cliente_es_el_que_vuelve_el_fragmento_SI_quedo_sin_responder():
+    """La falla real se conserva entera: el cliente escribio, nadie contesto, y volvio al
+    otro dia. Eso son dos visitas y la primera quedo sin respuesta."""
+    msgs = [_m(0, False, "hola, están?"),
+            _m(60 * 30, False, "sigo esperando"),
+            _m(60 * 30 + 2, True, "perdón, acá estoy")]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 2
+    assert not any(m.get("from_me") and not m.get("is_note") for m in partes[0]), (
+        "la primera visita tiene que seguir sin respuesta del negocio")
+
+
+def test_no_se_pega_una_cadena_hacia_atras():
+    """Dos visitas del cliente sin respuesta y despues el operador: solo la ULTIMA se pega.
+    Encadenar reconstruiria el stream sin tope."""
+    msgs = [_m(0, False, "primera vez"),
+            _m(60 * 20, False, "segunda vez"),
+            _m(60 * 20 + 1, True, "te contesto esta")]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 2
+    assert partes[0][0]["body"] == "primera vez"
+    assert [m["body"] for m in partes[1]] == ["segunda vez", "te contesto esta"]
+
+
+def test_la_nota_del_crm_no_cuenta_como_respuesta_del_negocio():
+    """Es la trampa central: la nota es `from_me` pero NO es un mensaje al cliente. Si
+    contara, el fragmento parecería respondido y no se pegaría con quien SI contesto. Misma
+    leccion que en src/sin_respuesta.py y en `cliente_tuvo_la_ultima_palabra`."""
+    msgs = [_m(0, False, "mi retiro?"),
+            _nota_cierre(1),
+            _m(60 * 8, True, "ya está pagado")]
+    assert len(partir_en_interacciones(msgs)) == 1
+
+
+def test_dos_atenciones_completas_siguen_siendo_dos():
+    """La regla no puede mergear lo que ya estaba bien: los dos fragmentos tienen negocio
+    adentro, asi que ninguno es una continuacion del otro."""
+    msgs = [_m(0, False, "me cargas 30?"), _m(1, True, "listo", user_id="ana"),
+            _nota_cierre(2, "Ana"),
+            _m(60 * 20, False, "otra recarga"),
+            _m(60 * 20 + 1, True, "hecho", user_id="beto")]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 2
+
+
+def test_un_fragmento_final_sin_respuesta_no_tiene_donde_pegarse():
+    """No hay fragmento siguiente: la falla es real y se queda."""
+    msgs = [_m(0, False, "me cargas 30?"), _m(1, True, "listo"),
+            _nota_cierre(2),
+            _m(60 * 20, False, "hola? alguien?")]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 2
+    assert not any(m.get("from_me") and not m.get("is_note") for m in partes[1])
+
+
+# --- una sola fuente de verdad para "respondio el negocio?" ---------------------------
+
+def test_la_regla_de_respuesta_del_negocio_es_LA_MISMA_que_la_de_sin_respuesta():
+    """`interacciones` no puede importar `sin_respuesta` (arrastraria `scorer` a un modulo
+    de base), asi que el predicado esta escrito dos veces. Este test es lo que impide que
+    se separen: si una empieza a contar las notas y la otra no, el fragmento se pega mal y
+    la estrella se fabrica igual."""
+    from src.interacciones import _hubo_negocio
+    from src.sin_respuesta import hubo_respuesta_del_negocio
+
+    casos = [
+        [],
+        [_m(0, False, "hola")],
+        [_m(0, True, "hola")],
+        [_nota_cierre(0)],
+        [_m(0, False, "hola"), _nota_cierre(1)],
+        [_m(0, False, "hola"), _m(1, True, "decime")],
+        [_m(0, True, None, media_type="image")],
+    ]
+    for c in casos:
+        assert _hubo_negocio(c) == hubo_respuesta_del_negocio(c), c

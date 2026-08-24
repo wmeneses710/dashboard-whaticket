@@ -225,3 +225,87 @@ def test_la_clave_es_rubrica_situacion_y_segmento():
     age = consejo_de("info", "3", segmento="agente")
     assert jug.codigo != age.codigo
     assert jug.texto != age.texto
+
+
+# --- EL AGUJERO DEL CONTRATO GENERICO -------------------------------------------------
+# `test_ninguna_rubrica_migrada_conserva_su_propio_COACHING` esta parametrizado sobre las
+# rubricas QUE YA ESTAN en el catalogo, asi que una rubrica NUEVA con su propio `_COACHING`
+# no lo hace fallar: no esta en `migradas`, no se la mira. Y eso paso -- las dos rubricas
+# que nacieron el 2026-08-21 (`sin_respuesta` y `solo_cortesia`) quedaron afuera, y en la
+# copia del 2026-08-24 sus 21 filas salen con `recomendacion_codigos: []` y
+# `recomendacion_practica` vacia. Justo la de 1 estrella, que es la que ATC va a abrir.
+# Este test mira desde el otro lado: quien EMITE coaching tiene que estar en el catalogo.
+
+def test_ninguna_rubrica_emite_coaching_fuera_del_catalogo():
+    import re as _re
+    from pathlib import Path
+
+    src = Path(__file__).parents[1] / "src"
+    migradas = {c.rubrica for c in CONSEJOS}
+    fuera = []
+    for archivo in sorted(src.glob("*.py")):
+        # Anclado en el inicio de linea: los `_COACHING` que viven en un comentario
+        # (src/soporte.py, src/store.py) documentan historia, no emiten nada.
+        if _re.search(r"^_COACHING\w*\s*=", archivo.read_text(encoding="utf-8"), _re.M):
+            if archivo.stem not in migradas:
+                fuera.append(archivo.stem)
+    assert not fuera, (
+        f"estas rubricas emiten coaching que el catalogo no declara: {fuera}. El tablero "
+        f"muestra el texto sin codigo y no se puede sumar por practica del manual")
+
+
+# --- las dos rubricas del 2026-08-21 --------------------------------------------------
+
+def test_sin_respuesta_emite_el_codigo_y_la_practica_del_catalogo():
+    from src.sin_respuesta import score_sin_respuesta
+
+    consejo = consejo_de("sin_respuesta", "mala")
+    assert consejo is not None, "la peor nota del sistema tiene que llevar consejo con codigo"
+    r = score_sin_respuesta([{"from_me": False, "is_note": False, "body": "hola?",
+                              "sent_from": None, "user_id": None, "media_type": None}])
+    assert r.recomendacion == consejo.texto
+    assert r.recomendacion_codigos == [consejo.codigo]
+    assert r.recomendacion_practica == consejo.practica
+
+
+def test_solo_cortesia_colgado_emite_el_codigo_y_el_cierre_no():
+    from datetime import datetime, timedelta, timezone
+
+    from src.solo_cortesia import score_solo_cortesia
+
+    consejo = consejo_de("solo_cortesia", "aceptable")
+    assert consejo is not None
+    # `created_at` viaja en CADA mensaje real: es el contrato de fetch_session_messages
+    # (tests/test_context.py). Sin el, la fixture representa algo que produccion no produce.
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    colgado = [{"created_at": t0, "from_me": True, "is_note": False,
+                "body": "ya está tu saldo", "sent_from": "1", "user_id": "u1",
+                "media_type": None},
+               {"created_at": t0 + timedelta(minutes=1), "from_me": False,
+                "is_note": False, "body": "gracias!", "sent_from": None,
+                "user_id": None, "media_type": None}]
+    r = score_solo_cortesia(colgado, cierre_at=None)
+    assert r.stars == 3
+    assert r.recomendacion == consejo.texto
+    assert r.recomendacion_codigos == [consejo.codigo]
+    assert r.recomendacion_practica == consejo.practica
+
+
+def test_solo_cortesia_bien_cerrada_no_inventa_consejo():
+    """El 4 estrellas no lleva nada que mejorar, y eso NO es el agujero: es el mismo
+    criterio que `excelente`. Lo que faltaba era el codigo cuando SI hay consejo."""
+    from src.solo_cortesia import score_solo_cortesia
+
+    from datetime import datetime, timedelta, timezone
+
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    bien = [{"created_at": t0, "from_me": False, "is_note": False, "body": "gracias!",
+             "sent_from": None, "user_id": None, "media_type": None},
+            {"created_at": t0 + timedelta(minutes=1), "from_me": True, "is_note": False,
+             "body": "un gusto, a la orden", "sent_from": "1", "user_id": "u1",
+             "media_type": None}]
+    r = score_solo_cortesia(bien, cierre_at=None)
+    assert r.stars == 4
+    assert r.recomendacion == ""
+    assert r.recomendacion_codigos == []
+    assert r.recomendacion_practica == ""

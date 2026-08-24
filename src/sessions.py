@@ -159,12 +159,17 @@ def assign_sessions(episodes: list[dict]) -> list[dict]:
     return result
 
 
-def evaluate_session(messages: list[dict], lineas: dict | None = None):
+def evaluate_session(messages: list[dict], lineas: dict | None = None,
+                     es_grupo: bool | None = False):
     """Stats + rubrica + elegibilidad sobre el transcript MERGEADO de la sesion. PURA.
 
     `lineas`: mapa tail-de-9-digitos -> status de `connections` (ver
     src/redireccion.build_lineas_map), para decidir el skip por `redireccion`. Sin el
     mapa NO se skipea nada por traspaso: falla del lado seguro.
+
+    `es_grupo`: `tickets.is_group`. Un grupo de WhatsApp no es una atencion uno-a-uno y no
+    se califica (ver src/router.decide_eligibility y tests/test_grupo_de_whatsapp.py). El
+    default es False por la misma razon que `lineas`: sin el dato no se saltea nada.
 
     Espeja los pasos deterministas del scorer por conversacion (src/worker.py
     score_and_store) pero a grano SESION: recibe TODOS los mensajes de todos los
@@ -189,6 +194,7 @@ def evaluate_session(messages: list[dict], lineas: dict | None = None):
         business_message_count=stats.operator_message_count + stats.bot_message_count,
         customer_text_count=stats.contact_text_message_count,
         operator_resolved=operator_resolved(messages),
+        es_grupo=es_grupo,
     )
     # `sin motivo`: el cliente nunca planteo nada (todo lo suyo es saludo o acuse).
     # Va DESPUES de decide_eligibility a proposito, por dos razones: necesita los

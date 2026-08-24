@@ -312,8 +312,30 @@ _INFO_AGENTE: tuple[Consejo, ...] = (
             practica="B12", segmento="agente"),
 )
 
+# --- LAS DOS RUBRICAS DEL 2026-08-21 --------------------------------------------------
+# Nacieron con el catalogo ya cerrado y quedaron afuera: sus 21 filas en la copia del
+# 2026-08-24 salen con `recomendacion_codigos: []`, y una de ellas es la nota de 1 estrella
+# -- la fila que ATC va a abrir primero. Entran con el texto VERBATIM que ya emitian: la
+# migracion no cambia una sola nota, le pone codigo y practica a lo que ya se decia.
+_CIERRE = (
+    # `mala` es la unica situacion que tiene: si alguien contesto, la rubrica cede el turno.
+    Consejo("C40", "sin_respuesta", "mala", "nadie le contestó",
+            "El cliente quedó sin ninguna respuesta y la conversación se cerró igual. "
+            "Aunque no se pueda resolver en el momento, conviene contestar siempre: una "
+            "línea alcanza, y el manual pide que el último mensaje lo envíe el operador.",
+            practica="B10"),
+    # `buena` (el cliente no planteo nada y el operador cerro bien) NO lleva consejo, igual
+    # que `excelente`: no hubo nada que mejorar. Solo el colgado tiene algo que decir.
+    Consejo("C41", "solo_cortesia", "aceptable", "no contestó el \"gracias\"",
+            "Un \"gracias\" también se contesta: alcanza un mensaje corto o un emoji para "
+            "que el cliente no quede con el último mensaje sin respuesta. El manual pide "
+            "que el último mensaje del cierre lo envíe el operador.",
+            practica="B12"),
+)
+
 CONSEJOS: tuple[Consejo, ...] = (
     _AGILIDAD + _INFO + _PROMO + _DEPOSITO + _RETIRO + _REGISTRO + _SOPORTE + _INFO_AGENTE
+    + _CIERRE
 )
 
 

@@ -46,6 +46,13 @@ class Ejemplo:
     transcript: str
     hechos: dict
     porque: str
+    # LOS CODIGOS E DEL MANUAL, y `()` cuando no hubo falla. Entro el 2026-08-24: el bloque
+    # de ejemplos -- 5.263 caracteres, la parte mas concreta del prompt -- no mencionaba
+    # `errores` NI UNA VEZ, y el modelo lo devolvia vacio en 435 de 435 filas. Benchado
+    # contra el host real con gemma4:12b: 4 de 4 sesiones de 2 estrellas daban `[]`, y
+    # tambien con el campo en el `required` del schema (un array vacio cumple). No era el
+    # schema: era que se le estaba enseñando a no ponerlo. Ver src/catalogo_atc.ERRORES.
+    errores: tuple[str, ...] = ()
 
 
 def _h(atendio: bool, extra: bool = False, cortesia: bool = False,
@@ -178,16 +185,18 @@ EJEMPLOS_MOTIVO: tuple[Ejemplo, ...] = (
         motivo="promo",
         transcript="CLIENTE: Como obtengo los bonos? / OPERADOR: Hola?",
         hechos=_h(False),
+        errores=("E01",),
         porque="no atendio -> deficiente; pero NO hubo insulto -> maltrato=false, NO es "
-               '"mala"',
+               '"mala". E01: contesto sin leer lo que el cliente pregunto',
     ),
     Ejemplo(
         motivo="promo",
         transcript="CLIENTE: Como reclamo mis 10 giros? / "
                    "OPERADOR: es super facil, solo crea tu cuenta",
         hechos=_h(True, claridad="confuso", cliente_reinsistio=False),
+        errores=("E03",),
         porque="NO explica COMO obtener los giros; deflexion generica que no responde lo "
-               "puntual -> claridad=confuso",
+               "puntual -> claridad=confuso. E03: la respuesta es ambigua",
     ),
 )
 
@@ -202,7 +211,9 @@ def formatear_fewshot() -> str:
 
     lineas = ["EJEMPLOS (aprende de estos HECHOS; no copies el texto, copia el CRITERIO):"]
     for i, e in enumerate(EJEMPLOS_MOTIVO, start=1):
-        salida = {"motivo": e.motivo, **e.hechos}
+        salida = {"motivo": e.motivo,
+                  "dimensions": {"errores": list(e.errores)},
+                  **e.hechos}
         lineas.append("")
         lineas.append(f"[{i}] {e.transcript}")
         lineas.append(f"-> {json.dumps(salida, ensure_ascii=False)}")

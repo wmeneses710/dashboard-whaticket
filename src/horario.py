@@ -67,4 +67,20 @@ def espera_efectiva(desde: datetime | None, hasta: datetime | None) -> timedelta
     dia_a, off_a = _recortar(desde)
     dia_b, off_b = _recortar(hasta)
     dias = (dia_b - dia_a).days
-    return max(timedelta(0), _POR_DIA * dias + (off_b - off_a))
+    bruta = max(timedelta(0), _POR_DIA * dias + (off_b - off_a))
+    # SE MIDE A LA PRECISION EN LA QUE ESTA ESCRITA LA VARA. Todos los objetivos del manual
+    # estan en minutos enteros (1 min de primera respuesta, 5 min de credenciales, 15 min del
+    # comprobante) y aca se los comparaba contra timestamps de WhatsApp con milisegundos.
+    # MEDIDO el 2026-08-24 sobre las 380 filas deterministas de la copia: dos operadores
+    # perdieron DOS ESTRELLAS por 365 y 312 milisegundos. El caso `17e15c5c`: espera de
+    # 60,365 s contra AGIL de 60 s -> `60,365 > 60` -> 3 estrellas, cuando por contrato (con
+    # `acredito` y `pregunto_algo_mas`) era 5. Y la fila no se podia verificar, porque
+    # `src/deposito.py` persiste `int(60,365) = 60`: el tablero mostraba "60 s" al lado de un
+    # texto que decia "tardó 1 minuto... el objetivo es 1 minuto" y bajaba dos estrellas.
+    # ES EL PUNTO UNICO por donde pasan las siete rubricas deterministas, asi que redondeando
+    # aca el numero que se COMPARA, el que se PERSISTE y el que se ESCRIBE son el mismo.
+    # NO ES UNA TOLERANCIA: solo alcanza a lo que esta a menos de medio segundo del umbral --
+    # 2 filas de 380 (0,5%). Una tolerancia de 30 s habria movido el 12%, y eso seria otra
+    # vara, no una correccion de medicion. (Python redondea a par en el .5 exacto; la
+    # diferencia es de medio segundo y no mueve ninguna decision real.)
+    return timedelta(seconds=round(bruta.total_seconds()))

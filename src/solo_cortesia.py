@@ -41,6 +41,7 @@ cuadros de calidad POR MOTIVO -- correcto -- y si en el total, que es lo que hoy
 """
 from __future__ import annotations
 
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 from src.signals import cliente_tuvo_la_ultima_palabra
 
@@ -54,13 +55,12 @@ _RATIONALE_COLGADO = (
     "El cliente no planteó nada, pero su último mensaje quedó sin respuesta y el ticket "
     "siguió abierto."
 )
-# Apunta a B12 ("cerrar cada chat de forma correcta y profesional"), que es la practica del
-# manual detras de este eje. El texto nombra la accion concreta, no da una frase de relleno.
-_COACHING = (
-    "Un \"gracias\" también se contesta: alcanza un mensaje corto o un emoji para que el "
-    "cliente no quede con el último mensaje sin respuesta. El manual pide que el último "
-    "mensaje del cierre lo envíe el operador."
-)
+# EL CONSEJO VIVE EN EL CATALOGO (C41, apunta a B12: "cerrar cada chat de forma correcta y
+# profesional"). Nacio aca el 2026-08-21, con el catalogo ya cerrado, asi que las filas
+# salian con `recomendacion_codigos: []`. Migrado el 2026-08-24 VERBATIM -- no cambia
+# ninguna nota. Solo el colgado lleva consejo: el cierre bien hecho no tiene nada que
+# mejorar, igual que `excelente`. Ver src/catalogo_coaching.py.
+_CONSEJO = consejo_de("solo_cortesia", "aceptable")
 
 
 def score_solo_cortesia(messages: list[dict], cierre_at) -> ScoreResult | None:
@@ -79,9 +79,11 @@ def score_solo_cortesia(messages: list[dict], cierre_at) -> ScoreResult | None:
     reales = [m for m in messages if not m.get("is_note")]
     colgado = cliente_tuvo_la_ultima_palabra(reales, cierre_at)
     if colgado:
-        stars, label, rationale, coaching = 3, "aceptable", _RATIONALE_COLGADO, _COACHING
+        stars, label, rationale = 3, "aceptable", _RATIONALE_COLGADO
+        consejo = _CONSEJO
     else:
-        stars, label, rationale, coaching = 4, "buena", _RATIONALE_OK, ""
+        stars, label, rationale = 4, "buena", _RATIONALE_OK
+        consejo = None
     return ScoreResult(
         # Columna legacy human/bot: el negocio escribio (el ruteo lo garantiza), asi que
         # `human` es lo que corresponde.
@@ -95,7 +97,9 @@ def score_solo_cortesia(messages: list[dict], cierre_at) -> ScoreResult | None:
         atencion=None,
         deposit_observed=None,
         floor_applied=False,
-        recomendacion=coaching,
+        recomendacion=consejo.texto if consejo else "",
+        recomendacion_codigos=[consejo.codigo] if consejo else [],
+        recomendacion_practica=consejo.practica if consejo else "",
         claridad="claro",
         friccion=False,
         aciertos=[],

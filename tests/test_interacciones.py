@@ -186,11 +186,20 @@ def test_un_cierre_reabierto_al_toque_NO_parte_la_interaccion():
 
 
 def test_una_reapertura_LEJANA_si_es_una_interaccion_nueva():
-    # La cola larga: el cliente volvio al dia siguiente. Ese cierre fue real.
+    # La cola larga: el cliente volvio 11 horas despues. Ese cierre fue real.
+    # LA FIXTURE ESTABA EN DOS UNIDADES y pasaba por accidente: `_cli` cuenta MINUTOS y todo
+    # lo que tiene alrededor son SEGUNDOS, asi que `_cli(40010)` no caia 10 segundos despues
+    # de la reapertura sino 27,8 DIAS despues, y encima detras del "dime" del operador. Con
+    # el corte por silencio de 6h (2026-08-24) eso da 3 interacciones, y tiene razon: son
+    # tres. Corregida la fixture a segundos, que es lo que el test siempre quiso decir --
+    # mismo idioma que `test_si_alguien_HABLO_antes_de_la_reapertura_el_cierre_fue_real`,
+    # que ya pisaba el `created_at` a mano por esto.
+    vuelve = _cli(0, "hola otra vez")
+    vuelve["created_at"] = BASE + timedelta(seconds=40010)
     msgs = [_cli(0, "Monto a retirar: $50"), _op_seg(30, "en proceso"),
             _cierre_seg(60),
             _reabierto_seg(40000),
-            _cli(40010, "hola otra vez"), _op_seg(40030, "dime")]
+            vuelve, _op_seg(40030, "dime")]
     assert len(partir_en_interacciones(msgs)) == 2
 
 

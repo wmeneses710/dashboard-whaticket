@@ -35,6 +35,7 @@ from src.signals import client_sin_motivo
 from src.sin_respuesta import score_sin_respuesta
 from src.solo_cortesia import score_solo_cortesia
 from src.router import decide_eligibility, decide_rubric
+from src.segments import es_grupo_de_whatsapp
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
 from src.sessions import evaluate_session
@@ -47,13 +48,16 @@ from src.store import (
 
 _CONV_FIELDS = """c.id, c.account, c.ticket_id, c.user_id, c.created_at,
        c.first_sent_message_at, c.resolved_at, c.is_new_contact,
-       q.name AS queue_name, conn.channel AS channel"""
+       q.name AS queue_name, conn.channel AS channel, tk.is_group AS is_group,
+       ct.number AS contact_number"""
 
 PENDING_SQL = f"""
 SELECT {_CONV_FIELDS}
   FROM conversations c
   LEFT JOIN queues q         ON q.id    = c.queue_id
   LEFT JOIN connections conn ON conn.id = c.connection_id
+  LEFT JOIN tickets tk       ON tk.id   = c.ticket_id
+  LEFT JOIN contacts ct      ON ct.id   = tk.contact_id
  WHERE c.resolved_at IS NOT NULL AND c.account = %(account)s
    AND NOT EXISTS (SELECT 1 FROM conversation_scores s WHERE s.conversation_id = c.id)
  ORDER BY c.created_at DESC
@@ -158,6 +162,15 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
   JOIN conversations c       ON c.id    = cs.session_id
   LEFT JOIN queues q         ON q.id    = c.queue_id
   LEFT JOIN connections conn ON conn.id = c.connection_id
+  -- `tickets.is_group`: un grupo de WhatsApp no es una atencion uno-a-uno y no se
+  -- califica (src/router.decide_eligibility). LEFT y no JOIN duro porque 70.880 de las
+  -- 139.708 sesiones pendientes NO tienen fila en `tickets`: un JOIN las borraria del
+  -- padron entero, que es un daño mucho mayor que el que este gate viene a arreglar.
+  LEFT JOIN tickets tk       ON tk.id   = c.ticket_id
+  -- `contacts.number` es el RESPALDO de `is_group`: el JID del grupo viaja ahi. Se alcanza
+  -- solo por `tickets.contact_id` (`conversations` no tiene ruta directa al contacto), y
+  -- va LEFT por lo mismo que el anterior: 13.052 sesiones pendientes no tienen contacto.
+  LEFT JOIN contacts ct      ON ct.id   = tk.contact_id
  WHERE cs.account = %(account)s
    AND cs.end_at < now() - interval '6 hours'
    -- Pendiente = sin score, O con un score MAS VIEJO que el ultimo episodio de la
@@ -204,7 +217,9 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     recommender: sub-evaluador angosto opcional (ver src/subeval.py)."""
     with conn.cursor() as cur:
         msgs = fetch_session_messages(cur, sess["session_id"])
-    stats, rubric, eval_status, skip_reason = evaluate_session(msgs, lineas=lineas)
+    stats, rubric, eval_status, skip_reason = evaluate_session(
+        msgs, lineas=lineas,
+        es_grupo=es_grupo_de_whatsapp(sess.get("is_group"), sess.get("contact_number")))
     deposit_count = deposit_candidate_count(msgs)  # gate determinista (indep. del eval_status)
     # El gate de LAS DOS PUERTAS, solo para reconciliar `deposit_mismatch`. `deposit_count`
     # sigue siendo el CONTADOR de volumen (lo suman los cuadros) y no se toca; lo que se
@@ -439,7 +454,26 @@ _CONV_REFRESH_SECONDS = 1800
 _SCORING_LOCK_KEY = 823147
 
 
-def run_worker_loop(cfg, should_stop=None, log=print) -> None:
+def _emit_stdout(msg: str) -> None:
+    """El log del worker, CON FLUSH. No es cosmetico.
+
+    EL SINTOMA (2026-08-24): el negocio dejo el scoring corriendo un fin de semana entero,
+    volvio con ~500 filas y en los logs del contenedor no habia UNA SOLA linea `[worker]` --
+    solo el access log de uvicorn. Sin esas lineas no se puede distinguir un worker que
+    trabaja de uno que falla en cada sesion de uno que se detuvo, y las tres cosas se ven
+    igual desde afuera: el worker es un THREAD DAEMON del mismo proceso que la API
+    (src/app.py), asi que la web sigue contestando 200 aunque el thread ya no avance.
+
+    LA CAUSA: `print` pelado. El stdout de un contenedor no es un TTY, asi que Python lo deja
+    BLOCK-BUFFERED y las lineas se quedan en un buffer de 4-8 KB. uvicorn no sufre esto porque
+    escribe por `logging`. El peor caso era el pre-flight `check_model()`: el aviso de que el
+    modelo configurado no existe en Ollama -- la causa mas probable de que el loop no escriba
+    ninguna fila -- era justo el mas invisible.
+    """
+    print(msg, flush=True)
+
+
+def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
     import psycopg
 
@@ -468,18 +502,49 @@ def run_worker_loop(cfg, should_stop=None, log=print) -> None:
     # DEADLOCKEAN escribiendo conversation_sessions. Un advisory lock de sesión de Postgres
     # (atado a lock_conn; se libera solo si el proceso muere o cierra la conexión) garantiza
     # una sola instancia activa. Si no se obtiene, esta instancia NO scorea (se retira).
-    try:
-        lock_conn = psycopg.connect(cfg.database_url, connect_timeout=8)
-        lock_conn.autocommit = True
-        got_lock = lock_conn.execute(
-            "SELECT pg_try_advisory_lock(%s)", (_SCORING_LOCK_KEY,)
-        ).fetchone()[0]
-    except Exception as e:  # noqa: BLE001 - sin lock no arriesgamos correr en paralelo
-        emit(f"[worker] no se pudo tomar el lock de scoring: {type(e).__name__}: {e}")
-        return
-    if not got_lock:
-        emit("[worker] otra instancia ya tiene el lock de scoring; esta instancia NO scorea")
-        lock_conn.close()
+    # EL LOCK SE REINTENTA; NO SE ABANDONA. Hasta el 2026-08-24 esto se intentaba UNA vez y,
+    # si otro lo tenía, la función hacía `return` y el thread moría. Eso costó un fin de
+    # semana entero de scoring (logs de producción del 2026-08-21):
+    #     19:26:04 [worker] lock de scoring adquirido (instancia única)
+    #     ... cuatro ciclos sanos, err=0 en todos ...
+    #     21:58:45 Started server process [1]      <- el contenedor reinició
+    #     21:58:45 [worker] otra instancia ya tiene el lock; esta instancia NO scorea
+    # El advisory lock está atado a la SESIÓN de Postgres de la instancia vieja: si el proceso
+    # muere de golpe, el servidor puede tardar en reapear esa conexión (keepalives de TCP), así
+    # que el reinicio cae justo en la ventana donde el lock todavía figura tomado. La web
+    # siguió contestando 200 tres días y no se escribió una sola fila.
+    # El guard singleton NO se debilita: sigue siendo `pg_try_advisory_lock` y sigue sin
+    # scorear mientras otro lo tenga. Lo que cambia es que vuelve a intentarlo cada ciclo, así
+    # que en cuanto la sesión zombi se cae, el scoring se reanuda solo.
+    def _intentar_lock():
+        try:
+            conn = psycopg.connect(cfg.database_url, connect_timeout=8)
+            conn.autocommit = True
+            if conn.execute("SELECT pg_try_advisory_lock(%s)",
+                            (_SCORING_LOCK_KEY,)).fetchone()[0]:
+                return conn
+            conn.close()
+        except Exception as e:  # noqa: BLE001 - un fallo de red no puede matar el worker
+            emit(f"[worker] no se pudo tomar el lock de scoring: {type(e).__name__}: {e}")
+        return None
+
+    def _dormir(segundos):
+        """Sueño interrumpible: en tramos de 1s para que should_stop corte enseguida."""
+        for _ in range(max(1, segundos)):
+            if should_stop and should_stop():
+                return
+            time.sleep(1)
+
+    lock_conn = None
+    arrancado = False
+    while not (should_stop and should_stop()):
+        lock_conn = _intentar_lock()
+        if lock_conn is not None:
+            break
+        emit("[worker] otra instancia tiene el lock de scoring; reintento en "
+             f"{cfg.scoring_poll_seconds}s")
+        _dormir(cfg.scoring_poll_seconds)
+    if lock_conn is None:  # se pidió parar mientras esperaba el lock
         return
     emit("[worker] lock de scoring adquirido (instancia única)")
     # Migración AUTOMÁTICA a scoring por SESIÓN (una vez, antes de tocar columnas):

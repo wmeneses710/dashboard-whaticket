@@ -116,7 +116,16 @@ async def lifespan(_app: FastAPI):
     stop.set()
 
 
-app = FastAPI(title="dashboard-whaticket", version="1.0", lifespan=lifespan)
+# /docs, /redoc y /openapi.json SOLO si API_DOCS lo pide. Este servicio se sirve en un
+# dominio publico y sus lecturas son anonimas: el schema abierto le ahorra a cualquiera el
+# trabajo de adivinar que endpoint devuelve `customer_number` y el transcript completo.
+# Medido el 2026-08-24 en los logs de produccion: escaneo automatico real buscando /.env,
+# /.git/config y /wp-login.php. Esos dieron 404; /openapi.json daba 200.
+_DOCS = cfg.api_docs
+app = FastAPI(title="dashboard-whaticket", version="1.0", lifespan=lifespan,
+              docs_url="/docs" if _DOCS else None,
+              redoc_url="/redoc" if _DOCS else None,
+              openapi_url="/openapi.json" if _DOCS else None)
 app.mount("/vendor", StaticFiles(directory=str(_VENDOR)), name="vendor")
 
 

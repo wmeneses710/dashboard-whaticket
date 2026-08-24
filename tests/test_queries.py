@@ -487,9 +487,11 @@ class _FakeCursorPorLargo(_FakeCursor):
 def test_summary_combina_las_secciones():
     cur = _FakeCursorPorLargo(rows=[], description=["total", "evaluadas", "avg_stars", "depositos", "dep_conv", "operadores"])
     out = summary(cur, "datos")
+    # `situacion_stats` entro el 2026-08-24: las situaciones que dejaron de ser skip y
+    # pasaron a llevar nota perdieron su agregado en el front cuando el skip desaparecio.
     assert set(out) == {"kpis", "distribution", "operators", "deposit_by_channel",
                         "quality_evolution", "motivo_stats", "motivo_cobertura",
-                        "skip_stats", "ops_motivo", "quality_motivo"}
+                        "skip_stats", "situacion_stats", "ops_motivo", "quality_motivo"}
 
 
 def test_build_quality_evolution_top_n_avg_y_umbral_min():
@@ -1569,3 +1571,100 @@ def test_build_skip_stats_nunca_reporta_mas_jugadores_que_sesiones():
     import pytest as _pytest
     with _pytest.raises(ValueError):
         _build_skip_stats([("no_agent_reply", 10, 11)])
+
+
+# --- LAS SITUACIONES QUE DEJARON DE SER SKIP SIGUEN NECESITANDO SU AGREGADO -----------
+# EL AGUJERO QUE ESTO CIERRA. El 2026-08-21 `no_agent_reply` y `sin_motivo` dejaron de ser
+# skips y pasaron a llevar nota. El chip POR FILA se migro (`dimSituacion` en el front), pero
+# el AGREGADO se murio en silencio: `jugadorSinRespuesta` busca `skip_reason ===
+# 'no_agent_reply'` en `skip_stats`, y el codigo emite ese skip 0 veces -> la alerta
+# "N de canal jugador sin respuesta del negocio" no se puede mostrar nunca mas.
+# Era la tarjeta que el negocio habia pedido el 2026-08-13 con estas palabras: "si son
+# internos esta bien, pero si es de canal de jugador si quiero que haya una alerta ahi".
+# Y sigue siendo la peor falla que el sistema mide: un cliente escribio y nadie contesto.
+# LA COLUMNA `jugador` ES LA ALERTA, igual que en skip_stats y por la misma razon:
+# `segment_for_queue` devuelve 'interno' cuando la cola es NULL, asi que 'interno' no afirma
+# nada -- `jugador` se afirma por nombre de cola.
+
+def test_build_situacion_stats_ordena_por_volumen_y_saca_porcentaje():
+    from src.queries import _build_situacion_stats
+    out = _build_situacion_stats([("solo_cortesia", 5247, 12, 3.9),
+                                  ("sin_respuesta_del_negocio", 1167, 102, 1.0)])
+    assert [r["situacion"] for r in out] == ["solo_cortesia",
+                                             "sin_respuesta_del_negocio"]
+    assert out[0]["n"] == 5247
+    # el denominador es el total de estas situaciones, no la poblacion evaluada entera:
+    # la pregunta es "de lo que antes era un skip, cuanto es cada cosa".
+    assert out[0]["pct"] == round(100 * 5247 / 6414, 1)
+    assert out[1]["jugador"] == 102
+    assert out[1]["estrellas"] == 1.0
+
+
+def test_build_situacion_stats_con_cero_filas_no_divide_por_cero():
+    from src.queries import _build_situacion_stats
+    assert _build_situacion_stats([]) == []
+
+
+def test_build_situacion_stats_no_deja_pasar_un_subconjunto_mayor_que_el_conjunto():
+    """Mismo guard que skip_stats: si el FILTER de `jugador` se rompe, la alerta hablaria de
+    una poblacion que no existe. Reventar es mejor que mostrar un numero imposible."""
+    import pytest as _pytest
+
+    from src.queries import _build_situacion_stats
+    with _pytest.raises(ValueError):
+        _build_situacion_stats([("sin_respuesta_del_negocio", 10, 11, 1.0)])
+
+
+def test_el_sql_de_situaciones_cuenta_EVALUADAS_y_marca_al_jugador():
+    from src.queries import _SITUACION_STATS_SQL
+
+    assert "eval_status = 'evaluated'" in _SITUACION_STATS_SQL, (
+        "estas filas YA NO son skips: contarlas con el predicado viejo daria siempre cero")
+    assert "cs.segment = 'jugador'" in _SITUACION_STATS_SQL, "falta la columna de alerta"
+    for clave in ("sin_respuesta_del_negocio", "solo_cortesia"):
+        assert clave in _SITUACION_STATS_SQL, f"falta la situacion {clave}"
+
+
+def test_el_summary_incluye_las_situaciones():
+    """Si no viaja en /api/summary el front no la puede pintar, que es exactamente como se
+    perdio la anterior."""
+    import inspect
+
+    from src import queries
+
+    assert "situacion_stats" in inspect.getsource(queries.summary)
+
+
+# --- EL ARNES DE CURSOR FALSO NO EJECUTA SQL, ASI QUE HAY QUE CUIDAR LA FORMA ----------
+# `_SITUACION_STATS_SQL` nacio el 2026-08-24 con un `CROSS JOIN LATERAL` DESPUES del `WHERE`
+# que `_SCORES_JOINS` ya cierra: SQL invalido, dos `WHERE`, y los 5 tests nuevos en verde
+# porque el cursor falso solo guarda el string. Se descubrio corriendo la consulta a mano
+# contra la copia. Este test es el guard mas barato para esa clase de bug.
+
+def test_ninguna_consulta_mete_un_JOIN_despues_de_SCORES_JOINS():
+    """`_SCORES_JOINS` CIERRA con `WHERE {where}`, asi que todo lo que se concatene despues
+    solo puede ser mas predicados, GROUP BY, ORDER BY o LIMIT. Un JOIN ahi es SQL invalido.
+
+    Se mira SOLO lo que viene despues de `_SCORES_JOINS` y no "despues del primer WHERE":
+    `_DETAIL_SQL` tiene subconsultas con su propio WHERE en la lista del SELECT, y partir por
+    el primero cae adentro de una de ellas y marca como bug un `FROM ... LEFT JOIN` que esta
+    perfectamente bien.
+    """
+    import re as _re
+
+    from src import queries
+
+    nombres = _re.findall(r"^(_[A-Z_]+_SQL)\s*=", __import__("inspect").getsource(queries),
+                          _re.M)
+    assert nombres, "no se encontro ninguna constante _*_SQL"
+    revisadas = 0
+    for nombre in nombres:
+        sql = getattr(queries, nombre, None)
+        if not isinstance(sql, str) or queries._SCORES_JOINS not in sql:
+            continue
+        revisadas += 1
+        cola = sql.split(queries._SCORES_JOINS, 1)[1]
+        assert not _re.search(r"^\s*(CROSS|INNER|LEFT|RIGHT|FULL)?\s*JOIN\b", cola, _re.M), (
+            f"{nombre}: hay un JOIN despues de _SCORES_JOINS -> SQL invalido que el cursor "
+            f"falso no puede detectar (paso exactamente eso con _SITUACION_STATS_SQL)")
+    assert revisadas >= 3, f"el test solo reviso {revisadas} consultas: el filtro esta mal"
