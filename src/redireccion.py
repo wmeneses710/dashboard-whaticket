@@ -86,9 +86,59 @@ _TEL_RE = re.compile(r"\+?\d[\d\s\-().]{7,}\d")
 TAIL = 9
 
 
-def es_traspaso(body: str | None) -> bool:
-    """El mensaje traspasa la conversacion a otra linea o canal?"""
-    return bool(_TRASPASO_RE.search(body or ""))
+def tail_de(numero: str | None) -> str | None:
+    """Los ultimos `TAIL` digitos de un numero, o None si no da para una linea.
+
+    `connections` guarda el numero con pais (`593959803754`) y los mensajes lo escriben en
+    local (`0959803754`) o con separadores (`+593 959 803 754`): los ultimos 9 digitos son la
+    parte que comparten, y es la misma normalizacion que hace `tails_del_texto` del lado del
+    texto. Tenerla en una funcion evita que las dos puntas de la comparacion se separen.
+    """
+    digitos = re.sub(r"\D", "", numero or "")
+    return digitos[-TAIL:] if len(digitos) >= TAIL else None
+
+
+def es_traspaso(body: str | None, lineas: dict[str, str] | None = None,
+                linea_propia: str | None = None) -> bool:
+    """El mensaje traspasa la conversacion a otra linea o canal?
+
+    DOS CAMINOS, y el segundo entro el 2026-08-24 porque el primero solo no alcanzaba.
+      1. LA FRASE (`TRASPASO_PATTERN`): cubre lo que no trae numero -- los wa.link y las
+         migraciones de canal.
+      2. EL DESTINO: el mensaje nombra una linea NUESTRA, CONNECTED y DISTINTA de aquella en
+         la que esta el chat. No hace falta ningun verbo.
+
+    POR QUE LA FRASE SOLA NO ALCANZA. Caso real: "0959803754 este es mi numero ahora amigo"
+    -- `ONLY 2`, linea nuestra y viva. `tails_del_texto` lo extraia y el mapa lo tenia, pero
+    la regex pedia un verbo y devolvia False, asi que el numero no se llegaba a mirar.
+    Y la frase NO discrimina: medidos 41 mensajes con "comuniquese ... agente" + numero,
+    **28 apuntan a una linea NUESTRA y 13 a un numero AJENO** -- redireccion y derivacion,
+    opuestas, con la MISMA redaccion. La regex acertaba y fallaba en los dos grupos por
+    igual: castigaba derivaciones legitimas y perdia redirecciones.
+
+    EL DESTINO SI DISCRIMINA, y esta medido: de los 143 mensajes que este camino agrega,
+    **cero falsos positivos claros** sobre los 122 textos distintos leidos uno por uno. Un
+    operador no tiene motivo para tipear el numero de OTRA linea de la empresa salvo para
+    mandar al cliente ahi. Los mas frecuentes son justamente los que la regex jamas podria
+    cazar: el numero SOLO, sin una palabra ("+593991194133", 10 veces).
+
+    LA LINEA PROPIA SE EXCLUYE. "Te paso mi numero <la misma linea>" es una DESPEDIDA (38
+    medidas en 45 dias), y el template mas frecuente del corpus es exactamente eso ("Estoy a
+    la orden siempre. Escribeme de una cuando gustes...", 2.505 veces).
+
+    UNA LINEA CAIDA NO CUENTA: mandar a una linea muerta no es traspasar, es dejar al cliente
+    sin a donde ir, y la rubrica lo juzga aparte (`destino_probadamente_caido`).
+
+    SIN MAPA NO SE INVENTA NADA. Y sin `linea_propia` (Facebook, Instagram y Telegram guardan
+    `connections.number = NULL`) se compara igual contra el mapa: lo unico que se pierde es
+    poder descartar la despedida, y ahi el canal ya es distinto por definicion.
+    """
+    if _TRASPASO_RE.search(body or ""):
+        return True
+    if not lineas:
+        return False
+    destinos = tails_del_texto(body) - ({linea_propia} if linea_propia else set())
+    return any(lineas.get(t) == "CONNECTED" for t in destinos)
 
 
 def tails_del_texto(texto: str | None) -> set[str]:
@@ -136,13 +186,14 @@ def build_lineas_map(cur, account: str | None = None) -> dict[str, str]:
     return lineas
 
 
-def traspaso_a_linea_viva(messages: list[dict], lineas: dict[str, str] | None) -> bool:
+def traspaso_a_linea_viva(messages: list[dict], lineas: dict[str, str] | None,
+                          linea_propia: str | None = None) -> bool:
     """Algun mensaje de traspaso apunta a una linea NUESTRA que esta CONNECTED?"""
     if not lineas:
         return False
     for m in _mensajes_del_negocio(messages):
         body = m.get("body") or ""
-        if not es_traspaso(body):
+        if not es_traspaso(body, lineas, linea_propia):
             continue
         if any(lineas.get(t) == "CONNECTED" for t in tails_del_texto(body)):
             return True
@@ -156,17 +207,20 @@ def traspaso_a_linea_viva(messages: list[dict], lineas: dict[str, str] | None) -
 _LINK_RE = re.compile(r"(wa\.link/|wa\.me/|api\.whatsapp\.com/)", re.IGNORECASE)
 
 
-def _mensajes_de_traspaso(messages: list[dict]) -> list[dict]:
-    return [m for m in _mensajes_del_negocio(messages) if es_traspaso(m.get("body"))]
+def _mensajes_de_traspaso(messages: list[dict], lineas: dict[str, str] | None = None,
+                          linea_propia: str | None = None) -> list[dict]:
+    return [m for m in _mensajes_del_negocio(messages)
+            if es_traspaso(m.get("body"), lineas, linea_propia)]
 
 
-def tiene_destino(messages: list[dict]) -> bool:
+def tiene_destino(messages: list[dict], lineas: dict[str, str] | None = None,
+                  linea_propia: str | None = None) -> bool:
     """El traspaso le dice al cliente A DONDE ir: un telefono o un link de WhatsApp.
 
     Sin destino el cliente queda literalmente sin salida ("te vamos a atender por otro
     canal" y nada mas), y eso si es mal servicio probado.
     """
-    for m in _mensajes_de_traspaso(messages):
+    for m in _mensajes_de_traspaso(messages, lineas, linea_propia):
         body = m.get("body") or ""
         if tails_del_texto(body) or _LINK_RE.search(body):
             return True
@@ -174,7 +228,8 @@ def tiene_destino(messages: list[dict]) -> bool:
 
 
 def destino_probadamente_caido(
-    messages: list[dict], lineas: dict[str, str] | None
+    messages: list[dict], lineas: dict[str, str] | None,
+    linea_propia: str | None = None,
 ) -> bool:
     """El destino es una linea NUESTRA que sabemos CAIDA. Exige prueba, no ausencia.
 
@@ -190,7 +245,7 @@ def destino_probadamente_caido(
     """
     if not lineas:
         return False
-    for m in _mensajes_de_traspaso(messages):
+    for m in _mensajes_de_traspaso(messages, lineas, linea_propia):
         tails = tails_del_texto(m.get("body") or "")
         conocidos = [lineas[t] for t in tails if t in lineas]
         # Si alguna linea conocida del mensaje esta viva, el destino sirve.
@@ -201,7 +256,9 @@ def destino_probadamente_caido(
     return False
 
 
-def respuesta_fue_solo_traspaso(messages: list[dict]) -> bool:
+def respuesta_fue_solo_traspaso(messages: list[dict],
+                                lineas: dict[str, str] | None = None,
+                                linea_propia: str | None = None) -> bool:
     """TODA la respuesta del negocio fue traspaso, sin mirar a donde apunta.
 
     Es la mitad del bucket C que NO depende del mapa de lineas, y es la que decide el
@@ -213,7 +270,7 @@ def respuesta_fue_solo_traspaso(messages: list[dict]) -> bool:
     negocio = _mensajes_del_negocio(messages)
     if not negocio:
         return False
-    return all(es_traspaso(m.get("body")) for m in negocio)
+    return all(es_traspaso(m.get("body"), lineas, linea_propia) for m in negocio)
 
 
 def es_redireccion_total(messages: list[dict], lineas: dict[str, str] | None) -> bool:
@@ -227,7 +284,8 @@ def es_redireccion_total(messages: list[dict], lineas: dict[str, str] | None) ->
 
 
 def score_redireccion(
-    messages: list[dict], lineas: dict[str, str] | None
+    messages: list[dict], lineas: dict[str, str] | None,
+    linea_propia: str | None = None,
 ) -> ScoreResult | None:
     """La nota del traspaso puro. SIN LLM. None si no es traspaso puro (cede el turno).
 
@@ -247,9 +305,19 @@ def score_redireccion(
     "En caso de no responder, contactate con esta linea: 0983744476" apuntaba a AGENTES
     OPERATIVOS PRO, que estaba DISCONNECTED.
     """
-    if not respuesta_fue_solo_traspaso(messages):
+    # EL MISMO CRITERIO QUE EL RUTEO, o las dos puntas se separan. El worker rutea con
+    # `respuesta_fue_solo_traspaso` y aca se re-chequea: si una ve el destino y la otra solo
+    # la frase, el ruteo manda la sesion a `redireccion`, esta funcion devuelve None y en esa
+    # rama del worker no hay fallback -> la sesion se queda SIN NOTA. Detectado sobre la
+    # sesion real `9813f9a2` mientras se implementaba el destino (2026-08-24).
+    if not respuesta_fue_solo_traspaso(messages, lineas, linea_propia):
         return None
-    viva = tiene_destino(messages) and not destino_probadamente_caido(messages, lineas)
+    # LAS TRES PREGUNTAS SE HACEN CON EL MISMO CRITERIO. Si `tiene_destino` sigue mirando
+    # solo la frase mientras el ruteo mira el destino, encuentra CERO mensajes de traspaso y
+    # la rubrica concluye "lo derivó sin dejarle una línea" sobre un operador que SI dejo una
+    # linea viva: una acusacion falsa, y nueva. Ver tests/test_redireccion_por_destino.py.
+    viva = (tiene_destino(messages, lineas, linea_propia)
+            and not destino_probadamente_caido(messages, lineas, linea_propia))
     if viva:
         stars, label = 4, "buena"
         rationale = ("El operador derivó al cliente a otra línea nuestra que está activa. "

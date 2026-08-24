@@ -28,6 +28,7 @@ from src.operators import build_operator_map, nombre_de_notas, operator_name
 from src.redireccion import (
     build_lineas_map,
     respuesta_fue_solo_traspaso,
+    tail_de,
     score_redireccion,
 )
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
@@ -49,7 +50,7 @@ from src.store import (
 _CONV_FIELDS = """c.id, c.account, c.ticket_id, c.user_id, c.created_at,
        c.first_sent_message_at, c.resolved_at, c.is_new_contact,
        q.name AS queue_name, conn.channel AS channel, tk.is_group AS is_group,
-       ct.number AS contact_number"""
+       ct.number AS contact_number, conn.number AS linea_propia"""
 
 PENDING_SQL = f"""
 SELECT {_CONV_FIELDS}
@@ -290,7 +291,11 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
             # no puede quedar sin nota ni caer al LLM: vuelve a `agilidad`.
             if score is None:
                 score = score_agilidad(msgs)
-        elif respuesta_fue_solo_traspaso(msgs):
+        # EL MAPA Y LA LINEA PROPIA VIAJAN A LA DETECCION. Sin ellos `es_traspaso` solo mira
+        # la frase, y la frase no discrimina: medidos 41 mensajes con "comuniquese ...
+        # agente" + numero, 28 apuntan a una linea NUESTRA y 13 a un numero AJENO -- con la
+        # MISMA redaccion. Ver src/redireccion.es_traspaso.
+        elif respuesta_fue_solo_traspaso(msgs, lineas, tail_de(sess.get("linea_propia"))):
             # REDIRECCION: la respuesta del negocio fue SOLO un traspaso a otra linea.
             # Motivo determinista y SIN LLM (decision del negocio, 2026-08-20). Hasta esa
             # fecha esto era un skip; ahora lleva nota, pero sigue sin pasar por el modelo:
@@ -301,7 +306,8 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
             # (MOTIVOS_DEL_LLM, que lo deja afuera del enum del prompt a proposito).
             # VA DESPUES del segmento `agente`: el ruteo por segmento es mas fundamental
             # (un agente se mide con su propio reloj) y no lo pisa un traspaso.
-            score = score_redireccion(msgs, lineas)
+            score = score_redireccion(msgs, lineas,
+                                      tail_de(sess.get("linea_propia")))
         else:
             # Pase v2: el LLM clasifica el MOTIVO y califica en 2 capas. thread_context
             # vacio: la sesion YA mergea todos los episodios del ticket. deposit_hint pasa
