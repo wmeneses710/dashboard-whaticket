@@ -3,19 +3,41 @@
 #
 # La 'db' local es la COPIA (snapshot) restaurada del dump de EasyPanel;
 # es descartable, no la fuente de verdad.
+#
+# ESTE ARCHIVO NO LLEVA NINGUN VALOR. Todo entra por interpolacion desde el entorno, y en
+# desarrollo eso sale del `.env` del repo, que NO esta versionado (git solo trae
+# `.env.example`). Dos razones, y la segunda pesa mas que la primera:
+#   1. Lo que se escribe aca queda en el historial de git para siempre.
+#   2. En EasyPanel las variables las pone el negocio a mano, asi que duplicarlas aca hace
+#      que el archivo MIENTA sobre lo que corre en cuanto una de las dos cambie. Ya paso:
+#      este compose decia `qwen3.5:4b` mientras produccion corria `gemma4:12b`, y eso mando
+#      una investigacion por el camino equivocado el 2026-08-24.
+# Los SECRETOS usan `${VAR:?...}`: si falta, compose se niega a arrancar en vez de levantar
+# contra la base equivocada con un default silencioso. Misma regla que `require_admin` en
+# src/app.py, que falla cerrada. Las perillas operativas SI tienen default, porque no son
+# credenciales y un dev recien llegado tiene que poder levantar sin adivinar.
 services:
   db:
     image: postgres:16
     environment:
-      POSTGRES_USER: whaticket
-      POSTGRES_PASSWORD: whaticket
-      POSTGRES_DB: whaticket
+      POSTGRES_USER: ${POSTGRES_USER:?falta POSTGRES_USER (copiá .env.example a .env)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?falta POSTGRES_DB}
+    # SOLO LOOPBACK. `"5432:5432"` publica en 0.0.0.0, o sea en TODAS las interfaces de la
+    # maquina. Y Docker publica saltando el firewall del host (sus reglas van a la cadena
+    # DOCKER de iptables, no a INPUT), asi que un `ufw deny 5432` NO lo tapa. En desarrollo
+    # alcanza con la propia maquina: el navegador, los scripts del repo y psql corren ahi.
+    # Entre contenedores no cambia nada: `api` habla con `db` por la red interna de compose,
+    # que no depende de `ports`.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whaticket"]
+      # `$$` para que compose NO interpole y la variable la resuelva el shell DENTRO del
+      # contenedor: escribir el usuario a mano seria reintroducir la credencial por la
+      # puerta de atras.
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -26,19 +48,29 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://whaticket:whaticket@db:5432/whaticket
-      # host.docker.internal -> Ollama del host (dev y EasyPanel prod)
-      OLLAMA_URL: http://host.docker.internal:11434
-      OLLAMA_MODEL: qwen3.5:4b
-      API_PORT: "8080"
-      LOG_LEVEL: INFO
+      DATABASE_URL: ${DATABASE_URL:?falta DATABASE_URL}
+      # host.docker.internal -> Ollama del host (ver extra_hosts)
+      OLLAMA_URL: ${OLLAMA_URL:?falta OLLAMA_URL}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:?falta OLLAMA_MODEL}
+      # Vacio = sin auth (Ollama local). Con un proxy delante, el token va en el entorno.
+      OLLAMA_TOKEN: ${OLLAMA_TOKEN:-}
+      # Sin token, la ESCRITURA de la API queda deshabilitada (src/app.py require_admin).
+      # El default vacio es deliberado: es lo seguro.
+      DASHBOARD_ADMIN_TOKEN: ${DASHBOARD_ADMIN_TOKEN:-}
+      # /docs, /redoc y /openapi.json. Apagados por defecto: el tablero se sirve en un
+      # dominio publico y sus lecturas son anonimas.
+      API_DOCS: ${API_DOCS:-false}
+      API_PORT: ${API_PORT:-8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Worker de scoring en el mismo contenedor (ver src/worker.py).
-      SCORING_ENABLED: "false"        # poner "true" para que scoree solo
-      SCORING_ACCOUNTS: "sistemas,datos"
-      SCORING_BATCH_SIZE: "20"
-      SCORING_POLL_SECONDS: "60"
+      SCORING_ENABLED: ${SCORING_ENABLED:-false}
+      SCORING_ACCOUNTS: ${SCORING_ACCOUNTS:-sistemas,datos}
+      SCORING_BATCH_SIZE: ${SCORING_BATCH_SIZE:-20}
+      SCORING_POLL_SECONDS: ${SCORING_POLL_SECONDS:-60}
+    # SOLO LOOPBACK, por lo mismo que la base. El tablero no tiene auth en las lecturas y
+    # devuelve nombres, telefonos y transcripts.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

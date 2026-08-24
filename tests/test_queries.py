@@ -1668,3 +1668,41 @@ def test_ninguna_consulta_mete_un_JOIN_despues_de_SCORES_JOINS():
             f"{nombre}: hay un JOIN despues de _SCORES_JOINS -> SQL invalido que el cursor "
             f"falso no puede detectar (paso exactamente eso con _SITUACION_STATS_SQL)")
     assert revisadas >= 3, f"el test solo reviso {revisadas} consultas: el filtro esta mal"
+
+
+# --- EL CHAT DEL MODAL TIENE QUE SER EL QUE SE CALIFICO --------------------------------
+# CASO REAL traido por el negocio el 2026-08-24 (sesion de Aldhair Barragan, 23-ago 21:03):
+# el modal mostraba TRES mensajes -- "[media] / Abono $5 a deuda / Mel: ing" -- y al lado
+# decia "16 mensajes · 11 cliente / 5 operador", "2 operadores en esta sesion", "El cliente
+# recargo x5", "operador: Joseph" y "tardo 5,8 minutos en avisarle". Un supervisor lee eso y
+# ve una nota que acusa de tardar 5,8 minutos sobre un chat donde el operador contesto en 2 --
+# y encima el que contesta en pantalla es Mel y la nota se la lleva Joseph.
+#
+# LA CAUSA: `conversation_detail` cargaba el transcript con `fetch_messages(conversation_id)`,
+# que trae SOLO el episodio de ENTRADA. La NOTA, en cambio, se calcula sobre
+# `fetch_session_messages(session_id)`, que trae todos los episodios mergeados
+# (src/worker.py). Con `conversation_id == session_id` en las filas por sesion, el modal
+# mostraba el PRIMER episodio y la nota describia otro tramo de la sesion.
+# No es que la nota este mal: es que la evidencia que se muestra no es la que se juzgo, que
+# para el que mira es peor -- la nota parece mentir.
+
+def test_el_detalle_carga_los_mensajes_de_la_SESION_no_del_episodio():
+    import inspect
+
+    from src import queries
+
+    fuente = inspect.getsource(queries.conversation_detail)
+    assert "fetch_session_messages" in fuente, (
+        "el modal sigue mostrando solo el episodio de entrada mientras la nota se calculo "
+        "sobre la sesion entera")
+
+
+def test_sin_session_id_sigue_cayendo_al_episodio():
+    """Las filas viejas (path por conversacion) no tienen `session_id`: ahi el episodio ES
+    todo lo que hay, y pedir por sesion devolveria vacio."""
+    import inspect
+
+    from src import queries
+
+    fuente = inspect.getsource(queries.conversation_detail)
+    assert "fetch_messages" in fuente, "se perdio el fallback por conversacion"

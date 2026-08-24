@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from src.context import fetch_messages
+from src.context import fetch_messages, fetch_session_messages
 from src.identidad import (HAY_OPERADOR, OPERADOR_O_NADA, OPERADOR_RESUELTO,
                           clave_sql, expr_resuelto)
 from src.router import ANOMALOUS_MESSAGE_MAX
@@ -1716,7 +1716,21 @@ def conversation_detail(cur, conversation_id: str) -> dict | None:
         # cuando el ancla elige la primera, ese campo queda identico a no tener ancla, y los
         # dos casos piden marcados opuestos (ver src/worker.py). Las filas anteriores a v9 no
         # lo traen -> no se senala ninguna, que es lo honesto: no sabemos cual fue.
-        d["transcript"] = _transcript(fetch_messages(cur, conversation_id),
+        # EL CHAT QUE SE MUESTRA TIENE QUE SER EL QUE SE CALIFICO. La nota se calcula sobre
+        # `fetch_session_messages(session_id)` -- todos los episodios de la sesion mergeados
+        # (src/worker.py) --, y aca se cargaba `fetch_messages(conversation_id)`, que trae
+        # SOLO el episodio de entrada. Como en las filas por sesion `conversation_id ==
+        # session_id`, el modal mostraba el PRIMER episodio y la nota describia otro tramo.
+        # CASO REAL (2026-08-24): un modal con TRES mensajes donde el operador contesta en 2
+        # minutos, al lado de "16 mensajes · 11 cliente / 5 operador", "2 operadores en esta
+        # sesion" y un rationale que acusa de tardar 5,8 minutos. La nota no estaba mal; la
+        # evidencia mostrada no era la que se juzgo, que para el que mira es peor.
+        # Sin `session_id` (filas viejas del path por conversacion) el episodio ES todo lo que
+        # hay: se cae al fallback, porque pedir por sesion devolveria vacio.
+        sid = d.get("session_id")
+        mensajes = (fetch_session_messages(cur, sid) if sid
+                    else fetch_messages(cur, conversation_id))
+        d["transcript"] = _transcript(mensajes,
                                       juzgada_desde=_juzgada_desde(d.get("dimensions")))
         return d
     transcript = _transcript(fetch_messages(cur, conversation_id))
