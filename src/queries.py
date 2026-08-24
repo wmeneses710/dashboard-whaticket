@@ -1066,8 +1066,6 @@ def _transcript(msgs: list[dict], juzgada_desde=None) -> list[dict]:
                 idx_de[id(m)] = n
     out = []
     for m in msgs:
-        if m.get("is_note"):
-            continue
         # OPERADOR = nuestro personal de soporte. NO "AGENTE": el agente es el CLIENTE
         # vendedor/afiliador (segmento `agente`, cola "Agente 👨👩"), del otro lado del chat.
         # BOT NO ES SOLO `CHATBOT`. El rotulo miraba un unico remitente, asi que el marketing
@@ -1077,8 +1075,21 @@ def _transcript(msgs: list[dict], juzgada_desde=None) -> list[dict]:
         # 230.773 mensajes de operadores reales vienen sin `sent_from` (ver src/metrics.py).
         from src.metrics import sin_persona_detras
 
-        role = ("CLIENTE" if not m["from_me"]
-                else ("BOT" if sin_persona_detras(m) else "OPERADOR"))
+        # LAS NOTAS DEL CRM VAN COMO `SISTEMA`, ni como operador ni escondidas.
+        # Se filtraban porque el chat era "lo que se le dijo al cliente", y eso deja de
+        # alcanzar en cuanto los NUMEROS de la tarjeta se anclan en ellas. CASO REAL
+        # (2026-08-24, `e97b75aa`): "tardo 1,7 minutos en avisar que recibio el comprobante"
+        # sobre un chat con dos horas visibles separadas por DOS minutos. El 1,7 se mide
+        # desde `14:01:04 Anggie *aceptado*` -- la nota de ENTREGA del ticket, que es donde
+        # `inicio_del_reloj` arranca (src/deposito.py) -- hasta el "ing" de 14:02:46. Con la
+        # nota escondida ese numero no se puede verificar mirando el chat.
+        # `SISTEMA` y no `OPERADOR` a proposito: contarla como respuesta al cliente seria el
+        # bug que `hubo_respuesta_del_negocio` ya documenta en src/sin_respuesta.py.
+        if m.get("is_note"):
+            role = "SISTEMA"
+        else:
+            role = ("CLIENTE" if not m["from_me"]
+                    else ("BOT" if sin_persona_detras(m) else "OPERADOR"))
         # La HORA de cada mensaje viaja al front. Es lo que permite ver la demora de un
         # vistazo en el chat, que es donde se entiende: un salto de 40 minutos entre el
         # pedido y la respuesta no se lee en ningun KPI. Va en ISO y el front la formatea en

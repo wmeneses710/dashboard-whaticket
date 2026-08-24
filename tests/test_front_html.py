@@ -633,3 +633,31 @@ def test_la_composicion_se_MUESTRA_con_la_cola_y_su_volumen():
     bloque = html[i:i + 700]
     assert "c.cola" in bloque, "no nombra la cola"
     assert "c.conversaciones" in bloque, "no muestra el volumen de la cola"
+
+
+# --- LAS NOTAS DEL CRM SE PINTAN COMO EVENTO, NO COMO BURBUJA ---------------------------
+# Llegan al transcript con `role="SISTEMA"` desde el 2026-08-24 porque ANCLAN los numeros de
+# la tarjeta (caso `e97b75aa`: "tardo 1,7 minutos" se mide desde la nota de entrega del
+# ticket, que estaba escondida). Pero no son mensajes al cliente: pintarlas como burbuja del
+# operador seria cambiar un problema por otro peor -- el chat diria que el operador escribio
+# algo que el cliente nunca vio.
+
+def test_el_front_distingue_la_nota_del_crm():
+    html = HTML.read_text(encoding="utf-8")
+    m = re.search(r"function bubClass\(role\) \{([^}]*)\}", html)
+    assert m, "cambio bubClass, revisar este test"
+    assert "SISTEMA" in m.group(1), (
+        "una nota del CRM cae en la clase del operador: el chat diria que le escribio al "
+        "cliente algo que el cliente nunca vio")
+
+
+def test_la_nota_tiene_su_propio_estilo():
+    html = HTML.read_text(encoding="utf-8")
+    assert re.search(r"\.bub\.sis\s*\{", html), "falta el estilo de la nota del sistema"
+
+
+def test_la_nota_no_se_rotula_como_operador():
+    html = HTML.read_text(encoding="utf-8")
+    m = re.search(r"function bubAuthor\(m\) \{(.*?)\n", html, re.S)
+    assert m, "cambio bubAuthor, revisar este test"
+    assert "SISTEMA" in m.group(1), "la nota se rotularia 'Operador'"

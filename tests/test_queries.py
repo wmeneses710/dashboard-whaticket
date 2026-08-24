@@ -1166,7 +1166,10 @@ def test_el_transcript_numera_la_interaccion_de_cada_mensaje():
             _msg(2, True, "Ana *resuelto* la conversación", nota=True),
             _msg(40, False, "hola de nuevo"), _msg(41, True, "te ayudo")]
     out = _transcript(msgs)
-    assert [m["interaccion"] for m in out] == [1, 1, 2, 2], "no numera por interaccion"
+    # La nota de cierre viaja desde el 2026-08-24 (ancla las mediciones de la tarjeta), asi
+    # que son CINCO entradas y la nota pertenece a la interaccion que cierra.
+    assert [m["interaccion"] for m in out] == [1, 1, 1, 2, 2], "no numera por interaccion"
+    assert [m["role"] for m in out] == ["CLIENTE", "OPERADOR", "SISTEMA", "CLIENTE", "OPERADOR"]
     assert all(m["interacciones"] == 2 for m in out), "falta el total, no hay contra que leer"
 
 
@@ -1194,7 +1197,9 @@ def test_el_transcript_marca_CUAL_interaccion_se_califico():
             _msg(40, False, "hola de nuevo"), _msg(41, True, "te ayudo")]
     juzgada_desde = datetime(2026, 8, 12, 10, 40, tzinfo=timezone.utc)
     out = _transcript(msgs, juzgada_desde=juzgada_desde)
-    assert [m["juzgada"] for m in out] == [False, False, True, True]
+    # Cinco entradas desde el 2026-08-24: la nota de cierre ya no se filtra. Pertenece a la
+    # interaccion 1, que NO es la juzgada -> False, igual que los dos mensajes que la rodean.
+    assert [m["juzgada"] for m in out] == [False, False, False, True, True]
     # Sin ventana (el fall-through al LLM, que lee la sesion COMPLETA) se juzga todo: marcar
     # una sola seria decidir por el negocio cual representa la nota.
     assert all(m["juzgada"] for m in _transcript(msgs))
@@ -1706,3 +1711,39 @@ def test_sin_session_id_sigue_cayendo_al_episodio():
 
     fuente = inspect.getsource(queries.conversation_detail)
     assert "fetch_messages" in fuente, "se perdio el fallback por conversacion"
+
+
+# --- LAS NOTAS DEL CRM SE VEN, PORQUE ANCLAN LAS MEDICIONES -----------------------------
+# CASO REAL (2026-08-24, sesion `e97b75aa`): la tarjeta decia "tardo 1,7 minutos en avisar
+# que recibio el comprobante" y en el chat solo habia dos horas visibles, 09:00 y 09:02 --
+# dos minutos. El negocio pregunto si algo escondia mensajes. Si:
+#     14:00:25  cliente  "Abono 67.63 a deuda"
+#     14:00:25  cliente  [imagen]                      <- el comprobante
+#     14:01:04  NOTA     "Anggie Belén *aceptado*"     <- OCULTA
+#     14:02:46  Anggie   "ing"
+#     14:02:49  NOTA     "Anggie Belén *resuelto*"     <- OCULTA
+# **El 1,7 se mide desde la nota oculta**: 14:01:04 -> 14:02:46 = 1 min 42 s, exacto. El reloj
+# no arranca en el comprobante sino cuando le ENTREGAN el ticket al operador
+# (`inicio_del_reloj`, src/deposito.py), y esa entrega es justo lo que no se veia.
+# Filtrarlas era defendible cuando el chat era "lo que se le dijo al cliente"; deja de serlo
+# cuando los numeros de la tarjeta se anclan en ellas. Van con `role="SISTEMA"` para que el
+# front las pinte distinto: son eventos del CRM, no mensajes al cliente.
+
+def test_las_notas_del_crm_llegan_al_transcript_marcadas():
+    from src.queries import _transcript
+
+    out = _transcript([_msg(0, False, "Abono 67.63 a deuda"),
+                       _msg(1, True, "Anggie *aceptado* la conversación", nota=True),
+                       _msg(2, True, "ing")])
+    assert len(out) == 3, "sigue escondiendo la nota que ancla el reloj"
+    assert [m["role"] for m in out] == ["CLIENTE", "SISTEMA", "OPERADOR"]
+
+
+def test_la_nota_no_se_confunde_con_un_mensaje_del_operador():
+    """Contarla como del operador seria peor que esconderla: `hubo_respuesta_del_negocio` ya
+    aprendio esa leccion (src/sin_respuesta.py) y el chat no puede contradecirla."""
+    from src.queries import _transcript
+
+    out = _transcript([_msg(0, False, "hola"),
+                       _msg(1, True, "Ana *resuelto* la conversación", nota=True)])
+    assert out[1]["role"] == "SISTEMA", "una nota no es una respuesta al cliente"
