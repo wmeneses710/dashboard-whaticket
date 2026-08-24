@@ -333,9 +333,22 @@ _CIERRE = (
             practica="B12"),
 )
 
+# --- REDIRECCION, el octavo motivo (2026-08-20) -----------------------------------------
+# Tambien nacio despues del catalogo, y su consejo vivia asignado DENTRO de la funcion
+# (`recomendacion = "..."`), no como constante de modulo -- por eso el guard de esta manana
+# no lo vio. Apunta a B09 ("informar al cliente cuando su caso sera transferido"), que es el
+# eje del que ya cuelga la rubrica. El 4 estrellas no lleva consejo: derivar a una linea viva
+# y avisarle al cliente es el procedimiento cumplido.
+_REDIRECCION = (
+    Consejo("C42", "redireccion", "deficiente", "derivó sin línea a la que escribir",
+            "Antes de derivar, verificá que la línea de destino esté activa y pasale al "
+            "cliente el número completo.",
+            practica="B09"),
+)
+
 CONSEJOS: tuple[Consejo, ...] = (
     _AGILIDAD + _INFO + _PROMO + _DEPOSITO + _RETIRO + _REGISTRO + _SOPORTE + _INFO_AGENTE
-    + _CIERRE
+    + _CIERRE + _REDIRECCION
 )
 
 

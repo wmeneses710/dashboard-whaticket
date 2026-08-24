@@ -160,7 +160,8 @@ def assign_sessions(episodes: list[dict]) -> list[dict]:
 
 
 def evaluate_session(messages: list[dict], lineas: dict | None = None,
-                     es_grupo: bool | None = False):
+                     es_grupo: bool | None = False,
+                     linea_propia: str | None = None):
     """Stats + rubrica + elegibilidad sobre el transcript MERGEADO de la sesion. PURA.
 
     `lineas`: mapa tail-de-9-digitos -> status de `connections` (ver
@@ -225,6 +226,10 @@ def evaluate_session(messages: list[dict], lineas: dict | None = None,
     # `sin_motivo` sigue ganandole (bucket A, decision del 2026-08-07): si el cliente
     # tampoco planteo nada, la etiqueta que queda es `sin_motivo`. Por eso el chequeo de
     # arriba no se toco y este bloque desaparecio en vez de moverse.
+    # `redireccion` NO se decide aca. Vuelve a ser skip cuando el destino esta vivo
+    # (decision del negocio, 2026-08-24), pero eso vive en el ORDEN del worker: la cortesia
+    # le gana al traspaso (decision del 2026-08-07) y aca correria ANTES de ese chequeo.
+    # Ver src/worker.py y src/redireccion.traspaso_limpio.
     return stats, rubric, eval_status, skip_reason
 
 

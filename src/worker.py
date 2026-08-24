@@ -29,6 +29,7 @@ from src.redireccion import (
     build_lineas_map,
     respuesta_fue_solo_traspaso,
     tail_de,
+    traspaso_limpio,
     score_redireccion,
 )
 from src.signals import cliente_abandono_tras_pedido, desenlace_del_cliente
@@ -306,8 +307,23 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
             # (MOTIVOS_DEL_LLM, que lo deja afuera del enum del prompt a proposito).
             # VA DESPUES del segmento `agente`: el ruteo por segmento es mas fundamental
             # (un agente se mide con su propio reloj) y no lo pisa un traspaso.
-            score = score_redireccion(msgs, lineas,
-                                      tail_de(sess.get("linea_propia")))
+            # UN TRASPASO LIMPIO NO SE CALIFICA (decision del negocio, 2026-08-24): "si es
+            # redireccion no deberia ni calificarse, porque es algo que no le compete, y la
+            # mayoria ni explica". Medido sobre 2.500 sesiones: 13 traspasos puros, **12 con
+            # 4 estrellas** -- una nota que califica igual al 92% no mide nada.
+            # NO vuelve el problema que lo saco de skip el 2026-08-20 (que BORRABA el
+            # traspaso del tablero): la tarjeta de sin evaluar desglosa por causa y
+            # `SKIP_LABEL` ya tiene `redireccion`, asi que se sigue contando.
+            # VA ACA Y NO EN `evaluate_session` porque ahi correria ANTES del chequeo de
+            # cortesia, y el negocio decidio el 2026-08-07 que el bucket A se queda en
+            # `sin_motivo`. La prioridad vive en ESTE orden.
+            _propia = tail_de(sess.get("linea_propia"))
+            if traspaso_limpio(msgs, lineas, _propia):
+                eval_status, skip_reason, score = "skipped", "redireccion", None
+            else:
+                # Sin destino resoluble o a una linea caida: eso SI le compete al operador
+                # -- el eligio a donde mandarlo y el cliente quedo sin a donde escribir.
+                score = score_redireccion(msgs, lineas, _propia)
         else:
             # Pase v2: el LLM clasifica el MOTIVO y califica en 2 capas. thread_context
             # vacio: la sesion YA mergea todos los episodios del ticket. deposit_hint pasa

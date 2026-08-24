@@ -184,3 +184,72 @@ def test_la_nota_NO_acusa_de_dejar_al_cliente_sin_linea_cuando_SI_la_dejo():
     assert "sin dejarle" not in r.rating_rationale, (
         f"acusa de algo que no pasó: {r.rating_rationale!r}")
     assert r.stars >= 3, f"castiga un traspaso bien hecho con {r.stars}★"
+
+
+# --- UN TRASPASO LIMPIO NO SE CALIFICA ---------------------------------------------------
+# DECISION DEL NEGOCIO (2026-08-24): "si es redireccion no deberia ni calificarse, porque es
+# algo que no le compete, y la mayoria ni explica, seria simplemente redireccionar y ya".
+# MEDIDO sobre 2.500 sesiones: 13 son redireccion pura (0,5%) y **12 de 13 daban 4 estrellas**
+# -- una nota que le pone la misma calificacion al 92% no esta midiendo nada. Los textos son
+# plantillas ("Con gusto atendemos tu solicitud en la linea de...").
+#
+# VUELVE A SER SKIP, PERO NO SE PIERDE. El 2026-08-20 habia dejado de serlo porque el skip
+# BORRABA el traspaso del tablero y el negocio lo queria contar. Eso ya no pasa: la tarjeta de
+# sin evaluar desglosa por causa y `SKIP_LABEL` tiene `redireccion` desde entonces, asi que
+# como skip se sigue contando, con su renglon y clicable para filtrar.
+#
+# LA EXCEPCION SALE DEL MISMO ARGUMENTO. "No le compete" vale para el traspaso a una linea
+# VIVA. Mandar al cliente a una linea CAIDA o sin numero resoluble SI le compete -- el eligio
+# a donde mandarlo y el cliente quedo sin a donde escribir. Ese caso (1 de 13) conserva su
+# nota de 2 estrellas.
+
+def test_un_traspaso_a_linea_VIVA_es_limpio():
+    """La DECISION vive en el orden del worker, no en `evaluate_session`: ahi correria antes
+    del chequeo de cortesia, y el negocio decidio el 2026-08-07 que el bucket A se queda en
+    `sin_motivo`. Aca se fija la señal; el ruteo lo fija tests/test_worker.py."""
+    from src.redireccion import traspaso_limpio
+
+    msgs = [{"from_me": False, "is_note": False, "body": "hola"},
+            _op("👋 Con gusto atendemos tu solicitud en la línea de jugadores 0959803754")]
+    assert traspaso_limpio(msgs, LINEAS, PROPIA) is True
+
+
+def test_un_traspaso_SIN_destino_sigue_llevando_nota():
+    """Lo unico que en un traspaso es responsabilidad del operador."""
+    from src.redireccion import score_redireccion
+    from src.redireccion import traspaso_limpio
+
+    msgs = [{"from_me": False, "is_note": False, "body": "hola"},
+            _op("escríbeme al siguiente número")]  # traspaso sin numero: queda a la deriva
+    assert traspaso_limpio(msgs, LINEAS, PROPIA) is False, (
+        "el que deja al cliente sin destino tiene que calificarse")
+    r = score_redireccion(msgs, LINEAS, PROPIA)
+    assert r is not None and r.stars == 2
+
+
+def test_un_traspaso_a_linea_CAIDA_sigue_llevando_nota():
+    from src.redireccion import traspaso_limpio
+
+    msgs = [{"from_me": False, "is_note": False, "body": "hola"},
+            _op("comunicate al siguiente numero 0987013562")]  # DISCONNECTED
+    assert traspaso_limpio(msgs, LINEAS, PROPIA) is False
+
+
+def test_si_ademas_atendio_no_hay_skip():
+    """El guard de siempre: si el operador tambien resolvio, la sesion se evalua por su
+    motivo real y el traspaso es un detalle."""
+    from src.redireccion import traspaso_limpio
+
+    msgs = [{"from_me": False, "is_note": False, "body": "no puedo recargar"},
+            _op("ya te acredité el saldo"),
+            _op("para próximas, escribí a 0959803754")]
+    assert traspaso_limpio(msgs, LINEAS, PROPIA) is False
+
+
+def test_sin_mapa_de_lineas_no_se_saltea_nada():
+    """Falla del lado seguro: sin poder probar que el destino esta vivo, se evalua."""
+    from src.redireccion import traspaso_limpio
+
+    msgs = [{"from_me": False, "is_note": False, "body": "hola"},
+            _op("escribí a 0959803754")]
+    assert traspaso_limpio(msgs, None, None) is False

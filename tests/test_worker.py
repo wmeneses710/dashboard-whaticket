@@ -401,14 +401,19 @@ def _redireccion_session_messages():
     ]
 
 
-def test_la_redireccion_se_califica_SIN_llamar_al_LLM(monkeypatch):
-    """Cambio del 2026-08-20: `redireccion` ya no se saltea, se califica -- pero SIGUE sin
-    pasar por el modelo. El traspaso puro lo decide `respuesta_fue_solo_traspaso`, que es
-    una funcion pura, y a donde apunta lo decide `connections`: dos hechos que el modelo no
-    puede verificar. Pagar una inferencia para despues pisarla es gasto puro.
+def test_un_traspaso_LIMPIO_se_saltea_y_no_llama_al_LLM(monkeypatch):
+    """CAMBIO DEL 2026-08-24. El 2026-08-20 `redireccion` habia dejado de ser skip para poder
+    contarla; ahora vuelve a serlo cuando el destino esta VIVO, por decision del negocio:
+    "si es redireccion no deberia ni calificarse, porque es algo que no le compete, y la
+    mayoria ni explica". Medido sobre 2.500 sesiones: 13 traspasos puros y **12 daban 4
+    estrellas** -- una nota que califica igual al 92% no mide nada.
+    Y no vuelve el problema que lo saco de skip: se sigue contando en la tarjeta de sin
+    evaluar, que desglosa por causa y ya tiene la etiqueta `redireccion`.
 
-    La intencion del test viejo (`no debe correr el LLM`) se conserva tal cual; lo que
-    cambia es el resultado: nota en vez de skip."""
+    LA INTENCION DEL TEST VIEJO SE CONSERVA TAL CUAL: sigue sin pasar por el modelo. El
+    traspaso puro lo decide una funcion pura y a donde apunta lo dice `connections`: dos
+    hechos que el modelo no puede verificar, asi que pagar una inferencia seria gasto puro.
+    """
     monkeypatch.setattr(worker, "fetch_session_messages",
                         lambda cur, sid: _redireccion_session_messages())
 
@@ -419,11 +424,23 @@ def test_la_redireccion_se_califica_SIN_llamar_al_LLM(monkeypatch):
     conn = _CtxConn()
     eval_status, skip_reason, score = score_session_and_store(
         conn, _session_row(), llm=None, op_map={}, lineas={"991194133": "CONNECTED"})
+    assert (eval_status, skip_reason) == ("skipped", "redireccion")
+    assert score is None, "un traspaso a una línea viva no lleva nota"
+
+
+def test_un_traspaso_SIN_destino_vivo_SI_se_califica(monkeypatch):
+    """La excepcion sale del mismo argumento del negocio: "no le compete" vale para mandarlo
+    a una linea viva. Elegir mandarlo a una CAIDA si le compete, y el cliente queda sin a
+    donde escribir."""
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _redireccion_session_messages())
+    monkeypatch.setattr(worker, "score_by_motivo",
+                        lambda **kw: (_ for _ in ()).throw(AssertionError("sin LLM")))
+    conn = _CtxConn()
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, _session_row(), llm=None, op_map={}, lineas={"991194133": "DISCONNECTED"})
     assert (eval_status, skip_reason) == ("evaluated", None)
-    assert score is not None
-    assert score.motivo == "redireccion"
-    assert score.stars == 4
-    assert _params_of_upsert(conn)["stars"] == 4
+    assert score is not None and score.motivo == "redireccion" and score.stars == 2
 
 
 def test_sin_mapa_de_lineas_la_redireccion_se_evalua_igual(monkeypatch):

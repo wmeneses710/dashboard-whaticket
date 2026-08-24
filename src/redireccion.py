@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import re
 
+from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
 
 # Misma convencion que las otras rubricas deterministas (ver src/info.py): el `llm_model`
@@ -283,6 +284,29 @@ def es_redireccion_total(messages: list[dict], lineas: dict[str, str] | None) ->
             and traspaso_a_linea_viva(messages, lineas))
 
 
+def traspaso_limpio(messages: list[dict], lineas: dict[str, str] | None,
+                    linea_propia: str | None = None) -> bool:
+    """El traspaso fue PURO y a una linea nuestra que esta viva -> no hay nada que calificar.
+
+    DECISION DEL NEGOCIO (2026-08-24): "si es redireccion no deberia ni calificarse, porque es
+    algo que no le compete, y la mayoria ni explica, seria simplemente redireccionar y ya".
+    MEDIDO sobre 2.500 sesiones: 13 son traspaso puro y **12 daban 4 estrellas**. Una nota que
+    califica igual al 92% no mide nada, y los textos son plantillas.
+
+    NO CUBRE EL TRASPASO SIN DESTINO ni el que apunta a una linea CAIDA. Eso sale del mismo
+    argumento del negocio: "no le compete" vale para mandarlo a una linea viva; elegir mandarlo
+    a la nada SI le compete, y el cliente queda sin a donde escribir. Ese caso conserva sus 2
+    estrellas (`score_redireccion`).
+
+    SIN MAPA devuelve False: sin poder PROBAR que el destino esta vivo no se saltea nada. Es la
+    misma regla que ya rige en `destino_probadamente_caido` -- se exige prueba, no ausencia.
+    """
+    if not lineas or not respuesta_fue_solo_traspaso(messages, lineas, linea_propia):
+        return False
+    return (tiene_destino(messages, lineas, linea_propia)
+            and not destino_probadamente_caido(messages, lineas, linea_propia))
+
+
 def score_redireccion(
     messages: list[dict], lineas: dict[str, str] | None,
     linea_propia: str | None = None,
@@ -322,13 +346,15 @@ def score_redireccion(
         stars, label = 4, "buena"
         rationale = ("El operador derivó al cliente a otra línea nuestra que está activa. "
                      "Le avisó del traspaso, pero la solicitud no se atendió acá.")
-        recomendacion = ""
+        consejo = None
     else:
         stars, label = 2, "deficiente"
         rationale = ("El operador derivó al cliente sin dejarle una línea a la que "
                      "escribir: el número no se pudo resolver o la línea está caída.")
-        recomendacion = ("Antes de derivar, verificá que la línea de destino esté activa y "
-                        "pasale al cliente el número completo.")
+        # EL CONSEJO VIVE EN EL CATALOGO (C42 -> B09). Estaba asignado aca adentro, que es
+        # por que el guard de `_COACHING` no lo veia. Migrado VERBATIM el 2026-08-24: no
+        # cambia ninguna nota, le pone codigo y practica a lo que ya se decia.
+        consejo = consejo_de("redireccion", "deficiente")
     return ScoreResult(
         rubric="redireccion",
         motivo="redireccion",
@@ -346,7 +372,9 @@ def score_redireccion(
         atencion=None,
         deposit_observed=None,
         floor_applied=False,
-        recomendacion=recomendacion,
+        recomendacion=consejo.texto if consejo else "",
+        recomendacion_codigos=[consejo.codigo] if consejo else [],
+        recomendacion_practica=consejo.practica if consejo else "",
         claridad="claro",
         friccion=False,
         aciertos=[],

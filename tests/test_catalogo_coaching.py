@@ -246,9 +246,16 @@ def test_ninguna_rubrica_emite_coaching_fuera_del_catalogo():
     for archivo in sorted(src.glob("*.py")):
         # Anclado en el inicio de linea: los `_COACHING` que viven en un comentario
         # (src/soporte.py, src/store.py) documentan historia, no emiten nada.
-        if _re.search(r"^_COACHING\w*\s*=", archivo.read_text(encoding="utf-8"), _re.M):
-            if archivo.stem not in migradas:
-                fuera.append(archivo.stem)
+        texto = archivo.read_text(encoding="utf-8")
+        # DOS FORMAS, y la segunda se me escapo la primera vez: la constante de modulo
+        # (`_COACHING = "..."`) y la asignacion DENTRO de la funcion
+        # (`recomendacion = "..."`). `src/redireccion.py` usaba la segunda y el guard lo
+        # dejo pasar: el mismo agujero que este test venia a cerrar, sobreviviendo en otra
+        # rubrica. Se excluye la cadena VACIA, que no es un consejo sino su ausencia.
+        emite = _re.search(r"^_COACHING\w*\s*=", texto, _re.M) or _re.search(
+            r"^\s*recomendacion\s*=\s*\(?\s*[\"'](?![\"'])", texto, _re.M)
+        if emite and archivo.stem not in migradas:
+            fuera.append(archivo.stem)
     assert not fuera, (
         f"estas rubricas emiten coaching que el catalogo no declara: {fuera}. El tablero "
         f"muestra el texto sin codigo y no se puede sumar por practica del manual")
