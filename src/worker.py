@@ -38,6 +38,7 @@ from src.sin_respuesta import score_sin_respuesta
 from src.solo_cortesia import score_solo_cortesia
 from src.router import decide_eligibility, decide_rubric
 from src.segments import es_grupo_de_whatsapp
+from src.registro import alta_abandonada_por_datos
 from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
 from src.sessions import evaluate_session
@@ -340,6 +341,22 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                 # NUESTRA" (que es `redireccion` y tiene su propia regla).
                 lineas=lineas,
             )
+    # REGISTRO CON LOS DATOS A MEDIAS: no se evalua. El operador pidio los datos y el
+    # cliente no los mando enteros, asi que no hay nada que juzgarle. Decision del
+    # negocio (2026-08-25): "si no lo hizo en este chat contaria como abandono, porque
+    # el usuario no completo los requisitos aunque se le pidieron".
+    #
+    # VA ACA Y NO EN `score_by_motivo` porque es el PRIMER skip que depende del MOTIVO, y
+    # el motivo lo elige el LLM: hasta hoy todos se decidian antes de la inferencia. Este
+    # archivo ya es donde viven los skips (ver el de `redireccion` mas arriba), y meterlo
+    # en el scorer obligaba a cambiarle la firma -- 47 tests y 10 monkeypatches de churn
+    # para no reusar el idioma que ya estaba.
+    #
+    # SEPARA, NO VACIA: de las 18 filas de la copia que cobran 2 estrellas por "el alta
+    # quedo a medias", 11 caen aca y 7 SE QUEDAN con su nota, porque ahi el cliente si
+    # mando todo y el que no entrego fue el operador. Ver registro.datos_completos_del_alta.
+    if score is not None and score.motivo == "registro" and alta_abandonada_por_datos(msgs):
+        eval_status, skip_reason, score = "skipped", "datos_incompletos", None
     # EL ACOTADO VALE PARA TODOS LOS CAMINOS, no solo para el del jugador. Hasta el
     # 2026-08-24 esta consulta vivia DENTRO del `else` de arriba, asi que en el segmento
     # `agente` `ventana_juzgada` quedaba en None siempre. Medido en la copia:

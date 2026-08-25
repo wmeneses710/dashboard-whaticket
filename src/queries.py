@@ -92,9 +92,36 @@ def _coerce(v):
     return float(v) if isinstance(v, Decimal) else v
 
 
+# COLUMNAS QUE LLEVAN UN TELEFONO Y SALEN AL FRONT. `customer_number` viaja en cuatro
+# consultas (lista, detalle y las dos de tarjetas) y `num` es su agregado por tarjeta.
+# `_transcript` ya enmascara lo que va DENTRO del chat; sin esto quedaba el mismo dato
+# expuesto por la puerta de al lado, en un dominio publico con endpoints anonimos.
+# EL NOMBRE NO ESTA ACA a proposito: taparlo es una decision de producto pendiente del
+# negocio (el del OPERADOR es el eje del tablero), no un arreglo de seguridad.
+_COLUMNAS_CON_TELEFONO = ("customer_number", "num")
+
+
 def _rows_as_dicts(cur) -> list[dict]:
+    """Las filas como dicts, con el telefono ENMASCARADO.
+
+    Es el punto UNICO por donde pasan las cinco consultas que devuelven filas, asi que la
+    censura vive aca una sola vez. Va en la SALIDA y no en el SQL: `_CARD_KEY` agrupa por
+    `contact_id`/`ticket_id` (uuid, nunca el telefono) y el front devuelve esas claves para
+    la segunda consulta, asi que el dato crudo tiene que seguir disponible del lado de la
+    base. Ver src/censura.py para por que nada de esto puede pasar antes de calificar.
+    """
+    from src.censura import censurar_texto
     cols = [d.name for d in cur.description]
-    return [{c: _coerce(v) for c, v in zip(cols, r)} for r in cur.fetchall()]
+    out = []
+    for r in cur.fetchall():
+        d = {c: _coerce(v) for c, v in zip(cols, r)}
+        for c in _COLUMNAS_CON_TELEFONO:
+            # `censurar_texto` devuelve "" para None, y un None tiene que seguir siendo
+            # None: el front distingue "sin telefono" de "telefono tapado".
+            if d.get(c):
+                d[c] = censurar_texto(str(d[c]))
+        out.append(d)
+    return out
 
 
 def list_accounts(cur) -> list[str]:
@@ -1074,6 +1101,7 @@ def _transcript(msgs: list[dict], juzgada_desde=None) -> list[dict]:
         # mensajes. `sin_persona_detras` decide por REMITENTE, nunca por la falta de user_id:
         # 230.773 mensajes de operadores reales vienen sin `sent_from` (ver src/metrics.py).
         from src.metrics import sin_persona_detras
+        from src.censura import censurar_texto
 
         # LAS NOTAS DEL CRM VAN COMO `SISTEMA`, ni como operador ni escondidas.
         # Se filtraban porque el chat era "lo que se le dijo al cliente", y eso deja de
@@ -1096,7 +1124,21 @@ def _transcript(msgs: list[dict], juzgada_desde=None) -> list[dict]:
         # hora de Ecuador (la operacion corre 06:00-23:59 alla).
         at = m.get("created_at")
         n = idx_de.get(id(m), 1)
-        out.append({"role": role, "text": (m.get("body") or "[media]").strip()[:800],
+        # EL DATO SENSIBLE SE ENMASCARA ACA, en el camino de LECTURA. El tablero vive en
+        # un dominio publico con 14 endpoints anonimos que devuelven este transcript
+        # completo (auditoria del 2026-08-24), y MEDIDO sobre los 52.135 mensajes de las
+        # sesiones scoreadas: 3.734 traen un celular, 2.186 una corrida de 6+ digitos, 685
+        # una cuenta bancaria y **399 usuario y clave EN CLARO**, 384 de operadores.
+        # NO se censura antes de calificar: el scoring lee los mensajes crudos por
+        # `context.fetch_session_messages`, y `es_traspaso` compara el tail del telefono
+        # contra el mapa de lineas, `_es_traspaso_de_datos` busca el email o la cedula y
+        # `operator_sent_credentials` busca justo el patron de credenciales. Hay un test
+        # que prohibe el import de `censura` en los modulos de scoring.
+        # ANTES DEL TRUNCADO a 800: el enmascarado conserva el largo, asi que el corte cae
+        # en el mismo lugar; al reves, un telefono partido por el corte no matchearia y
+        # saldria a medias en claro.
+        out.append({"role": role,
+                    "text": censurar_texto((m.get("body") or "[media]").strip())[:800],
                     "at": at.isoformat() if at is not None else None,
                     "interaccion": n, "interacciones": total or 1,
                     "juzgada": n in juzgadas if juzgadas else True})

@@ -252,3 +252,36 @@ def test_con_tiempos_las_notas_que_no_son_cierre_siguen_afuera():
             _m_t(60, True, "listo")]
     t = format_transcript(msgs, "human", con_tiempos=True)
     assert "Asignado" not in t
+
+
+def test_el_prompt_acota_soporte_cuenta_a_que_LA_CUENTA_EXISTA():
+    """La regla del 2026-08-07 ("como accedo" -> soporte_cuenta) se escribio para un
+    cliente que YA TIENE cuenta y no puede entrar. La plantilla del anuncio de Facebook
+    dice literalmente "¿Como accedo a sortiGo para recibir los beneficios.?" y contiene
+    esa frase disparadora POR COINCIDENCIA: esa persona no tiene ninguna cuenta.
+
+    MEDIDO en la copia (2026-08-25) sobre las 187 sesiones que traen esa plantilla:
+        registro        145 filas   3,64 estrellas
+        promo            33 filas   3,48
+        soporte_cuenta    9 filas   2,78   <- la trampa, y cuesta ~0,8 estrellas
+    El modelo acierta el 95% de las veces solo; el prompt tiene que cerrarle el 5%.
+    Caso real: `ad22893c` (Romina), 2 estrellas por no resolver el problema de una
+    cuenta que la clienta nunca tuvo.
+    """
+    system, _ = build_motivo_prompt(MSGS_HUMAN, thread_context="")
+    low = system.lower()
+    # La condicion tiene que ser EXPLICITA: soporte_cuenta exige evidencia de que la
+    # cuenta existe, no la frase suelta.
+    assert "solo si hay evidencia" in low or "solo si la cuenta existe" in low
+    # Y el prompt tiene que nombrar el caso que lo trae: preguntar por el beneficio/bono
+    # del anuncio no es un problema de cuenta.
+    assert "beneficios" in low
+    assert "anuncio" in low or "plantilla" in low
+    # ACOTADO A LA PLANTILLA, y el prompt lo dice: la exigencia de evidencia NO se
+    # extiende a "como activo mi cuenta" a secas. MEDIDO (2026-08-25) sobre la copia:
+    #     "accedo a sortiGo" -> soporte_cuenta:  9 filas, 2,78 estrellas  <- el sintoma
+    #     "activo mi cuenta" -> soporte_cuenta: 31 filas, 3,32 estrellas  <- SIN sintoma
+    # Ampliar la regla a la segunda pondria 31 operadores en juego sin un problema
+    # medido que lo justifique, y encima los mandaria a la puerta de credenciales de
+    # `registro`, que esta cerrada en el 53% de sus filas. Decision del negocio.
+    assert 'no cambia "como activo mi cuenta"' in low

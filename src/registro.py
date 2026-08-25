@@ -146,6 +146,69 @@ def es_cedula_de_alta(body: str, mensaje_previo_del_operador: dict | None) -> bo
     return not _PIDE_OTRO_CANAL_RE.search(previo)
 
 
+def datos_completos_del_alta(messages: list[dict]) -> bool:
+    """El CLIENTE mando el juego completo de datos que el alta necesita.
+
+    NO es lo mismo que `_es_traspaso_de_datos`, y la diferencia es toda la señal: esa
+    dice "aca hay datos del alta" y le alcanza UN campo (el email, o una corrida de 10
+    digitos sin vocabulario bancario), porque su trabajo es ANCLAR la ventana. Esta
+    dice "el cliente cumplio su parte", y para eso un campo no alcanza.
+
+    POR QUE EXISTE. Medido en la copia el 2026-08-25: las 6 sesiones de `registro` que
+    caen en el 2 estrellas por "paso sus datos y nunca recibio credenciales" tienen
+    TODAS los datos incompletos -- correo sin celular, celular sin correo, o solo el
+    nombre. La mas clara es `0a828144`, donde el cliente escribe "Es que no tengo
+    coreo": el alta era imposible y el operador cobraba el 2. Decision del negocio del
+    2026-08-25: "si no lo hizo en este chat contaria como abandono, porque el usuario no
+    completo los requisitos aunque se le pidieron".
+
+    SE VALIDAN DOS CAMPOS DE LOS TRES ("Nombres / Correo electronico / Numero de
+    celular"). El correo y la corrida de digitos son los dos que este modulo ya declara
+    imposibles de confundir con otra cosa; el NOMBRE no se puede verificar sin inventar
+    una heuristica de "esto parece un nombre", y una heuristica inventada adentro de una
+    vara es un dato falso con cara de dato. Los dos verificables reproducen el veredicto
+    correcto en las 6 filas reales y en el alta completa de `4d6c3eae`.
+
+    LOS CAMPOS PUEDEN VENIR EN MENSAJES DISTINTOS (la mitad de la gente los manda de a
+    uno) y SOLO CUENTAN LOS DEL CLIENTE: el operador escribe el correo y el numero al
+    PEDIRLOS ("Correo electronico: / Numero de celular:") y al entregar credenciales, asi
+    que contar sus mensajes daria "completo" siempre.
+    """
+    correo = digitos = False
+    for m in messages:
+        if m.get("is_note") or m.get("from_me"):
+            continue
+        body = m.get("body") or ""
+        if _EMAIL_RE.search(body):
+            correo = True
+        # El mismo guard que `_es_traspaso_de_datos`: 10 digitos + banco es un RETIRO,
+        # no el celular del alta. Sin esto, un correo del alta mas un pedido de retiro
+        # posterior darian "completo" y la sesion volveria a la rama del 2.
+        if _CEDULA_RE.search(body) and not _FORM_BANCARIO_RE.search(body):
+            digitos = True
+    return correo and digitos
+
+
+def alta_abandonada_por_datos(messages: list[dict]) -> bool:
+    """El cliente arranco el alta, NO completo los datos, y nunca hubo credenciales.
+
+    NO SE PUEDE EVALUAR al operador acá: pidio los datos y el cliente no los mando
+    enteros. Decision del negocio (2026-08-25): "si no lo hizo en este chat contaria
+    como abandono, porque el usuario no completo los requisitos aunque se le pidieron".
+
+    LAS TRES CONDICIONES VAN JUNTAS. Medido en la copia: la rama del 2 estrellas
+    ("paso sus datos y nunca recibio credenciales") son 18 filas, y se parten en 11
+    incompletas -- estas -- y 7 COMPLETAS que se quedan en 2, porque ahi el cliente si
+    cumplio su parte y el operador no entrego. Una señal que se llevara las 18 dejaria
+    la rama muerta, que es la forma mas facil de convertir un arreglo en un encubrimiento.
+    """
+    if operator_sent_credentials(messages):
+        return False
+    if _datos_del_cliente(messages) is None:
+        return False   # no hay alta empezada; eso ya lo filtra `es_transaccion`
+    return not datos_completos_del_alta(messages)
+
+
 def _es_traspaso_de_datos(body: str) -> bool:
     """El mensaje del cliente trae los datos del ALTA (no un formulario de banco).
 

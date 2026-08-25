@@ -305,7 +305,12 @@ def test_el_modal_solo_muestra_las_notas_en_prosa_conocidas():
 def _skip_reasons_del_codigo() -> set[str]:
     """Los `skip_reason` que las fuentes pueden persistir, leidos del codigo."""
     encontrados: set[str] = set()
-    for modulo in ("router.py", "sessions.py"):
+    # `worker.py` y `scorer.py` ENTRARON el 2026-08-25. El test tenia el mismo punto
+    # ciego que vino a cerrar: escaneaba dos modulos, y el skip por traspaso limpio ya
+    # vivia en el worker (`= "skipped", "redireccion", None`) sin que nada lo atara. Con
+    # los finales de `registro` empezando a producir skips DESPUES del LLM, la lista
+    # tenia que incluir donde se deciden de verdad.
+    for modulo in ("router.py", "sessions.py", "worker.py", "scorer.py"):
         texto = (HTML.parents[1] / "src" / modulo).read_text(encoding="utf-8")
         # Se emite de DOS formas: `return "skipped", "<motivo>"` (router, 2 valores) y
         # `return stats, rubric, "skipped", "<motivo>"` (sessions, 4 valores). Anclar en

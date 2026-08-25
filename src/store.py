@@ -706,7 +706,47 @@ from src.segments import segment_for_queue
 # E10 de verdad (¿la plantilla salio sin modificar?) y ademas se vuelve medible el protocolo
 # de seguimiento que quedo afuera en v20.
 # Contrato en tests/test_catalogo_atc.py (10) y tests/test_coaching.py. 1.302 verdes desde 1.291.
-SCORING_VERSION = "2026.08-rubricas-v21"
+# 2026.08-rubricas-v22 (2026-08-25). CIERRA LA DEUDA DE LA ETIQUETA y suma los cambios de
+# dos dias que movieron notas sin bump. v21 quedo puesta el 2026-08-19 y siguio ahi mientras
+# los nueve commits del 2026-08-21 y los seis del 2026-08-24 movian estrellas: 3.072 filas de
+# la copia salieron etiquetadas con una vara que ya no era la suya. Ahora hay un test que lo
+# ata (tests/test_scoring_version.py): la constante tiene que ser la ULTIMA entrada de este
+# changelog, en los dos sentidos.
+#
+# LO QUE MUEVE NOTAS, del 2026-08-24:
+#   - EL ANCLA VALE PARA EL SEGMENTO `agente`. Vivia dentro del `else` del jugador, asi que
+#     ahi `ventana_juzgada` era None SIEMPRE. Medido: 0 de 113 filas con ancla -> 100%
+#     (deposito 682/682, retiro 146/146 en la copia nueva). Arrastraba LA ATRIBUCION: 2 de
+#     113 filas de 5 estrellas estaban en la persona equivocada.
+#   - UN TRASPASO LIMPIO NO SE CALIFICA (skip `redireccion`). Medido sobre 2.500 sesiones:
+#     13 traspasos puros, 12 con 4 estrellas -- una nota que califica igual al 92% no mide.
+#   - `es_traspaso` reconoce el traspaso por el DESTINO y no solo por la frase.
+#   - UN GRUPO DE WHATSAPP NO SE CALIFICA (skip `grupo_de_whatsapp`).
+#   - LAS NOTAS DEL CRM ENTRAN AL TRANSCRIPT como `SISTEMA`: el reloj del acuse arranca EN
+#     una de ellas, y `_transcript` las descartaba. Cambia lo que el modelo LEE.
+#   - Corte de interaccion a 6 h y regla de continuidad entre fragmentos.
+#   - `espera_efectiva` redondeada al segundo: dos operadores habian perdido DOS estrellas
+#     por 365 y 312 milisegundos.
+#
+# LO QUE MUEVE NOTAS, del 2026-08-25:
+#   - EL MOTIVO DE LA PLANTILLA DE ANUNCIO. La regla del 2026-08-07 ("como accedo" ->
+#     `soporte_cuenta`) se escribio para un cliente que YA TIENE cuenta, y la plantilla de
+#     Facebook ("¿Como accedo a sortiGo para recibir los beneficios?") trae esa frase POR
+#     COINCIDENCIA: esa persona no tiene ninguna cuenta. Medido sobre las 187 sesiones con la
+#     plantilla: 9 iban a `soporte_cuenta` con 2,78 estrellas, contra 3,64 de las que iban a
+#     `registro`. Acotado a la redaccion de beneficios/bono/promo; NO toca "como activo mi
+#     cuenta" (31 filas a 3,32 estrellas, sin sintoma). Benchado contra el host real: 9 de 9
+#     en el caso, 15 de 16 en el control.
+#   - SKIP `datos_incompletos`: `registro` donde el cliente no mando los datos enteros. Es el
+#     PRIMER skip que depende del motivo, que lo elige el LLM. Medido: la rama del 2 estrellas
+#     son 18 filas y se parten en 11 (estas) y 7 que SE QUEDAN, porque ahi el cliente cumplio
+#     y el que no entrego fue el operador. Decision del negocio.
+#
+# NO MUEVE NOTAS pero cambia que filas EXISTEN: `chat_json` trata un JSON incompleto como uno
+# roto (reintento que nombra la clave que falto) y el nivel 2 va con `think=False`. Con
+# `think=None` era inalcanzable detras del timeout de 180 s -- 600 s y ReadTimeout contra 22-78 s
+# medidos contra el host real. Sesiones que antes fallaban en bucle ahora se scorean.
+SCORING_VERSION = "2026.08-rubricas-v22"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas

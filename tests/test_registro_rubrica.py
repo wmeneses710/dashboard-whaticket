@@ -356,3 +356,97 @@ def test_registro_el_reloj_arranca_en_el_PRIMER_traspaso_de_la_ventana():
             _op(110, CREDENCIALES), _cierre_g(111)]
     r = calificar_registro(msgs)
     assert r.espera is not None and 9.5 <= r.espera.total_seconds() / 60 <= 10.5, r.espera
+
+
+# --- DATOS COMPLETOS DEL ALTA ------------------------------------------------
+#
+# EL PROBLEMA (medido en la copia, 2026-08-25): `_es_traspaso_de_datos` devuelve True
+# con UN SOLO campo -- alcanza el email, o una corrida de 10 digitos sin vocabulario
+# bancario. Asi que un cliente que manda solo el correo ya cuenta como "paso sus
+# datos", y si no llegan credenciales el operador cobra 2 estrellas por un alta que el
+# cliente NUNCA COMPLETO. Las 6 sesiones de la copia en esa rama estan TODAS
+# incompletas, y las 6 estan en 2 estrellas:
+#     43d4d110  correo, sin celular          b596b9a4  correo, sin celular
+#     0a828144  celular, sin correo          10b20914  solo correo
+#     803e0e4b  solo nombre                  e44abff3  celular, sin correo
+# `0a828144` es el mas claro: el cliente escribe "Es que no tengo coreo".
+#
+# DECISION DEL NEGOCIO (2026-08-25): "si paso datos y no paso credenciales hay que ver
+# si todos los datos fueron enviados para la creacion de cuentas; si no lo hizo en este
+# chat contaria como abandono porque el usuario no completo los requisitos aunque se le
+# pidieron".
+#
+# SE VALIDAN DOS CAMPOS, NO TRES. El modulo ya declara que "el correo y la cedula son
+# los dos campos del formulario que no se pueden confundir con otra cosa"; el NOMBRE no
+# se puede verificar sin una heuristica inventada, y una heuristica inventada dentro de
+# una vara es un dato falso con cara de dato. Los dos verificables alcanzan: reproducen
+# el veredicto correcto en las 6 filas reales y en el alta completa de `4d6c3eae`.
+
+def test_datos_completos_exige_correo_Y_la_corrida_de_diez_digitos():
+    from src.registro import datos_completos_del_alta
+    # `4d6c3eae` real (Erick Lopez): los tres campos, en tres mensajes.
+    assert datos_completos_del_alta([
+        _cli(0, "Erick lopez"), _cli(0, "ericklopezjosediaz@gmail.com"), _cli(0, "0967159807")]) is True
+    # Y tambien si vienen en UN mensaje, que es como los manda la mitad de la gente.
+    assert datos_completos_del_alta([
+        _cli(0, "Gianella Murillo\n0958806846\nmintriago436@gmail.com")]) is True
+
+
+def test_un_solo_campo_NO_es_alta_completa():
+    from src.registro import datos_completos_del_alta
+    # `10b20914`: solo el correo. Hoy esto contaba como "paso sus datos".
+    assert datos_completos_del_alta([_cli(0, "Miguelgranda231@gmail.com")]) is False
+    # `e44abff3` / `0a828144`: celular y nombre, sin correo.
+    assert datos_completos_del_alta([_cli(0, "Ok 0804078558 jean carlo")]) is False
+    # `803e0e4b`: solo el nombre.
+    assert datos_completos_del_alta([_cli(0, "Hola Manuel velez")]) is False
+    # `0a828144`: el cliente DICE que no tiene correo. El alta era imposible.
+    assert datos_completos_del_alta([
+        _cli(0, "Me yamo wiiliam belardo peña figeroa"), _cli(0, "0990425863"),
+        _cli(0, "Es que no tengo coreo")]) is False
+
+
+def test_el_formulario_bancario_no_completa_el_alta():
+    from src.registro import datos_completos_del_alta
+    # Misma leccion que `_es_traspaso_de_datos`: 10 digitos + banco es un RETIRO.
+    # Sin este guard, un correo del alta + un pedido de retiro posterior darian
+    # "completo" y la sesion volveria a la rama de las 2 estrellas.
+    assert datos_completos_del_alta([
+        _cli(0, "paula@gmail.com"),
+        _cli(0, "60 / Vivien Perdomo Poveda / 0802930271 / Banco del Pichincha / Ahorros"),
+    ]) is False
+
+
+def test_solo_cuentan_los_mensajes_del_CLIENTE():
+    from src.registro import datos_completos_del_alta
+    # El operador escribe el correo y el numero al pedirlos ("Correo electronico:
+    # Numero de celular:") y al entregar credenciales. Contarlos daria completo
+    # SIEMPRE, que es el bug mas caro posible en esta señal.
+    ope = _op(0, "mandame algo@mail.com y 0999999999")
+    nota = {**_op(0, "otro@mail.com 0988888888"), "is_note": True}
+    assert datos_completos_del_alta([ope, nota]) is False
+    assert datos_completos_del_alta([ope, nota, _cli(0, "yo@mail.com"), _cli(0, "0967159807")]) is True
+
+
+def test_alta_abandonada_por_datos_es_datos_a_medias_y_sin_credenciales():
+    """La rama que el negocio saco de la nota (2026-08-25).
+
+    Son las TRES condiciones juntas: hay datos (si no, no hay alta que juzgar y eso ya
+    lo maneja `es_transaccion`), los datos NO estan completos, y no hubo credenciales.
+    MEDIDO en la copia: la rama del 2 estrellas son 18 filas -- 11 incompletas (estas) y
+    7 completas, que SE QUEDAN en 2 porque ahi el cliente si cumplio su parte. La señal
+    tiene que separar esas dos, no vaciar la rama.
+    """
+    from src.registro import alta_abandonada_por_datos
+    # `10b20914`: solo el correo, sin credenciales -> abandono.
+    assert alta_abandonada_por_datos([_cli(0, "Miguelgranda231@gmail.com")]) is True
+    # Datos COMPLETOS y sin credenciales -> NO es abandono: es el 2 legitimo, y son 7
+    # filas reales. Si esto diera True, la rama del 2 quedaria muerta.
+    assert alta_abandonada_por_datos(
+        [_cli(0, "Erick lopez"), _cli(0, "ericklopezjosediaz@gmail.com"),
+         _cli(0, "0967159807")]) is False
+    # Con credenciales entregadas no hay abandono, esten los datos como esten.
+    assert alta_abandonada_por_datos(
+        [_cli(0, "Miguelgranda231@gmail.com"), _op(1, CREDENCIALES)]) is False
+    # Sin datos NINGUNOS no es esta rama (no hay alta: lo cubre `es_transaccion`).
+    assert alta_abandonada_por_datos([_cli(0, "quiero registrarme")]) is False

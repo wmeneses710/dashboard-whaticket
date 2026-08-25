@@ -164,6 +164,15 @@ COMPROBANTE lo manda el OPERADOR. Cliente adjunta comprobante -> deposito, NO re
 - ACTIVAR o ACCEDER a una cuenta que YA EXISTE ("como activo mi cuenta", "como accedo", \
 "como entro") -> soporte_cuenta, NO registro: la cuenta ya esta creada, el cliente necesita \
 ayuda para entrar. (Decision del negocio, 2026-08-07.)
+OJO CON LA PLANTILLA DEL ANUNCIO, que es la UNICA excepcion: un primer mensaje que pregunta \
+como acceder PARA RECIBIR LOS BENEFICIOS (o el bono, o la promo) no es un problema de cuenta. \
+Llega SIEMPRE IGUAL y sin que la persona la escriba, porque la dispara un anuncio: esa \
+persona todavia NO TIENE CUENTA y esta preguntando por la OFERTA. Ahi `soporte_cuenta` va \
+SOLO SI HAY EVIDENCIA de que la cuenta existe -- que el cliente nombre su usuario, su clave, \
+un saldo, una apuesta o un intento de entrar que fallo; si no la hay es `promo`, o `registro` \
+si la sesion avanza hacia el alta. Juzgar a un operador por no resolver el problema de una \
+cuenta que el cliente nunca tuvo es una acusacion falsa. Esto NO CAMBIA "como activo mi \
+cuenta" ni "como entro" a secas: esas siguen la regla de arriba, sin pedir evidencia.
 - quiere crear una cuenta NUEVA -> registro
 CLAVE registro: si en la sesion SE CREO LA CUENTA (el cliente paso sus datos y el operador \
 devolvio usuario y clave) el motivo es `registro`, sin importar que haya pasado antes o \

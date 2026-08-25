@@ -1747,3 +1747,107 @@ def test_la_nota_no_se_confunde_con_un_mensaje_del_operador():
     out = _transcript([_msg(0, False, "hola"),
                        _msg(1, True, "Ana *resuelto* la conversación", nota=True)])
     assert out[1]["role"] == "SISTEMA", "una nota no es una respuesta al cliente"
+
+
+# --- EL CHAT DEL MODAL SALE CENSURADO ----------------------------------------
+#
+# El tablero se sirve en un dominio publico y tiene 14 endpoints de lectura ANONIMOS que
+# devuelven el transcript completo (auditoria del 2026-08-24). MEDIDO sobre los 52.135
+# mensajes de las sesiones scoreadas: 3.734 traen un celular, 2.186 una corrida de 6+
+# digitos, 685 una cuenta bancaria y **399 usuario y clave EN CLARO** (384 escritas por
+# operadores). Con esas 399 se entra a la cuenta de una persona.
+#
+# VA ACA Y NO ANTES. `_transcript` es el camino de LECTURA; el scoring lee los mensajes
+# crudos por `context.fetch_session_messages`. Censurar antes de calificar romperia
+# `es_traspaso` (compara el tail del telefono contra el mapa de lineas),
+# `_es_traspaso_de_datos`, `operator_sent_credentials` y `datos_completos_del_alta`.
+#
+# LA CENSURA VA ANTES DEL TRUNCADO a 800: el enmascarado conserva el largo, asi que el
+# corte cae en el mismo lugar. Al reves, un telefono partido por el corte ya no matchearia
+# y saldria a medias en claro.
+
+def test_el_transcript_censura_el_dato_sensible():
+    from src.queries import _transcript
+    out = _transcript([_msg(0, False, "mi cedula es 1712345678 y mi correo juan@gmail.com"),
+                       _msg(1, True, "tu usuario es Paula2026, escribime al 0967159807")])
+    texto = " ".join(m["text"] for m in out)
+    for crudo in ("1712345678", "juan@gmail.com", "Paula2026", "0967159807"):
+        assert crudo not in texto, crudo
+    # y el mensaje sigue siendo legible
+    assert "mi cedula es" in texto and "@gmail.com" in texto
+
+
+def test_el_transcript_NO_censura_los_montos_ni_el_texto_comun():
+    from src.queries import _transcript
+    out = _transcript([_msg(0, True, "la recarga minima es de $5, con gusto te ayudo")])
+    assert out[0]["text"] == "la recarga minima es de $5, con gusto te ayudo"
+
+
+def test_el_scoring_NO_ve_el_texto_censurado():
+    """El guard que importa: `censura` no puede entrar en el camino del scoring. Si algun
+    dia una rubrica lo importa, media docena de señales dejan de encontrar sus digitos."""
+    import pathlib
+    raiz = pathlib.Path(__file__).parents[1] / "src"
+    prohibidos = ("scorer.py", "signals.py", "registro.py", "deposito.py", "retiro.py",
+                  "promo.py", "info.py", "soporte.py", "agilidad.py", "redireccion.py",
+                  "solo_cortesia.py", "sin_respuesta.py", "prompts.py", "context.py")
+    for nombre in prohibidos:
+        f = raiz / nombre
+        if f.exists():
+            assert "censura" not in f.read_text(encoding="utf-8"), (
+                f"{nombre} importa censura: el scoring dejaria de ver los digitos reales")
+
+
+# --- EL TELEFONO DE LA FILA, NO SOLO EL DEL CHAT -----------------------------
+#
+# `_transcript` ya enmascara lo que va DENTRO del chat, pero `customer_number` viaja como
+# COLUMNA en cuatro consultas (la lista, el detalle y las dos de tarjetas) y salia en
+# claro: la misma exposicion, por la puerta de al lado. `_rows_as_dicts` es el punto UNICO
+# por donde pasan las cinco consultas, asi que se enmascara ahi una vez.
+#
+# NO SE CENSURA EN EL SQL: `_CARD_KEY` agrupa por `contact_id`/`ticket_id` (uuid, nunca el
+# telefono) y el front devuelve esas claves para la segunda consulta. Enmascarar en la
+# consulta no romperia ese viaje, pero enmascarar en la SALIDA es donde ya vive la regla y
+# deja el dato crudo disponible para cualquier logica que lo necesite.
+#
+# EL LARGO SE CONSERVA, y no es cosmetico: `length(contacts.number) > 15` es como se
+# identifican los grupos de WhatsApp cuando `tickets.is_group` llega NULL.
+
+class _CurFalso:
+    def __init__(self, cols, filas):
+        self.description = [type("D", (), {"name": c}) for c in cols]
+        self._filas = filas
+
+    def fetchall(self):
+        return self._filas
+
+
+def test_las_filas_salen_con_el_telefono_enmascarado():
+    from src.queries import _rows_as_dicts
+    out = _rows_as_dicts(_CurFalso(
+        ["conversation_id", "customer_name", "customer_number", "num", "stars"],
+        [("abc", "Erick Lopez", "0967159807", "593991701676", 4)]))
+    assert out[0]["customer_number"] == "0********7"
+    assert out[0]["num"] == "5**********6"
+    # el largo se conserva: es como se detecta un grupo cuando is_group llega NULL
+    assert len(out[0]["customer_number"]) == len("0967159807")
+    # y lo que NO es telefono no se toca
+    assert out[0]["stars"] == 4
+    assert out[0]["conversation_id"] == "abc"
+
+
+def test_el_nombre_NO_se_censura_todavia():
+    """DECISION PENDIENTE del negocio. El nombre del OPERADOR es el eje del tablero, y el
+    del cliente vive en su propia columna (`contacts.name`): taparlo es una decision de
+    producto, no un arreglo de seguridad. Este test fija el estado actual para que el dia
+    que se cambie sea a proposito."""
+    from src.queries import _rows_as_dicts
+    out = _rows_as_dicts(_CurFalso(["customer_name"], [("Erick Lopez",)]))
+    assert out[0]["customer_name"] == "Erick Lopez"
+
+
+def test_una_fila_sin_telefono_no_revienta():
+    from src.queries import _rows_as_dicts
+    out = _rows_as_dicts(_CurFalso(["customer_number", "num"], [(None, "")]))
+    assert out[0]["customer_number"] is None
+    assert out[0]["num"] == ""

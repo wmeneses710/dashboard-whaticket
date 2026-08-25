@@ -198,3 +198,54 @@ def test_ofrecer_CREAR_una_cuenta_si_es_un_paso():
                    "podemos crear una cuenta para que la pruebes"):
         r = calificar_soporte([_cli(0), _op(1, oferta)])
         assert r.stars >= 4, f"{oferta} -> {r.stars}★ {r.rationale}"
+
+
+# --- EL TEXTO NO PUEDE AFIRMAR UNA REPETICION QUE NO HUBO --------------------
+#
+# `med = median(esperas)` con UN solo turno es esa muestra, no una tendencia. Aun asi el
+# texto decia "en cada ida y vuelta" y "habitualmente en X", que afirman una repeticion
+# inexistente. MEDIDO en la copia (2026-08-25): de 64 filas con "cada ida y vuelta", **18
+# tienen UN solo mensaje del cliente**, y de 9 con "habitualmente", 4. Son 22 filas
+# acusando de un patron que no ocurrio.
+#
+# El caso que lo trajo, `7704ebba` (Salome Ramirez): el cliente pregunto UNA vez, ella
+# contesto completo a los 8,8 min, volvio 2 h despues a ofrecerse y cerro. La fila decia
+# "el cliente espero 8,8 minutos en CADA ida y vuelta" y le ponia 2 estrellas.
+#
+# NO SE MUEVE NINGUNA NOTA: la mediana, la estrella y el umbral quedan igual. Cambia solo
+# lo que la fila AFIRMA, que es lo que lee el supervisor.
+
+def test_con_UN_turno_el_texto_va_en_singular():
+    # Un pedido, una respuesta a los 8 min -> rama del 2 (mediana > 5 min).
+    msgs = [_cli(0), _op(8, PASO)]
+    a = calificar_soporte(msgs)
+    assert a.stars == 2                       # la nota NO cambia
+    assert "cada ida y vuelta" not in a.rationale
+    assert "habitualmente" not in a.rationale
+    assert "8 minutos" in a.rationale         # el dato sigue estando
+
+
+def test_con_UN_turno_la_rama_del_3_tambien_va_en_singular():
+    msgs = [_cli(0), _op(3, PASO)]            # mediana 3 min -> rama del 3
+    a = calificar_soporte(msgs)
+    assert a.stars == 3
+    assert "cada ida y vuelta" not in a.rationale
+    assert "3 minutos" in a.rationale
+
+
+def test_con_UN_turno_la_rama_de_SIN_INTENTO_no_dice_habitualmente():
+    # Contesta rapido pero sin ningun paso concreto -> rama `not intento`.
+    msgs = [_cli(0), _op(1, "buenas tardes amigo")]
+    a = calificar_soporte(msgs)
+    assert a.stars == 2 and "no se llevó nada concreto" in a.rationale
+    assert "habitualmente" not in a.rationale
+
+
+def test_con_VARIOS_turnos_la_frase_plural_SE_CONSERVA():
+    """El control: con varios turnos la mediana SI describe una tendencia, y la frase
+    plural es la correcta. Sin este test, "arreglar el singular" podria borrarla siempre."""
+    msgs = [_cli(0), _op(8, PASO), _cli(20, "sigo sin poder"), _op(28, PASO),
+            _cli(40, "tampoco"), _op(48, PASO)]
+    a = calificar_soporte(msgs)
+    assert a.stars == 2
+    assert "cada ida y vuelta" in a.rationale

@@ -999,3 +999,70 @@ def test_la_nota_de_agente_va_al_operador_de_la_VENTANA(monkeypatch):
     # la SEGUNDA recarga, que atendio Joseph.
     assert params["user_name"] == "Joseph", (
         f"la nota describe la interacción de Joseph y se la llevó {params['user_name']!r}")
+
+
+# --- EL SKIP QUE DEPENDE DEL MOTIVO -----------------------------------------
+#
+# Hasta el 2026-08-25 todos los skips se decidian ANTES del LLM (router/sessions) o en
+# el ruteo del worker por una señal pura (`redireccion`). Este es el primero que depende
+# del MOTIVO, y el motivo lo elige el modelo: `registro` con los datos a medias no se
+# puede evaluar, porque el operador pidio los datos y el cliente no los mando enteros.
+#
+# VA EN EL WORKER Y NO EN `score_by_motivo` a proposito: este archivo ya es donde se
+# deciden los skips (`= "skipped", "redireccion", None`), y meterlo en el scorer obligaba
+# a cambiarle la firma -- 47 tests de scorer y 10 monkeypatches de este archivo, todo
+# churn para no reusar el idioma que ya estaba.
+#
+# MEDIDO en la copia: de las 18 filas de `registro` que cobran 2 estrellas por "el alta
+# quedo a medias", 11 son de estas y 7 se quedan con su nota (ahi el cliente SI mando
+# todo). Ver registro.alta_abandonada_por_datos.
+
+def _registro_datos_a_medias():
+    """El cliente arranca el alta y manda SOLO el correo. `10b20914` real."""
+    from datetime import datetime, timedelta, timezone
+    t0 = datetime(2026, 8, 24, 12, 0, tzinfo=timezone.utc)
+    def m(mins, from_me, body):
+        return {"created_at": t0 + timedelta(minutes=mins), "from_me": from_me,
+                "is_note": False, "body": body, "sent_from": "WEB" if from_me else None,
+                "user_id": "u1" if from_me else None, "media_type": None, "ack": 2}
+    return [m(0, False, "Quiero registrarme"),
+            m(1, True, "dale, mandame nombre, correo y celular"),
+            m(2, False, "Miguelgranda231@gmail.com"),
+            m(5, True, "listo amigo, dejame ver")]
+
+
+def test_registro_con_datos_a_medias_se_persiste_como_skipped(monkeypatch):
+    from src.scorer import ScoreResult
+    monkeypatch.setattr(worker, "fetch_session_messages",
+                        lambda cur, sid: _registro_datos_a_medias())
+    # El LLM dice `registro`; el skip lo decide la señal determinista, no el modelo.
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: ScoreResult(
+        rubric="registro", dimensions={}, rating_label="deficiente", rating_rationale="x",
+        stars=2, llm_model="fake", atencion=None, deposit_observed=None, motivo="registro"))
+    conn = _CtxConn()
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, _session_row("sessA"), llm=None, op_map={})
+
+    assert eval_status == "skipped"
+    assert skip_reason == "datos_incompletos"
+    assert score is None
+    params = _params_of_upsert(conn)
+    assert params["eval_status"] == "skipped"
+    assert params["skip_reason"] == "datos_incompletos"
+
+
+def test_registro_con_datos_completos_sigue_llevando_nota(monkeypatch):
+    """El control: sin esto, "arregle 11 filas" podria significar "vacie la rama"."""
+    from src.scorer import ScoreResult
+    msgs = _registro_datos_a_medias()
+    msgs.insert(3, {**msgs[2], "body": "0967159807"})   # ahora SI mando el celular
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: msgs)
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: ScoreResult(
+        rubric="registro", dimensions={}, rating_label="deficiente", rating_rationale="x",
+        stars=2, llm_model="fake", atencion=None, deposit_observed=None, motivo="registro"))
+    conn = _CtxConn()
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, _session_row("sessB"), llm=None, op_map={})
+
+    assert eval_status == "evaluated" and skip_reason is None
+    assert score is not None and score.stars == 2

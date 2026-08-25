@@ -210,31 +210,46 @@ def calificar_soporte(messages: list[dict], cierre_at=None) -> Soporte | None:
                        None, intento, algo_mas)
     med = median(esperas)
     mins = formato_espera(med.total_seconds())
+    # UN SOLO TURNO NO ES UNA TENDENCIA. `median()` de una muestra es esa muestra, y las
+    # CINCO ramas de abajo afirmaban una repeticion que no ocurrio: "en cada ida y vuelta",
+    # "habitualmente en X", "X de espera habitual". MEDIDO en la copia el 2026-08-25: de 64
+    # filas con "cada ida y vuelta" **18 tienen UN solo mensaje del cliente**, y de 9 con
+    # "habitualmente", 4. Son 22 filas acusando de un patron inexistente -- el caso que lo
+    # trajo (`7704ebba`) es un cliente que pregunto UNA vez y una operadora que contesto
+    # completo, y la fila decia "espero 8,8 minutos en CADA ida y vuelta".
+    # NO MUEVE NINGUNA NOTA: la mediana, el umbral y la estrella quedan intactos. Cambia lo
+    # que la fila AFIRMA, que es lo unico que el supervisor lee.
+    # El docstring del modulo justifica la mediana PORQUE soporte es "el motivo con mas ida
+    # y vuelta (4,5 turnos)"; con un turno esa justificacion no existe y el texto tampoco
+    # puede invocarla.
+    uno = len(esperas) == 1
+    en_cada = "" if uno else " en cada ida y vuelta"
+    habitual = "" if uno else " habitual"
 
     if not intento:
         return Soporte(
             2, "deficiente",
-            f"Contestó — habitualmente en {mins} —, pero el cliente no se llevó nada "
-            "concreto: ni un paso a seguir ni la certeza de que su caso se escaló.",
+            (f"Contestó en {mins}" if uno else f"Contestó — habitualmente en {mins} —")
+            + ", pero el cliente no se llevó nada concreto: ni un paso a seguir ni la "
+              "certeza de que su caso se escaló.",
             med, False, algo_mas)
     if med > TOLERABLE:
         return Soporte(2, "deficiente",
-                       f"Hizo algo por el caso, pero el cliente esperó {mins} en cada "
-                       "ida y vuelta.",
+                       f"Hizo algo por el caso, pero el cliente esperó {mins}{en_cada}.",
                        med, True, algo_mas)
     if med > AGIL:
         return Soporte(3, "aceptable",
-                       f"Atendió el caso, aunque el cliente esperó {mins} en cada ida "
-                       "y vuelta. El objetivo es 1 minuto.",
+                       f"Atendió el caso, aunque el cliente esperó {mins}{en_cada}. "
+                       "El objetivo es 1 minuto.",
                        med, True, algo_mas)
     if algo_mas:
         return Soporte(
             5, "excelente",
-            f"Atendió rápido — {mins} de espera habitual —, le dio una salida concreta "
+            f"Atendió rápido — {mins} de espera{habitual} —, le dio una salida concreta "
             "y antes de cerrar se aseguró de que no le faltara nada.",
             med, True, True)
     return Soporte(4, "buena",
-                   f"Atendió rápido — {mins} de espera habitual — y le dio una salida "
+                   f"Atendió rápido — {mins} de espera{habitual} — y le dio una salida "
                    "concreta. Cerró sin preguntar si necesitaba algo más.",
                    med, True, False)
 
