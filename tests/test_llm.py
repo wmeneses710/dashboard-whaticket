@@ -1,9 +1,16 @@
 """Tests del cliente de Ollama (sin red real: httpx.MockTransport).
 
-Modo elegido (empirico, ver plan): think=false + format='json' generico + la
-forma del JSON pedida en el prompt. El schema-grammar de Ollama rompe con
-modelos de thinking (bug #15260 / thinking se come el budget), asi que NO se usa;
-validamos las claves nosotros en el scorer.
+Modo elegido (empirico, ver plan): nivel 1 = think=false + format='json' generico
++ la forma del JSON pedida en el prompt, porque es 3x mas barato que el grammar.
+
+EL SCHEMA-GRAMMAR SI SE USA, como nivel 2, y SI FUNCIONA -- con `think=False`
+explicito. La nota vieja de este docstring decia que "NO se usa" por el bug #15260,
+y esa creencia dejo el nivel 2 configurado con `think=None` (= default del modelo =
+thinking infinito): inalcanzable detras del timeout de 180s de produccion. Medido el
+2026-08-25 contra el host real, por el camino de produccion (chat_json):
+    think=None  -> 600s, ReadTimeout, NUNCA devuelve
+    think=False ->  22-78s (segun carga del host), JSON completo
+Las claves se validan igual en las DOS capas, con la misma regla (llm.claves_faltantes).
 """
 import json
 
@@ -79,7 +86,16 @@ def test_chat_json_reintenta_fast_y_cae_a_grammar():
     grammar = [c for c in calls if c["format"] != "json"]
     assert len(fast) == 3          # reintenta el fast varias veces
     assert len(grammar) == 1       # y cae al grammar una vez
-    assert grammar[0].get("think") is not False  # grammar deja thinking activo
+    # think=False EXPLICITO. Este assert decia lo contrario ("grammar deja thinking
+    # activo") y fijaba por escrito una conducta MEDIDA COMO ROTA el 2026-08-25
+    # contra el host real (192.168.100.183, gemma4:12b), mismo prompt y schema:
+    #     think=None (omite el campo -> default del modelo) -> 600s, ReadTimeout
+    #     think=False                                       ->  78s, JSON completo
+    # `think=None` no significaba "thinking activo por eleccion": significaba "no
+    # opino", y el default de un modelo de thinking es el thinking infinito que el
+    # docstring del modulo ya advertia. En produccion el timeout es 180s, asi que el
+    # nivel 2 no era lento: era inalcanzable.
+    assert grammar[0].get("think") is False
 
 
 def test_chat_json_sin_schema_y_sin_salida_levanta_error():
@@ -355,3 +371,84 @@ def test_schema_sin_required_acepta_cualquier_json():
     assert llm.chat_json("s", "u", schema={"type": "object"}) == {"ok": True}
     assert len(calls) == 1
     assert llm.calls == {"fast": 1, "fallback": 0, "empty": 0}
+
+
+def test_el_grammar_manda_think_false_explicito():
+    """Regresion del pozo: sin `think` en el payload, gemma4 arranca a pensar y no
+    vuelve. El nivel 2 SOLO sirve si el thinking esta apagado a mano."""
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = _INCOMPLETO if p["format"] == "json" else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "gemma4:12b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED) == _COMPLETO
+    grammar = [c for c in calls if c["format"] != "json"]
+    assert len(grammar) == 1
+    assert grammar[0]["think"] is False       # presente Y False, no ausente
+
+
+def test_el_reintento_nombra_las_claves_que_faltaron():
+    """REPARACION: el reintento no repite el mismo prompt a ciegas -- le dice al
+    modelo QUE omitio. Medido contra el host real: 28s y JSON completo, contra 78s
+    del grammar. Es el camino mas barato que funciona, asi que va primero."""
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = _INCOMPLETO if len(calls) == 1 else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED) == _COMPLETO
+
+    u1 = calls[0]["messages"][1]["content"]
+    u2 = calls[1]["messages"][1]["content"]
+    assert "atendio_el_motivo" not in u1      # el primer intento va limpio
+    assert "atendio_el_motivo" in u2          # el segundo nombra la clave omitida
+    assert u2.startswith(u1)                  # y NO reescribe el prompt: lo apendicea
+    assert llm.calls == {"fast": 1, "fallback": 0, "empty": 0}
+
+
+def test_la_reparacion_no_se_acumula_entre_reintentos():
+    """Tres intentos incompletos no apilan tres instrucciones: el prompt del tercero
+    pesaria mas que la evidencia y el num_ctx es finito."""
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = _INCOMPLETO if p["format"] == "json" else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED)
+
+    fast = [c["messages"][1]["content"] for c in calls if c["format"] == "json"]
+    assert len(fast) == 3
+    assert fast[2].count("atendio_el_motivo") == 1     # una sola instruccion, no tres
+
+
+def test_el_grammar_va_con_el_prompt_limpio():
+    """El nivel 2 FUERZA la estructura por grammar; no necesita el reproche, y
+    mandarselo solo gasta contexto."""
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = _INCOMPLETO if p["format"] == "json" else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED)
+    grammar = [c for c in calls if c["format"] != "json"]
+    assert grammar[0]["messages"][1]["content"] == "u"

@@ -3,15 +3,29 @@
 Nivel 1 (rapido, ~7s) — think=false + format="json" GENERICO:
   - sin thinking (el canal de thinking se come el num_predict y deja el content
     vacio; ademas es lentisimo ~120s vs ~7s),
-  - format="json" garantiza JSON sintactico (el schema-grammar rompe con este
-    modelo: bug #15260 con think=false, thinking infinito con think=true),
+  - format="json" garantiza JSON sintactico y es 3x mas barato que el grammar
+    (28s contra 78s, medido el 2026-08-25), asi que sigue siendo el nivel 1,
   - la FORMA del JSON se pide en el prompt y las claves se validan en el scorer.
   Se reintenta varias veces porque el fast falla de forma intermitente (~5%).
 
-Nivel 2 (fallback, ~120s) — format=<schema> con thinking activo:
+Nivel 2 (fallback, ~78s) — format=<schema> con think=False:
   el grammar del schema FUERZA la estructura, asi que rescata los casos que el
-  fast no logra. Lento, pero solo dispara en el ~1-5% que el fast no resuelve.
-  Requiere pasar `schema`; sin schema no hay fallback.
+  fast no logra. Requiere pasar `schema`; sin schema no hay fallback.
+
+  DECIA "con thinking activo" Y ESO ERA EL BUG. Medido el 2026-08-25 contra el
+  host real (192.168.100.183, gemma4:12b), mismo prompt y mismo schema:
+      think=None (omite el campo -> default del modelo) -> 600s, ReadTimeout
+      think=False                                       ->  78s, JSON completo
+  Con `timeout=180` (worker.py) el nivel 2 no era lento: era INALCANZABLE, y por
+  eso el log de produccion decia `fallback=0` en todos los ciclos. La nota vieja
+  sobre el bug #15260 con think=false ya no reproduce con este modelo; lo que
+  reproduce es lo contrario.
+
+QUE PUEDE FALLAR, EN LA PRACTICA: como format="json" garantiza JSON SINTACTICO,
+"no parsea" casi no ocurre (`empty=0` en todos los ciclos). El modo de falla real
+es JSON VALIDO PERO INCOMPLETO -- le falta una clave del schema. Ese caso se trata
+igual que uno roto (ver chat_json) y el reintento del fast NOMBRA la clave que
+falto (instruccion_reparacion, ~28s) antes de pagar el grammar.
 """
 from __future__ import annotations
 
@@ -77,6 +91,20 @@ def claves_faltantes(raw: dict, schema: dict | None) -> list[str]:
         else:
             faltan += [f"dimensions.{k}" for k in sub if k not in dims]
     return faltan
+
+
+def instruccion_reparacion(faltan: list[str]) -> str:
+    """Apendice para el REINTENTO del fast: le dice al modelo QUE omitio.
+
+    Reintentar el mismo prompt a ciegas con temperature=0 es apostar a que el
+    modelo cambie de opinion solo. Nombrar la clave que falto es la senal mas
+    directa que se le puede dar, y se paga en el camino barato: medido contra el
+    host real (gemma4:12b) tarda 28s y devuelve el JSON completo, contra 78s del
+    grammar. Por eso va ANTES del nivel 2, no despues.
+    """
+    return ("\n\nIMPORTANTE: tu respuesta anterior fue JSON valido pero OMITIO estas "
+            f"claves OBLIGATORIAS: {', '.join(faltan)}. Devolve el JSON COMPLETO, con "
+            "TODAS las claves obligatorias presentes. No agregues texto fuera del JSON.")
 
 
 class OllamaClient:
@@ -189,8 +217,15 @@ class OllamaClient:
         # Nivel 1: rapido (think=false + json generico), varios intentos.
         for i in range(self.fast_attempts):
             num_predict = self.num_predict * (2 if i else 1)
+            # REPARACION: si el intento anterior vino incompleto, el reintento nombra
+            # las claves que falto. Se reconstruye desde `faltan` en cada vuelta (no
+            # se apendicea sobre el prompt ya apendiceado): tres intentos no pueden
+            # apilar tres instrucciones, el num_ctx es finito y el reproche no es la
+            # evidencia. Un intento IMPARSEABLE deja `faltan` como estaba: no hay
+            # claves que nombrar, asi que el siguiente va con el prompt limpio.
+            usr = user + instruccion_reparacion(faltan) if faltan else user
             parsed = _extract_json(
-                self._chat(system, user, response_format="json",
+                self._chat(system, usr, response_format="json",
                            num_predict=num_predict, think=False)
             )
             if parsed is not None:
@@ -199,14 +234,25 @@ class OllamaClient:
                     self.calls["fast"] += 1
                     return parsed
                 # Incompleto: NO se salta al grammar todavia. El reintento duplica
-                # num_predict, asi que una salida cortada por presupuesto se puede
-                # resolver por el camino barato (~7s contra ~120s).
+                # num_predict (rescata una salida cortada por presupuesto) y ahora
+                # ademas sabe que le falto.
 
-        # Nivel 2: fallback con grammar del schema (thinking activo, lento).
+        # Nivel 2: grammar del schema, que FUERZA la estructura. Prompt LIMPIO: la
+        # grammar ya obliga la forma, el reproche solo gastaria contexto.
+        #
+        # `think=False` NO ES COSMETICO. Hasta el 2026-08-25 iba `think=None`, que
+        # OMITE el campo del payload y deja decidir al modelo -- y el default de un
+        # modelo de thinking es el thinking infinito que el docstring del modulo
+        # advertia. Medido contra el host real, mismo prompt y schema:
+        #     think=None  -> 600s y ReadTimeout (con timeout=180 en produccion, muere
+        #                    antes y no devuelve nada NUNCA)
+        #     think=False ->  78s y JSON completo
+        # Eso explica el `fallback=0` de TODOS los ciclos del log: el nivel 2 no era
+        # poco necesario, era inalcanzable.
         if schema is not None:
             parsed = _extract_json(
                 self._chat(system, user, response_format=schema,
-                           num_predict=self.fallback_num_predict, think=None)
+                           num_predict=self.fallback_num_predict, think=False)
             )
             if parsed is not None:
                 faltan = claves_faltantes(parsed, schema)
