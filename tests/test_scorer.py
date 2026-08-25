@@ -654,3 +654,34 @@ def test_el_cap_no_sube_una_nota_baja():
                                  dimensions={"resolucion": "no atendio", "iniciativa": "-",
                                              "cortesia": "-", "errores": ["no respondio"]})))
     assert r.rating_label == "deficiente"
+
+
+# --- las DOS capas de validacion comparten la regla -------------------------
+#
+# `chat_json` (nivel bajo) y `_validate` (scorer) tienen que exigir LO MISMO. Si
+# divergen, el grammar rescata salidas que el scorer igual rechaza y la sesion
+# queda atascada reintentando -- el bucle de produccion del 2026-08-25. Este test
+# ata las dos a `llm.claves_faltantes` sobre el schema REAL, no uno de juguete.
+
+def test_las_dos_capas_exigen_las_mismas_claves():
+    from src.llm import claves_faltantes
+    from src.prompts import build_motivo_schema
+    from src.scorer import _validate
+
+    schema = build_motivo_schema()
+    completo = _motivo_resp()
+    assert claves_faltantes(completo, schema) == []
+    _validate(completo, schema)                      # no levanta
+
+    for clave in schema["required"]:
+        parcial = {k: v for k, v in completo.items() if k != clave}
+        assert claves_faltantes(parcial, schema) == [clave], clave
+        with pytest.raises(ValueError, match=clave):
+            _validate(parcial, schema)
+
+    for dim in schema["properties"]["dimensions"]["required"]:
+        parcial = dict(completo)
+        parcial["dimensions"] = {k: v for k, v in completo["dimensions"].items() if k != dim}
+        assert claves_faltantes(parcial, schema) == [f"dimensions.{dim}"], dim
+        with pytest.raises(ValueError, match=dim):
+            _validate(parcial, schema)

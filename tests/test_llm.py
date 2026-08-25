@@ -227,3 +227,131 @@ def test_sin_token_no_manda_authorization():
     )
     llm.chat_json("s", "u")
     assert captured["auth"] is None                  # Ollama local sin auth: como antes
+
+
+# ---------------------------------------------------------------------------
+# JSON PARSEABLE PERO INCOMPLETO
+#
+# EL SINTOMA (produccion, 2026-08-25): la sesion 36061874 fallo ~15 ciclos
+# seguidos con `ValueError: salida del LLM sin la clave requerida:
+# 'atendio_el_motivo'`, y en cada ciclo el log decia `fallback=0`. El fast
+# devolvia JSON SINTACTICAMENTE VALIDO pero sin una clave del schema, asi que
+# `chat_json` lo aceptaba y devolvia al primer intento: nunca reintentaba el
+# fast ni llegaba al grammar -- que es justo el nivel que FUERZA la estructura.
+# El scorer lo rechazaba despues, sin fila persistida, y la sesion volvia a la
+# cabeza de la cola (worker.PENDING_SESSIONS_SQL ordena por end_at DESC).
+# Un JSON incompleto es tan inservible como uno roto: se trata igual.
+# ---------------------------------------------------------------------------
+
+_SCHEMA_CON_REQUIRED = {
+    "type": "object",
+    "properties": {
+        "motivo": {"type": "string"},
+        "dimensions": {
+            "type": "object",
+            "properties": {"resolucion": {"type": "string"},
+                           "cortesia": {"type": "string"}},
+            "required": ["resolucion", "cortesia"],
+        },
+        "atendio_el_motivo": {"type": "boolean"},
+    },
+    "required": ["motivo", "dimensions", "atendio_el_motivo"],
+}
+
+_COMPLETO = {"motivo": "deposito", "atendio_el_motivo": True,
+             "dimensions": {"resolucion": "alta", "cortesia": "alta"}}
+# Le falta `atendio_el_motivo`: exactamente lo que trajo produccion.
+_INCOMPLETO = {"motivo": "deposito",
+               "dimensions": {"resolucion": "alta", "cortesia": "alta"}}
+
+
+def test_json_incompleto_en_el_fast_cae_al_grammar():
+    """Falta una clave REQUIRED -> se agota el fast y se usa el grammar."""
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = _INCOMPLETO if p["format"] == "json" else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    out = llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED)
+
+    assert out == _COMPLETO
+    assert len([c for c in calls if c["format"] == "json"]) == 3
+    assert len([c for c in calls if c["format"] != "json"]) == 1
+    assert llm.calls == {"fast": 0, "fallback": 1, "empty": 0}
+
+
+def test_json_incompleto_se_resuelve_en_el_reintento_del_fast():
+    """El reintento del fast DUPLICA num_predict, asi que una salida cortada por
+    presupuesto (JSON valido pero sin las ultimas claves) se puede resolver sin
+    pagar el grammar. No se salta al nivel 2 antes de agotar el nivel 1."""
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = _INCOMPLETO if len(calls) == 1 else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    out = llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED)
+
+    assert out == _COMPLETO
+    assert len(calls) == 2                                  # sin grammar
+    assert all(c["format"] == "json" for c in calls)
+    assert calls[1]["options"]["num_predict"] == 2048        # el doble del primero
+    assert llm.calls == {"fast": 1, "fallback": 0, "empty": 0}
+
+
+def test_dimension_requerida_faltante_tambien_cae_al_grammar():
+    """El scorer valida las dimensiones ADEMAS de las claves de primer nivel; si
+    chat_json no mira lo mismo, la sesion queda atascada igual."""
+    sin_dimension = {"motivo": "deposito", "atendio_el_motivo": True,
+                     "dimensions": {"resolucion": "alta"}}   # falta `cortesia`
+    calls = []
+
+    def handler(request):
+        p = json.loads(request.content)
+        calls.append(p)
+        cuerpo = sin_dimension if p["format"] == "json" else _COMPLETO
+        return httpx.Response(200, json={"message": {"content": json.dumps(cuerpo)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED) == _COMPLETO
+    assert llm.calls == {"fast": 0, "fallback": 1, "empty": 0}
+
+
+def test_grammar_tambien_incompleto_levanta_y_nombra_la_clave():
+    """Si NI el grammar completa el schema, no se devuelve un dict a medias: eso
+    solo mueve el ValueError al scorer, que es el bucle que esto viene a cerrar.
+    El mensaje nombra la clave para que el log sirva de diagnostico."""
+    def handler(request):
+        return httpx.Response(200, json={"message": {"content": json.dumps(_INCOMPLETO)}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    with pytest.raises(EmptyCompletionError, match="atendio_el_motivo"):
+        llm.chat_json("s", "u", schema=_SCHEMA_CON_REQUIRED)
+    assert llm.calls == {"fast": 0, "fallback": 0, "empty": 1}
+
+
+def test_schema_sin_required_acepta_cualquier_json():
+    """Guard de no-regresion: sin `required` no hay nada que exigir, y el fast
+    resuelve al primer intento como siempre."""
+    calls = []
+
+    def handler(request):
+        calls.append(json.loads(request.content))
+        return httpx.Response(200, json={"message": {"content": '{"ok": true}'}})
+
+    llm = OllamaClient("http://ollama:11434", "qwen3.5:4b", num_predict=1024,
+                       client=httpx.Client(transport=httpx.MockTransport(handler)))
+    assert llm.chat_json("s", "u", schema={"type": "object"}) == {"ok": True}
+    assert len(calls) == 1
+    assert llm.calls == {"fast": 1, "fallback": 0, "empty": 0}

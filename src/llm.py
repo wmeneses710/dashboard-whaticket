@@ -52,6 +52,33 @@ def _extract_json(content: str) -> dict | None:
     return None
 
 
+def claves_faltantes(raw: dict, schema: dict | None) -> list[str]:
+    """Claves REQUIRED del schema que la salida del LLM no trae. [] = completa.
+
+    Es la MISMA regla que aplica scorer._validate -- vive aca, en el nivel bajo,
+    para que `chat_json` pueda mirarla antes de devolver. Si las dos capas usaran
+    criterios distintos, el nivel 2 (grammar) rescataria salidas que el scorer
+    igual rechaza, que es el bucle que esto viene a cerrar.
+
+    ES SCHEMA-DRIVEN A PROPOSITO: sin `required` no exige nada (un schema
+    generico como {"type": "object"} sigue aceptando cualquier JSON).
+    """
+    if not isinstance(raw, dict) or not schema:
+        return []
+    faltan = [k for k in schema.get("required", ()) if k not in raw]
+    sub = (schema.get("properties", {}).get("dimensions", {}) or {}).get("required")
+    if sub:
+        dims = raw.get("dimensions")
+        if not isinstance(dims, dict):
+            # Ausente ya se reporto arriba si estaba en required; presente pero de
+            # otro tipo tambien rompe el contrato y el grammar lo arregla.
+            if "dimensions" in raw:
+                faltan.append("dimensions (no es un objeto)")
+        else:
+            faltan += [f"dimensions.{k}" for k in sub if k not in dims]
+    return faltan
+
+
 class OllamaClient:
     def __init__(
         self,
@@ -147,7 +174,18 @@ class OllamaClient:
         )
 
     def chat_json(self, system: str, user: str, schema: dict | None = None) -> dict:
-        """Devuelve el JSON parseado. Reintenta el fast y cae al grammar si falla."""
+        """Devuelve el JSON parseado Y COMPLETO. Reintenta el fast y cae al grammar.
+
+        UN JSON INCOMPLETO SE TRATA COMO UNO ROTO. Medido en produccion el
+        2026-08-25: el fast devolvia JSON sintacticamente valido pero sin
+        `atendio_el_motivo`, `chat_json` lo aceptaba al primer intento (`fallback=0`
+        en TODOS los ciclos) y el scorer lo rechazaba despues. Sin fila persistida,
+        la sesion volvia a la cabeza de la cola en el ciclo siguiente: la misma
+        sesion fallo ~15 veces en tres horas, y a las 07:25 se sumo una segunda.
+        El nivel 2 existe justo para FORZAR la estructura; el chequeo que detecta que
+        falta estructura vivia fuera de su alcance.
+        """
+        faltan: list[str] = []
         # Nivel 1: rapido (think=false + json generico), varios intentos.
         for i in range(self.fast_attempts):
             num_predict = self.num_predict * (2 if i else 1)
@@ -156,8 +194,13 @@ class OllamaClient:
                            num_predict=num_predict, think=False)
             )
             if parsed is not None:
-                self.calls["fast"] += 1
-                return parsed
+                faltan = claves_faltantes(parsed, schema)
+                if not faltan:
+                    self.calls["fast"] += 1
+                    return parsed
+                # Incompleto: NO se salta al grammar todavia. El reintento duplica
+                # num_predict, asi que una salida cortada por presupuesto se puede
+                # resolver por el camino barato (~7s contra ~120s).
 
         # Nivel 2: fallback con grammar del schema (thinking activo, lento).
         if schema is not None:
@@ -166,11 +209,18 @@ class OllamaClient:
                            num_predict=self.fallback_num_predict, think=None)
             )
             if parsed is not None:
-                self.calls["fallback"] += 1
-                return parsed
+                faltan = claves_faltantes(parsed, schema)
+                if not faltan:
+                    self.calls["fallback"] += 1
+                    return parsed
 
         self.calls["empty"] += 1
+        # Se distinguen las dos causas: "no parseo nada" y "parseo pero le falta X"
+        # necesitan arreglos distintos (presupuesto/red contra prompt/schema), y el
+        # log del worker es lo unico que se ve desde afuera.
+        motivo = (f"le faltan claves requeridas: {', '.join(faltan)}" if faltan
+                  else "no devolvio JSON parseable")
         raise EmptyCompletionError(
-            "el modelo no devolvio JSON parseable ni en el camino rapido "
+            f"el modelo {motivo} ni en el camino rapido "
             f"({self.fast_attempts} intentos) ni en el fallback grammar"
         )

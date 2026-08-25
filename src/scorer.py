@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
+from src.llm import claves_faltantes
 from src.metrics import hay_persona_del_negocio
 from src.prompts import build_motivo_prompt, build_motivo_schema
 from src.recommendations import refine_recomendacion
@@ -89,16 +90,25 @@ def _validate(raw: dict, schema: dict) -> None:
     duros: si el LLM los omite o los manda mal, NO descartamos un rating por lo
     demas valido (se degradan a None en score_conversation). Un rating sin esos
     ejes es preferible a dejar la conversacion atascada reintentando para siempre.
+
+    LA REGLA VIVE EN `llm.claves_faltantes`, NO ACA. Estaba escrita dos veces --
+    una aca y otra implicita en `chat_json` -- y el 2026-08-25 eso costo un bucle
+    infinito en produccion: `chat_json` devolvia una salida incompleta al primer
+    intento (sin llegar al grammar, que es el nivel que FUERZA la estructura) y
+    esta funcion la rechazaba despues. Dos copias de un contrato divergen; una
+    sola, no. Este sigue siendo el cinturon de seguridad: el `LLM` es un Protocol
+    y otra implementacion puede no chequear nada.
     """
-    for key in schema["required"]:
-        if key not in raw:
-            raise ValueError(f"salida del LLM sin la clave requerida: {key!r}")
-    dims = raw.get("dimensions")
-    if not isinstance(dims, dict):
+    faltan = claves_faltantes(raw, schema)
+    if faltan:
+        raise ValueError(f"salida del LLM sin la clave requerida: {faltan[0]!r}"
+                         + (f" (y {len(faltan) - 1} mas: {', '.join(faltan[1:])})"
+                            if len(faltan) > 1 else ""))
+    # Guard INCONDICIONAL, mas amplio que el schema: `dimensions` se indexa mas
+    # abajo sin volver a preguntar. Un schema que no la declare igual no puede
+    # dejar pasar algo que no sea un objeto.
+    if not isinstance(raw.get("dimensions"), dict):
         raise ValueError("salida del LLM: 'dimensions' debe ser un objeto")
-    for key in schema["properties"]["dimensions"]["required"]:
-        if key not in dims:
-            raise ValueError(f"salida del LLM: falta la dimension {key!r}")
 
 
 def _as_bool(v):
