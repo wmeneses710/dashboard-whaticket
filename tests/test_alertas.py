@@ -636,3 +636,26 @@ def test_el_nombre_del_cliente_se_ESCAPA():
 def test_las_consultas_TRAEN_el_nombre_y_la_cuenta():
     for sql in (alertas._ESPERA_SQL, alertas._RESUMEN_SQL):
         assert "AS cliente" in sql and "AS account" in sql
+
+
+# --- EL RESUMEN NO PUEDE ALERTAR UNA CHARLA VIEJA RECIEN CALIFICADA ----------
+#
+# CASO REAL, visto en el log del primer arranque en produccion: el worker sesionizo
+# **144.594 sesiones** y las va a ir scoreando. Cada una que califique se lleva
+# `scored_at = now()`, asi que pasaba la ventana y disparaba un resumen -- aunque la
+# conversacion fuera de marzo. La siembra del primer barrido solo tapa el ciclo UNO; del
+# segundo en adelante, cada lote del backlog habria mandado alertas de charlas muertas.
+#
+# `scored_at` dice cuando la MIRAMOS. Lo que importa es cuando PASO.
+
+def test_el_resumen_filtra_por_cuando_paso_la_conversacion():
+    assert "cs.scored_at" in alertas._RESUMEN_SQL, "sigue mirando lo recien calificado"
+    assert "coalesce(cs.resolved_at, cs.conversation_created_at)" in alertas._RESUMEN_SQL, \
+        "pero la conversacion TAMBIEN tiene que ser reciente"
+
+
+def test_la_ventana_de_la_conversacion_es_mas_ancha_que_la_del_scoreo():
+    """El scoreo puede tardar: una charla que cerro anoche y se califica a la mañana sigue
+    siendo noticia. Lo que no puede pasar es que una de marzo cuente como de hoy."""
+    assert alertas.VENTANA_CHARLA_HORAS > alertas.VENTANA_RESUMEN_HORAS
+    assert alertas.VENTANA_CHARLA_HORAS <= 48

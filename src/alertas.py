@@ -88,6 +88,15 @@ PRORROGA_SEGUNDOS = 300
 VENTANA_RESUMEN_HORAS = 2
 VENTANA_ESPERA_HORAS = 48
 
+# CUANDO PASO LA CHARLA, que NO es lo mismo que cuando la calificamos. `scored_at` dice
+# cuando la MIRAMOS: un backfill de scoring le pone `now()` a una conversacion de marzo.
+# VISTO EN EL PRIMER ARRANQUE EN PRODUCCION: el worker sesionizo 144.594 sesiones y las va
+# scoreando de a lotes; sin este filtro, cada lote habria mandado resumenes de charlas
+# muertas. La siembra del primer barrido solo tapa el ciclo UNO.
+# Es mas ancha que la del scoreo a proposito: una charla que cerro anoche y se califica a
+# la mañana sigue siendo noticia.
+VENTANA_CHARLA_HORAS = 24
+
 # El tipo del ledger para la PRIMERA observacion. No es una alerta: es la anotacion que
 # permite confirmarla en la siguiente pasada.
 TIPO_VISTA = "espera_vista"
@@ -387,6 +396,10 @@ WHERE v.es_vip
   AND a.clave IS NULL
   AND cs.eval_status = 'evaluated'
   AND cs.scored_at > now() - make_interval(hours => %(ventana_h)s)
+  -- Y la CHARLA tiene que ser reciente: `scored_at` dice cuando la miramos, no cuando
+  -- paso. Sin esto, un backfill de scoring alerta conversaciones de hace meses.
+  AND coalesce(cs.resolved_at, cs.conversation_created_at)
+        > now() - make_interval(hours => %(charla_h)s)
 """
 
 
@@ -408,7 +421,8 @@ def candidatos_espera(cur, account: str) -> list[dict]:
 
 def resumenes_pendientes(cur, account: str) -> list[dict]:
     """Sesiones VIP ya calificadas que todavia no se avisaron."""
-    cur.execute(_RESUMEN_SQL, {"account": account, "ventana_h": VENTANA_RESUMEN_HORAS})
+    cur.execute(_RESUMEN_SQL, {"account": account, "ventana_h": VENTANA_RESUMEN_HORAS,
+                               "charla_h": VENTANA_CHARLA_HORAS})
     return _dicts(cur)
 
 
