@@ -67,6 +67,13 @@ services:
       SCORING_ACCOUNTS: ${SCORING_ACCOUNTS:-sistemas,datos}
       SCORING_BATCH_SIZE: ${SCORING_BATCH_SIZE:-20}
       SCORING_POLL_SECONDS: ${SCORING_POLL_SECONDS:-60}
+      # Alertas de jugador VIP a Telegram (src/alertas.py). VACIAS POR DEFECTO Y ESO ES EL
+      # MODO SEGURO: sin token o sin chat el canal calla y el barrido se saltea sin error,
+      # asi que el contenedor se puede subir con las alertas puestas y el grupo sin crear.
+      # Van declaradas aca porque el compose pasa SOLO lo que nombra: si faltan, el worker
+      # arranca igual y loguea `alertas VIP: off`, que es justo el sintoma dificil de ver.
+      TELEGRAM_TOKEN_VIP: ${TELEGRAM_TOKEN_VIP:-}
+      TELEGRAM_CHAT_VIP: ${TELEGRAM_CHAT_VIP:-}
     # SOLO LOOPBACK, por lo mismo que la base. El tablero no tiene auth en las lecturas y
     # devuelve nombres, telefonos y transcripts.
     ports:

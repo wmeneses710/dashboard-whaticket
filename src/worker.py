@@ -527,6 +527,10 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
     import psycopg
 
+    import os
+
+    from src.alertas import barrer as barrer_alertas
+    from src.alertas import canal_desde_env
     from src.conversions import refresh_account_conversions
     from src.sessions import refresh_account_sessions
 
@@ -534,6 +538,11 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
         """Log con timestamp (para leer la hora y el ritmo del goteo en prod)."""
         log(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}")
 
+    # UN canal de Telegram para las dos alertas (ver src/alertas.py). Si le falta el token
+    # o el chat, calla y el barrido lo saltea SIN error: se puede subir el worker con las
+    # alertas puestas y el grupo todavia sin crear.
+    canal_vip = canal_desde_env(os.environ)
+    emit(f"[worker] alertas VIP: {'on' if canal_vip.configurado else 'off'}")
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0,
                        num_ctx=cfg.ollama_num_ctx, num_predict=cfg.ollama_num_predict,
                        fast_attempts=cfg.llm_fast_attempts)
@@ -653,6 +662,14 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
                         rate = (c["evaluated"] / dt * 60) if dt > 0 else 0.0
                         emit(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} "
                              f"err={c['error']} · {dt:.0f}s ({rate:.1f} eval/min)")
+                    # ALERTAS DE JUGADOR VIP. Va DESPUES del lote y no antes: el resumen
+                    # sale de la sesion recien calificada, asi que un aviso llega en el
+                    # mismo ciclo en que la charla se cerro. `barrer` no lanza nunca y con
+                    # los dos canales apagados no hace nada: el scoring es el producto.
+                    a = barrer_alertas(conn, account, canal_vip)
+                    if a["espera"] or a["resumen"]:
+                        emit(f"[worker] {account}: alertas VIP espera={a['espera']} "
+                             f"resumen={a['resumen']}")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
                     for account in cfg.scoring_accounts:
