@@ -106,13 +106,46 @@ Poner `TELEGRAM_TOKEN_VIP` y `TELEGRAM_CHAT_VIP` en EasyPanel y reiniciar. En el
 
 ---
 
+## Logging
+
+Todo sale por **stdout/stderr del contenedor**, en la misma corriente que el resto del
+worker y con su timestamp.
+
+Al arrancar, una vez:
+
+```
+[worker] alertas VIP: on          ← o `off` si falta el token o el chat
+```
+
+Por ciclo, **solo si pasó algo** (incluido si falló):
+
+```
+[worker] sistemas: alertas VIP espera=0 resumen=3 fallos=0
+```
+
+Cuando un envío falla, una línea por alerta:
+
+```
+[alertas] sistemas resumen 3f2a…: reintentar     ← red, 429 o 5xx: se desmarca y reintenta
+[alertas] sistemas espera tkt-1:…: descartar     ← 4xx de formato: NO se reintenta
+[alertas] barrido sistemas ROTO: OperationalError: ...   ← el barrido entero
+```
+
+> **`fallos` existe por un agujero real**: antes se devolvía solo lo enviado, así que un
+> ciclo con el canal caído daba los mismos ceros que un día tranquilo y no escribía una
+> sola línea. Un canal muerto se veía idéntico a que no hubiera pasado nada.
+
+`barrer` **nunca lanza**: el scoring es el producto, la alerta es el aviso.
+
 ## Qué mirar el primer día
 
 | señal | dónde | qué significa |
 |---|---|---|
 | `alertas VIP: off` con el token puesto | log del worker | la variable no llegó al contenedor |
-| ninguna alerta en horas | `SELECT count(*) FROM vip_players WHERE es_vip` | 0 = la lista no se cargó |
-| `telegram 400 (NO se reintenta)` | log | bug de formato: se descarta a propósito, no reintenta |
+| ninguna línea `alertas VIP` en horas | log | no hubo nada que avisar **ni** fallos |
+| `fallos=` distinto de 0 | log | mirar la línea `[alertas]` de arriba |
+| ninguna alerta y `fallos=0` | `SELECT count(*) FROM vip_players WHERE es_vip` | 0 = la lista no se cargó |
+| `descartar` repetido | log | bug de formato: se descarta a propósito |
 | avisos repetidos | `alertas_enviadas` | el ledger no está persistiendo |
 
 ---

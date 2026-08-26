@@ -490,7 +490,8 @@ def mensaje_resumen(d: dict) -> str:
 
 def barrer(conn, account: str, canal: Canal,
            ahora: datetime | None = None,
-           umbral_segundos: int = UMBRAL_ESPERA_SEGUNDOS) -> dict:
+           umbral_segundos: int = UMBRAL_ESPERA_SEGUNDOS,
+           log=None) -> dict:
     """Un ciclo de alertas de UNA cuenta. Devuelve `{"espera": n, "resumen": n}`.
 
     EL ORDEN DE CADA ALERTA ES: marcar primero, mandar despues. Al reves, un fallo de red
@@ -501,7 +502,15 @@ def barrer(conn, account: str, canal: Canal,
     NO LANZA NUNCA. El worker lo llama dentro de su ciclo de scoring; una alerta rota no
     puede dejar sesiones sin calificar.
     """
-    hecho = {"espera": 0, "resumen": 0}
+    # `fallos` NO es cosmetico. Antes se devolvia solo lo ENVIADO: si los diez envios del
+    # ciclo fallaban, esto daba {espera:0, resumen:0}, que es lo MISMO que devuelve un dia
+    # tranquilo. El worker solo loguea cuando hay algo, asi que un canal caido se veia
+    # identico a que no hubiera pasado nada.
+    hecho = {"espera": 0, "resumen": 0, "fallos": 0}
+    # El worker escribe con timestamp por `emit`; el `logger` de la libreria sale por
+    # stderr sin hora ni nombre y en un log de contenedor mezclado con uvicorn no se
+    # rastrea. Con el `log` inyectado la falla aparece en la misma corriente que el resto.
+    decir = log or (lambda m: logger.warning("%s", m))
     try:
         with conn.cursor() as cur:
             ensure_table(cur)
@@ -532,7 +541,10 @@ def barrer(conn, account: str, canal: Canal,
                 estado = canal.enviar(mensaje_espera(c))
                 if estado == OK:
                     hecho["espera"] += 1
-                elif estado == REINTENTAR:
+                else:
+                    hecho["fallos"] += 1
+                    decir(f"[alertas] {account} espera {clave}: {estado}")
+                if estado == REINTENTAR:
                     with conn.cursor() as cur:
                         desmarcar(cur, account, "espera", clave)
                     conn.commit()
@@ -551,13 +563,17 @@ def barrer(conn, account: str, canal: Canal,
                 estado = canal.enviar(mensaje_resumen(r))
                 if estado == OK:
                     hecho["resumen"] += 1
-                elif estado == REINTENTAR:
+                else:
+                    hecho["fallos"] += 1
+                    decir(f"[alertas] {account} resumen {r['session_id']}: {estado}")
+                if estado == REINTENTAR:
                     with conn.cursor() as cur:
                         desmarcar(cur, account, "resumen", clave_resumen(r["session_id"]))
                     conn.commit()
                 time.sleep(THROTTLE_SEGUNDOS)
     except Exception as e:  # noqa: BLE001 - el scoring es el producto, la alerta es el aviso
-        logger.warning("barrido de alertas %s: %s: %s", account, type(e).__name__, e)
+        hecho["fallos"] += 1
+        decir(f"[alertas] barrido {account} ROTO: {type(e).__name__}: {e}")
     return hecho
 
 

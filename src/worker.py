@@ -666,10 +666,13 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
                     # sale de la sesion recien calificada, asi que un aviso llega en el
                     # mismo ciclo en que la charla se cerro. `barrer` no lanza nunca y con
                     # los dos canales apagados no hace nada: el scoring es el producto.
-                    a = barrer_alertas(conn, account, canal_vip)
-                    if a["espera"] or a["resumen"]:
+                    a = barrer_alertas(conn, account, canal_vip, log=emit)
+                    # SE LOGUEA TAMBIEN CUANDO FALLA. Sin el conteo de fallos, un canal
+                    # caido devolvia los mismos ceros que un dia tranquilo y no escribia
+                    # una sola linea.
+                    if a["espera"] or a["resumen"] or a["fallos"]:
                         emit(f"[worker] {account}: alertas VIP espera={a['espera']} "
-                             f"resumen={a['resumen']}")
+                             f"resumen={a['resumen']} fallos={a['fallos']}")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
                     for account in cfg.scoring_accounts:

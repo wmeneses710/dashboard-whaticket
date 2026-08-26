@@ -27,10 +27,16 @@ from src import alertas
 TZ = timezone(timedelta(hours=-5))       # Ecuador, sin horario de verano
 
 
+_COLS_RESUMEN = ("session_id", "username", "ranking", "agencia", "motivo_vip",
+                 "operador", "motivo", "stars", "first_response_seconds",
+                 "resolution_seconds")
+
+
 class _FakeCursor:
-    def __init__(self, rows=None):
+    def __init__(self, rows=None, cols=_COLS_RESUMEN):
         self.sql, self.params, self._rows = [], [], rows or []
         self.rowcount = 0
+        self.description = [type("D", (), {"name": c}) for c in cols]
 
     def execute(self, sql, params=None):
         self.sql.append(" ".join(str(sql).split()))
@@ -276,7 +282,7 @@ def test_el_barrido_no_manda_nada_si_el_canal_esta_apagado(monkeypatch):
     conn = _ConnFalsa(cur)
     r = alertas.barrer(conn, "sistemas", alertas.Canal("", ""),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert r == {"espera": 0, "resumen": 0}
+    assert r == {"espera": 0, "resumen": 0, "fallos": 0}
     assert llamadas == [], "un canal apagado no tiene que pegarle a la red"
     assert not any("INSERT INTO alertas_enviadas" in s for s in cur.sql), \
         "y tampoco puede marcar como enviada una alerta que nunca salio"
@@ -497,3 +503,36 @@ def test_el_barrido_asegura_TAMBIEN_la_tabla_de_VIP():
     junto = " ".join(cur.sql)
     assert "CREATE TABLE IF NOT EXISTS alertas_enviadas" in junto
     assert "CREATE TABLE IF NOT EXISTS vip_players" in junto
+
+
+# --- QUE SE VEA CUANDO FALLA ------------------------------------------------
+#
+# EL AGUJERO: `barrer` devolvia solo lo ENVIADO. Si los diez envios del ciclo fallaban,
+# devolvia {espera:0, resumen:0} -- indistinguible de "no habia nada que avisar"-- y el
+# worker, que solo loguea cuando hay algo, no escribia una linea. Un canal caido se veria
+# exactamente igual que un dia tranquilo.
+
+def test_barrer_reporta_los_FALLOS_no_solo_los_envios(monkeypatch):
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 500, "text": "boom"})())
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _FakeCursor(rows=[("s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
+    cur.rowcount = 1
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
+    assert "fallos" in r, "un ciclo con todo caido tiene que poder distinguirse de uno vacio"
+
+
+def test_barrer_acepta_un_log_para_hablar_por_el_mismo_canal_que_el_worker(monkeypatch):
+    """El worker escribe con timestamp por `emit`; `logger` de la libreria sale por stderr
+    sin hora ni nombre. En un log de contenedor mezclado con uvicorn, `telegram 400` suelto
+    no se puede rastrear. Con un `log` inyectado, la falla aparece en la misma corriente."""
+    dichos = []
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 400, "text": "mal"})())
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _FakeCursor(rows=[("s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
+    cur.rowcount = 1
+    alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                   ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ), log=dichos.append)
+    assert any("400" in d or "descarta" in d.lower() for d in dichos), dichos
