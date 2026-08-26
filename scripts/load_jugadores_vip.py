@@ -36,7 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import psycopg  # noqa: E402
 
 from src.vip import (  # noqa: E402
-    apply_config, base_de, filas_de_config, filas_huerfanas, podar, verificar_origen)
+    apply_config, base_de, contactos_que_existen, filas_de_config, filas_huerfanas,
+    podar, verificar_origen, verificar_vinculos)
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "jugadores_vip.json"
 
@@ -62,19 +63,32 @@ def main() -> int:
           f"({enc} encendidas, {len(filas) - enc} apagadas)")
     print(f"  por cuenta: {dict(por_cuenta)}")
     print(f"  confianza : {dict(conf)}")
-    if args.dry_run:
-        print("dry-run: no se escribio nada")
-        return 0
-
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         print("falta DATABASE_URL", file=sys.stderr)
         return 2
-    # EL GUARD MAS IMPORTANTE DEL DESPLIEGUE: que los `contact_id` sean de ESTA base.
-    aviso = verificar_origen(doc, base_de(dsn))
-    if aviso:
-        print(f"OJO: {aviso}", file=sys.stderr)
+    # EL NOMBRE DE LA BASE ES SOLO UN AVISO. La copia local es un RESTORE del dump de
+    # EasyPanel: los uuid son los mismos y el nombre no, asi que bloquear por nombre
+    # frenaba una carga valida. El guard de verdad es el de abajo.
+    destino = base_de(dsn)
+    origen = doc.get("origen_bd")
+    if origen and destino and origen != destino:
+        print(f"OJO: el archivo se genero contra `{origen}` y se carga en `{destino}`. "
+              f"Se verifica que los contact_id existan antes de escribir.", file=sys.stderr)
+
+    # EL CHEQUEO DE VINCULOS CORRE TAMBIEN EN DRY-RUN, y es el motivo de ser del dry-run:
+    # antes salia antes de conectarse, asi que lo unico que no se podia ensayar era
+    # justamente lo que hay que ensayar --si los uuid apuntan a alguien en ESTA base--.
     with psycopg.connect(dsn) as cn, cn.cursor() as cur:
+        claves = [(f["account"], f["contact_id"]) for f in filas]
+        existen = contactos_que_existen(cur, claves)
+        aviso = verificar_vinculos(existen, len(claves))
+        print(f"  vinculos vivos en esta base: {existen} de {len(claves)}")
+        if aviso:
+            print(f"OJO: {aviso}", file=sys.stderr)
+        if args.dry_run:
+            print("dry-run: no se escribio nada")
+            return 0
         n = apply_config(cur, jugadores, pisar=args.pisar)
         # LAS HUERFANAS SE AVISAN SIEMPRE. Un vinculo que dejo de ser valido no se corrige
         # con un upsert: la fila vieja se queda alertando. Asi quedaron tres GRUPOS de

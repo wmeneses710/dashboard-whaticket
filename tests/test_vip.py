@@ -41,6 +41,9 @@ class _FakeCursor:
     def fetchall(self):
         return self._rows
 
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
 
 # --- el esquema -------------------------------------------------------------
 
@@ -247,3 +250,45 @@ def test_un_config_VIEJO_sin_estampa_no_bloquea_pero_avisa():
     """Los generados antes de este guard no tienen el campo. No se rompe el flujo: se
     devuelve el aviso para que el script lo imprima."""
     assert vip.verificar_origen({}, "whaticket_prod") is not None
+
+
+# --- EL GUARD DE VERDAD: que los contact_id EXISTAN en la base destino ------
+#
+# Comparar el NOMBRE de la base era un proxy, y uno malo: la copia local es un restore del
+# dump de EasyPanel, asi que los uuid SON los mismos y el nombre no. El guard por nombre
+# bloqueaba una carga perfectamente valida y no habria detectado el caso peligroso de
+# verdad (dos bases distintas que se llaman igual).
+#
+# Lo que importa no es de donde salio el archivo: es si los `contact_id` apuntan a alguien
+# EN ESTA base. Eso se pregunta directo.
+
+def test_cuenta_cuantos_contact_id_existen_en_la_base_destino():
+    cur = _FakeCursor(rows=[(2,)])
+    assert vip.contactos_que_existen(cur, [("sistemas", "a"), ("datos", "b")]) == 2
+    assert "FROM contacts" in " ".join(cur.sql)
+
+
+def test_si_NINGUN_contact_id_existe_se_planta():
+    """El caso catastrofico: cargar uuid de otra base. Cero errores en el runtime, cero
+    alertas, y 'no llega ninguna alerta' es indistinguible de 'no hubo VIP hoy'."""
+    import pytest
+    with pytest.raises(ValueError, match="0 de 255"):
+        vip.verificar_vinculos(existen=0, total=255)
+
+
+def test_si_existen_TODOS_pasa_sin_chistar():
+    assert vip.verificar_vinculos(existen=255, total=255) is None
+
+
+def test_si_existe_la_MAYORIA_avisa_pero_no_bloquea():
+    """Un puñado de contactos puede haber sido borrado del CRM entre el dump y la carga.
+    Eso es normal; que no exista NINGUNO es otra cosa."""
+    aviso = vip.verificar_vinculos(existen=250, total=255)
+    assert aviso is not None and "5" in aviso
+
+
+def test_el_umbral_de_pantalla_es_explicito():
+    """Debajo de la mitad ya no es 'se borraron algunos': es la base equivocada."""
+    import pytest
+    with pytest.raises(ValueError):
+        vip.verificar_vinculos(existen=100, total=255)

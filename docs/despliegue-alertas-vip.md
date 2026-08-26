@@ -76,24 +76,71 @@ Desplegar sin `TELEGRAM_TOKEN_VIP` ni `TELEGRAM_CHAT_VIP`. En el log del worker:
 
 Las dos tablas quedan creadas y vacías. Nada se envía.
 
-### 4. Generar la lista contra PRODUCCIÓN
+### 4 y 5. Cargar la lista en PRODUCCIÓN
+
+**Cloudflare no interviene acá.** Proxea HTTP(S) —el tablero—; Postgres es TCP en 5432 y
+no pasa por él. Lo que hay que resolver es que la base es interna a EasyPanel.
+
+El contenedor de la app **ya tiene todo**: `psycopg`, los dos scripts y `DATABASE_URL`
+apuntando a la base interna. Solo falta meterle el archivo.
+
+#### Por qué el JSON de la copia SIRVE en producción
+
+La base local es un **restore del dump de EasyPanel**: los `contact_id` son los mismos
+uuid. Por eso el loader **no** bloquea por el nombre de la base —eso sería un proxy malo,
+y frenaría una carga válida—. Lo que verifica es lo que importa: **que esos uuid existan
+de verdad en la base destino**. Si no existen, se planta.
+
+#### El procedimiento
+
+**1. Encontrar el contenedor** (por eso no hace falta saber dónde está nada):
 
 ```bash
-DATABASE_URL="<produccion>" python scripts/dump_jugadores_vip.py <reporte.csv>
+docker ps --format 'table {{.Names}}\t{{.Image}}' | grep -i dashboard
 ```
 
-Verificar en el JSON que `"origen_bd"` sea la base de producción.
-
-### 5. Cargar la lista
+**2. Copiar el JSON adentro:**
 
 ```bash
-DATABASE_URL="<produccion>" python scripts/load_jugadores_vip.py --dry-run   # mirar
-DATABASE_URL="<produccion>" python scripts/load_jugadores_vip.py --pisar     # cargar
+docker cp config/jugadores_vip.json <contenedor>:/tmp/vip.json
 ```
 
-`--seed` (por defecto) solo llena huecos y respeta lo que alguien haya apagado a mano.
-`--pisar` hace que el archivo gane. `--podar` borra lo que el archivo ya no trae — va
-aparte porque es destructivo.
+**3. Ensayar SIN escribir** — acá es donde se ve si los vínculos son válidos:
+
+```bash
+docker exec <contenedor> python scripts/load_jugadores_vip.py \
+  --config /tmp/vip.json --dry-run
+```
+
+Lo que tiene que decir:
+
+```
+  vinculos vivos en esta base: 255 de 255
+dry-run: no se escribio nada
+```
+
+Si dice `solo 0 de 255`, **parar**: el archivo no corresponde a esa base.
+
+**4. Cargar:**
+
+```bash
+docker exec <contenedor> python scripts/load_jugadores_vip.py \
+  --config /tmp/vip.json --pisar
+```
+
+**5. Borrar el archivo del contenedor:**
+
+```bash
+docker exec <contenedor> rm /tmp/vip.json
+```
+
+El dato ya vive en `vip_players`, que es donde tiene que estar. El archivo era el papel.
+
+#### Lo que NO hay que hacer
+
+Publicar el puerto 5432 hacia afuera. Docker publica saltando el firewall del host (sus
+reglas van a la cadena `DOCKER` de iptables, no a `INPUT`), así que un `ufw deny 5432`
+**no lo tapa** — es la misma razón por la que el compose local ata la base a `127.0.0.1`.
 
 ### 6. Encender
 

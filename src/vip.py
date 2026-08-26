@@ -115,6 +115,48 @@ def verificar_origen(doc: dict, base_destino: str | None) -> str | None:
     return None
 
 
+# Debajo de esta proporcion de vinculos vivos, no es "se borraron algunos contactos": es
+# la base equivocada. La mitad es holgado a proposito -- el sintoma que se quiere atrapar
+# es el catastrofico (casi ninguno existe), no el ruido normal.
+_MINIMO_VINCULOS_VIVOS = 0.5
+
+
+def contactos_que_existen(cur, claves: list[tuple[str, str]]) -> int:
+    """Cuantos de los `(account, contact_id)` existen de verdad en `contacts`."""
+    if not claves:
+        return 0
+    cur.execute(
+        "SELECT count(*) FROM contacts c "
+        "WHERE (c.account, c.id::text) IN (SELECT unnest(%s::text[]), unnest(%s::text[]))",
+        ([k[0] for k in claves], [k[1] for k in claves]))
+    return cur.fetchone()[0]
+
+
+def verificar_vinculos(existen: int, total: int) -> str | None:
+    """Revienta si los `contact_id` no apuntan a nadie en ESTA base.
+
+    ES EL GUARD QUE IMPORTA, y reemplaza al de comparar nombres de base. Comparar nombres
+    era un proxy malo: la copia local es un RESTORE del dump de EasyPanel, asi que los uuid
+    son los mismos y el nombre no -- bloqueaba una carga valida, y no habria atrapado dos
+    bases distintas que se llamaran igual. Lo que importa no es de donde salio el archivo,
+    es si los uuid apuntan a alguien aca.
+
+    EL MODO DE FALLO QUE EVITA: cargar uuid de otra base da CERO errores en runtime y CERO
+    alertas, y "no llega ninguna alerta" es indistinguible de "no hubo VIP hoy".
+    """
+    if not total:
+        return None
+    if existen < total * _MINIMO_VINCULOS_VIVOS:
+        raise ValueError(
+            f"solo {existen} de {total} `contact_id` existen en esta base. "
+            f"El archivo se genero contra OTRA base: volve a correr "
+            f"scripts/dump_jugadores_vip.py apuntando a la base destino.")
+    if existen < total:
+        return (f"{total - existen} de {total} contactos ya no existen en esta base "
+                f"(borrados del CRM entre el dump y la carga). Se cargan igual.")
+    return None
+
+
 def ensure_table(cur) -> None:
     """Crea `vip_players` y su indice si faltan (idempotente)."""
     for stmt in _CREATE_STMTS:
