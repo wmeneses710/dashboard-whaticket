@@ -1,0 +1,933 @@
+REVISION MANUAL DE VINCULOS VIP
+==============================================================================
+Generado 2026-08-26  ·  fuente reporte_jugadores_criterios_2026-08-21.csv  ·  base whaticket_copia
+
+QUE ES ESTO
+  Cada jugador del reporte del casino se vinculo a un contacto del CRM. El
+  `username` es un dato del CASINO y no existe en el CRM, asi que el vinculo se
+  DEDUCE. Aca estan los que no se pueden dar por seguros.
+
+  SOLO LOS CONFIRMADOS ESTAN ENCENDIDOS. El resto vive en `vip_players` con
+  `es_vip = false`: en stanby, no borrados. Verificar uno es encenderlo.
+
+QUE CUENTA COMO EVIDENCIA DURA (cada una es una IDENTIDAD, no una inferencia)
+  · el username ES un telefono y coincide EXACTO con contacts.number
+  · el username normalizado ES el nombre del contacto (evelynpalacios = Evelyn Palacios)
+  · el contacto esta en la cola `Jugadores VIP` del CRM -- lo dice el CRM, no nosotros
+  · un operador lo cargo en extraInfo bajo la clave `usuario`
+  · 5+ menciones CON etiqueta (`Estimado X`) y NADIE compitiendo por ese username
+
+LO QUE NO CUENTA
+  Una mencion suelta. Un agente nombra a muchos jugadores: asi `brysuye` habia
+  quedado pegado a `Cristhian Oleas`, que lo menciono UNA vez contra las 177
+  menciones del contacto correcto.
+
+RESULTADO SOBRE 302 VINCULOS
+  CONFIRMADO  156   (75 activos)   ENCENDIDOS, no requieren nada
+  PROBABLE     81   (9 activos)   apagados · evidencia buena, no concluyente
+  DUDOSO       65   (5 activos)   apagados · evidencia debil
+
+POR DONDE EMPEZAR
+  Por los 14 activos de las dos listas de abajo: son los unicos
+  que escribieron esta semana. El resto no habla hace mas de siete dias.
+
+COMO REVISAR
+  Buscar el nombre entre comillas en el tablero (el buscador matchea por ese campo),
+  abrir la conversacion y ver si es el jugador. Para ENCENDER uno verificado:
+      UPDATE vip_players SET es_vip = true WHERE username = '<username>';
+
+
+==============================================================================
+DUDOSO  (65)   — evidencia debil -- revisar primero
+==============================================================================
+
+--- ACTIVOS (escribieron esta semana) ---
+
+  username : darwinganchozo   (#5 OnlySorti · VIP por GGRx5+FREC)
+  contacto : "Yo Me Llamis"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-20
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : tseremp   (#14 OnlySorti · VIP por GGRx5)
+  contacto : "Benjamin Antuash"   cuenta datos
+  actividad: 10 mensajes   ·   ultimo 2026-08-24
+  evidencia: 1 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : tseremp   (#14 OnlySorti · VIP por GGRx5)
+  contacto : "Benjamin Antuash"   cuenta sistemas
+  actividad: 10 mensajes   ·   ultimo 2026-08-24
+  evidencia: 2 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : batman   (#246 SortiOficial · VIP por FREC)
+  contacto : " Jaime Gabriel Briones Rodriguez"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-23
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : edwinsito7777   (#258 SortiOficial · VIP por FREC)
+  contacto : "David Alejandro"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-22
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+--- sin actividad reciente ---
+
+  username : marcktoab   (#1 OnlySorti · VIP por GGRx5+FREC)
+  contacto : "Marcos alex Toabanda miranda"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-06-10
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jendisc182   (#2 OnlySorti · VIP por R90+GGRx5+FREC)
+  contacto : "Jean Carlos Arguello Mosquez"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-04-28
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : rafael12   (#2 SortiGo · VIP por GGRx5)
+  contacto : "Rafa Ramirez"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-14
+  evidencia: 2 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : marcelovn04   (#3 SortiGo · VIP por FREC)
+  contacto : "Frank"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-08-18
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : e1717900326   (#3 SortiOficial · VIP por R90+GGRx5)
+  contacto : "Liceth Mabel Mendoza Delgado"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-12-09
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : luisenrique2026   (#4 ModoSorti · VIP por GGRx5)
+  contacto : "Luis Delgado"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-07-07
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : eliocontreras   (#12 OnlySorti · VIP por GGRx5)
+  contacto : "Lili<3"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-04-09
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : kassandrabp   (#14 SortiOficial · VIP por R90+GGRx5+FREC)
+  contacto : " Nelson Andrés Gómez"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2025-12-18
+  evidencia: 2 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : kassandrabp   (#14 SortiOficial · VIP por R90+GGRx5+FREC)
+  contacto : "Nelson Gomez"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2025-12-18
+  evidencia: 1 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : danielpa1984   (#22 OnlySorti · VIP por GGRx5)
+  contacto : "Dany Zota"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-06-11
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : diegoarias   (#23 OnlySorti · VIP por GGRx5)
+  contacto : "ariasdiego1414"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-12
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : victoria95   (#26 OnlySorti · VIP por GGRx5)
+  contacto : "valery😍❤️"   cuenta datos
+  actividad: 3 mensajes   ·   ultimo 2026-08-11
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : hildegan10   (#27 OnlySorti · VIP por GGRx5)
+  contacto : "Luis Roberto Romero Anzoategui"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-05-08
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : alan1121mc   (#28 OnlySorti · VIP por GGRx5)
+  contacto : "Alan Martinez Cotera"   cuenta datos
+  actividad: 2 mensajes   ·   ultimo 2026-06-24
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : javidocan3   (#32 OnlySorti · VIP por GGRx5)
+  contacto : "Javier Cando"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-06-14
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : andyherrera   (#33 OnlySorti · VIP por GGRx5)
+  contacto : ", agronomía"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-07-19
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jason   (#36 OnlySorti · VIP por GGRx5)
+  contacto : "Johao Fuentes "   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-12-17
+  evidencia: 1 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jason   (#36 OnlySorti · VIP por GGRx5)
+  contacto : "Jeison Santos "   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-12-17
+  evidencia: 1 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Jean Abelardo Loor Lucas"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Gussepy Cedeño"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Sepybet Nuevo"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Carlos Ivan Carpio Calle"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : sc3003   (#42 SortiOficial · VIP por GGRx5)
+  contacto : "Alan Said Carrillo Osorio"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-04-10
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : toni01   (#47 OnlySorti · VIP por FREC)
+  contacto : "Anthony Loor"   cuenta datos
+  actividad: 3 mensajes   ·   ultimo 2026-06-22
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ec1250156716   (#69 SortiOficial · VIP por R90+GGRx5)
+  contacto : "Jonathan Andres Coello Gonzales"   cuenta sistemas
+  actividad: 6 mensajes   ·   ultimo 2025-04-30
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : 1316582988ec   (#87 SortiOficial · VIP por R90+GGRx5)
+  contacto : "Maria Jose Vera Huerta"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-08-05
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : yanahyms13   (#93 SortiOficial · VIP por GGRx5)
+  contacto : "Fernanda Valarezo"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2025-12-29
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : 1725712168ec   (#95 SortiOficial · VIP por R90+GGRx5)
+  contacto : "Lino Rubén Zambrano Tiguan"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-08-30
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : cr7   (#103 SortiOficial · VIP por GGRx5)
+  contacto : "JAIRO VALVERDE"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-04-07
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : nohemi   (#119 SortiOficial · VIP por FREC)
+  contacto : "Ana Noemi Castro Vergara"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-06-14
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : e1206774844   (#130 SortiOficial · VIP por R90)
+  contacto : "Joel Hernán Castro Licoa"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-03
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : josselin   (#140 SortiOficial · VIP por FREC)
+  contacto : "Andrea Cedeño "   cuenta sistemas
+  actividad: 6 mensajes   ·   ultimo 2026-08-07
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : josselin   (#140 SortiOficial · VIP por FREC)
+  contacto : "Alexis Valdemar Villalba Borja"   cuenta sistemas
+  actividad: 6 mensajes   ·   ultimo 2026-08-07
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : josselin   (#140 SortiOficial · VIP por FREC)
+  contacto : "Enrique Atoche"   cuenta sistemas
+  actividad: 6 mensajes   ·   ultimo 2026-08-07
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : josselin   (#140 SortiOficial · VIP por FREC)
+  contacto : "Bryon Segundo Chuga Mejia"   cuenta sistemas
+  actividad: 6 mensajes   ·   ultimo 2026-08-07
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : josselin   (#140 SortiOficial · VIP por FREC)
+  contacto : "ALEXIS VALDEMAR VILLALBA BORJA"   cuenta sistemas
+  actividad: 6 mensajes   ·   ultimo 2026-08-07
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : dancruz   (#151 SortiOficial · VIP por R90)
+  contacto : "Dario Javier Cruz Trejo"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2025-10-24
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : 0950714337ec   (#159 SortiOficial · VIP por R90)
+  contacto : "Rober Miguel Palacios Nazareno"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-10-05
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : chuequito   (#160 SortiOficial · VIP por FREC)
+  contacto : "Steven Alessandro Mendoza Hernández"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-05-10
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : 1723085393ec   (#182 SortiOficial · VIP por R90)
+  contacto : "Daniel Armando Tapia Enriquez"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2025-07-08
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : gabrie   (#187 SortiOficial · VIP por FREC)
+  contacto : "Katherin Mariana Lucero Saldaña"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-06-24
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ec1351658628   (#195 SortiOficial · VIP por R90)
+  contacto : "Marcelo Solorzano"   cuenta sistemas
+  actividad: 13 mensajes   ·   ultimo 2026-04-10
+  evidencia: 4 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ec1351658628   (#195 SortiOficial · VIP por R90)
+  contacto : "Ider Marcelo solorzano Mendoza "   cuenta sistemas
+  actividad: 13 mensajes   ·   ultimo 2026-04-10
+  evidencia: 2 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : e0993230740   (#198 SortiOficial · VIP por R90+FREC)
+  contacto : "Edison Alfonso Lucas Campoverde"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-11-10
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "Ismael Guerrero"   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "Manuel Arce"   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "jimmy cristian alcivar mendoza"   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "Gussepy Cedeño"   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "FERNANDO AGENTE PRO"   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "Angela Priscila Campos Moposita "   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : e0957375736   (#216 SortiOficial · VIP por R90)
+  contacto : " Luis Emmanuel Sánchez Murillo"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-01-12
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : wilao96   (#225 SortiOficial · VIP por FREC)
+  contacto : "Andy Abel Vera Vera"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-06-19
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : andrea_deniss   (#230 SortiOficial · VIP por FREC)
+  contacto : "Paul Delgado"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-07-15
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : beto   (#233 SortiOficial · VIP por FREC)
+  contacto : " Roberto Carlos Gallardo Jibaja"   cuenta sistemas
+  actividad: 4 mensajes   ·   ultimo 2026-06-12
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : beto   (#233 SortiOficial · VIP por FREC)
+  contacto : "Roberto Carlos Pumagualli "   cuenta sistemas
+  actividad: 4 mensajes   ·   ultimo 2026-06-12
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : beto   (#233 SortiOficial · VIP por FREC)
+  contacto : "Génesis cabrera"   cuenta sistemas
+  actividad: 4 mensajes   ·   ultimo 2026-06-12
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : deco1990   (#244 SortiOficial · VIP por FREC)
+  contacto : "Diego Fabian Calle Calderon"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-14
+  evidencia: 0 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : yao   (#252 SortiOficial · VIP por FREC)
+  contacto : "0982385140"   cuenta datos
+  actividad: 2 mensajes   ·   ultimo 2026-06-28
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : yao   (#252 SortiOficial · VIP por FREC)
+  contacto : "Suany Nunik"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-06-28
+  evidencia: 0 menciones con etiqueta; otro contacto compite por el mismo username; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : e1755252952   (#263 SortiOficial · VIP por R90)
+  contacto : "Yair peña"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-03-16
+  evidencia: 1 menciones con etiqueta; el nombre no encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+==============================================================================
+PROBABLE  (81)   — evidencia buena pero no concluyente
+==============================================================================
+
+--- ACTIVOS (escribieron esta semana) ---
+
+  username : miguelandres19   (#52 OnlySorti · VIP por FREC)
+  contacto : "Miguel Andres Morejon vasquez"   cuenta sistemas
+  actividad: 9 mensajes   ·   ultimo 2026-08-24
+  evidencia: 3 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ider   (#146 SortiOficial · VIP por R90+FREC)
+  contacto : "Ider Gustavo Meza Garcia"   cuenta sistemas
+  actividad: 121 mensajes   ·   ultimo 2026-08-24
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jonayker   (#156 SortiOficial · VIP por FREC)
+  contacto : "Jonayker Josue Delgado Alvia "   cuenta sistemas
+  actividad: 150 mensajes   ·   ultimo 2026-08-24
+  evidencia: 3 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : manolo   (#174 SortiOficial · VIP por FREC)
+  contacto : "Venedo Manolo Conforme Burgos"   cuenta sistemas
+  actividad: 102 mensajes   ·   ultimo 2026-08-25
+  evidencia: 4 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : gibson   (#185 SortiOficial · VIP por FREC)
+  contacto : "Gibson Jaren Montece Cabrera"   cuenta sistemas
+  actividad: 57 mensajes   ·   ultimo 2026-08-20
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : juney   (#190 SortiOficial · VIP por R90+FREC)
+  contacto : "Socrate Juney Castillo Colamarco"   cuenta sistemas
+  actividad: 15 mensajes   ·   ultimo 2026-08-23
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : juney   (#190 SortiOficial · VIP por R90+FREC)
+  contacto : "Socrate Juney Castillo Colamarco"   cuenta sistemas
+  actividad: 15 mensajes   ·   ultimo 2026-08-23
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ericson   (#208 SortiOficial · VIP por FREC)
+  contacto : "Ericson Alexander Palacios Delgado"   cuenta sistemas
+  actividad: 17 mensajes   ·   ultimo 2026-08-23
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : angieromero   (#250 SortiOficial · VIP por FREC)
+  contacto : "Angie Lisbeth Romero litardo"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-23
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+--- sin actividad reciente ---
+
+  username : zambranoj08   (#1 SortiGo · VIP por GGRx5+FREC)
+  contacto : "José Luis Zambrano Rosero "   cuenta datos
+  actividad: 3 mensajes   ·   ultimo 2026-06-23
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : rafael12   (#2 SortiGo · VIP por GGRx5)
+  contacto : "Henry Rafael Ramirez Ramirez"   cuenta datos
+  actividad: 3 mensajes   ·   ultimo 2026-08-14
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : fabianbg29   (#5 ModoSorti · VIP por GGRx5)
+  contacto : "Fabian Barre"   cuenta datos
+  actividad: 3 mensajes   ·   ultimo 2026-07-23
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : danielsaltos   (#7 OnlySorti · VIP por GGRx5)
+  contacto : "Daniel Bladimir  Saltos sornoza"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-05-01
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : oscar96   (#10 OnlySorti · VIP por GGRx5)
+  contacto : "Oscar Michael Marquez avila"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-04-20
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ricardoespinoza   (#13 OnlySorti · VIP por GGRx5)
+  contacto : "Ricardo Andres Espinoza Cusme"   cuenta datos
+  actividad: 2 mensajes   ·   ultimo 2026-07-06
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jimmy19   (#15 OnlySorti · VIP por GGRx5)
+  contacto : "Jimmy Ortiz"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-05-19
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jeffersonramos   (#16 OnlySorti · VIP por GGRx5)
+  contacto : "Jefferson Alejandro Ramos Sánchez "   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-07-27
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : andersonguerrero   (#18 OnlySorti · VIP por GGRx5)
+  contacto : "Anderson jackson Guerrero Macías"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-06-09
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : numa06   (#18 SortiOficial · VIP por R90+GGRx5)
+  contacto : "Numa Pompilio Jimenez Romero"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-04-15
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : robertocarlos2   (#19 OnlySorti · VIP por GGRx5)
+  contacto : "Roberto Roberto Carlos Bonilla"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-04-02
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jilua   (#21 OnlySorti · VIP por GGRx5)
+  contacto : "Jimmy Ignacio Lua Marquez"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-05-25
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : eliza1984   (#25 OnlySorti · VIP por GGRx5)
+  contacto : "Johanna Elizabeth Mera Zambrano"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-06-13
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : victoria95   (#26 OnlySorti · VIP por GGRx5)
+  contacto : "Victoria elizabeth Muriel Alfonso"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-11
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : bryan2004   (#31 OnlySorti · VIP por GGRx5)
+  contacto : "Bryan Steven Peñafiel Rivas "   cuenta datos
+  actividad: 2 mensajes   ·   ultimo 2026-06-25
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : andyherrera   (#33 OnlySorti · VIP por GGRx5)
+  contacto : "Andy Adrian Herrera Perez"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-07-19
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : damian593   (#35 OnlySorti · VIP por GGRx5)
+  contacto : "Cesar damian"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-07-22
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : paultorres   (#37 OnlySorti · VIP por GGRx5)
+  contacto : "Henrry Paul Torres Medina "   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-06-15
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : axel09   (#39 OnlySorti · VIP por GGRx5)
+  contacto : "Axel"   cuenta datos
+  actividad: 2 mensajes   ·   ultimo 2026-07-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : claudiotigre   (#39 SortiOficial · VIP por R90+GGRx5+FREC)
+  contacto : "Claudio Rodolfo Tigre Quichimbo"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-09-21
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Ramiro javier Quezada Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Orfa Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Anthony Gerardo Leal Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Steeven Wilfrido Quezada Arreaga "   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "William Andrés Vinocuna Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Ernesto Edison Rosado Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Kevin Alexander Calle Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Alan Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Verónica Michelle Ortiz Quezada "   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : quezada   (#41 OnlySorti · VIP por GGRx5)
+  contacto : "Marco Quezada"   cuenta sistemas
+  actividad: 135 mensajes   ·   ultimo 2026-07-31
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : alfonsoguarnizo   (#42 OnlySorti · VIP por GGRx5)
+  contacto : "Manuel Alfonso Guarnizo Pacheco"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-05-24
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : franklinmacias   (#43 OnlySorti · VIP por FREC)
+  contacto : "Franklin"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-08-15
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : edgarsoliz   (#45 OnlySorti · VIP por FREC)
+  contacto : "Edgar Fabian Soliz Aviles"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-05-26
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : darwinyepez   (#46 OnlySorti · VIP por FREC)
+  contacto : "Darwin Yepez Castillo"   cuenta datos
+  actividad: 1 mensajes   ·   ultimo 2026-08-16
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : 1105013914ec   (#46 SortiOficial · VIP por R90+GGRx5)
+  contacto : "LUIS CORDOVA"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2025-11-17
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : kassandra123   (#49 SortiOficial · VIP por GGRx5+FREC)
+  contacto : "m"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-12-12
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : dargon   (#82 SortiOficial · VIP por R90+GGRx5)
+  contacto : "Darwin Gonzalo Vega López "   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-03-07
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : mosquera96   (#89 SortiOficial · VIP por GGRx5+FREC)
+  contacto : "Josue Anthony Mosquera meza "   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-11-18
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : joserosales   (#106 SortiOficial · VIP por R90+GGRx5+FREC)
+  contacto : "José Fernando Rósales Yagual"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-09-03
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : hilda   (#113 SortiOficial · VIP por R90)
+  contacto : "Hilda Patricia Villacres Ramirez"   cuenta sistemas
+  actividad: 56 mensajes   ·   ultimo 2026-07-15
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : joseparraga   (#115 SortiOficial · VIP por FREC)
+  contacto : "Jose Benito Parraga Zambrano"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-07-09
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jimmyjavier   (#118 SortiOficial · VIP por R90+FREC)
+  contacto : " Jimmy Javier Mero Rivas"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-04-05
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : toala2023   (#126 SortiOficial · VIP por R90)
+  contacto : "Christian Alex Toala"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-06-22
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : vinic88   (#138 SortiOficial · VIP por R90+FREC)
+  contacto : "Angel Vinicio Cueva acaro"   cuenta sistemas
+  actividad: 40 mensajes   ·   ultimo 2026-08-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : vinic88   (#138 SortiOficial · VIP por R90+FREC)
+  contacto : "Angel Vinicio Cueva acaro"   cuenta sistemas
+  actividad: 40 mensajes   ·   ultimo 2026-08-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : angelmendoza   (#142 SortiOficial · VIP por R90+FREC)
+  contacto : "Miguel Angel Mendoza Zambrano"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-01-01
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : pedroreyes   (#155 SortiOficial · VIP por R90)
+  contacto : "Pedro Javier Reyes Rueda"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-09
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : eduardo894   (#162 SortiOficial · VIP por R90)
+  contacto : "Eduardo Pillajo"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-06-23
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : didihergg   (#184 SortiOficial · VIP por FREC)
+  contacto : "Didiher Johan Chica chamorro"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2026-08-15
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : xavierdelgado   (#189 SortiOficial · VIP por FREC)
+  contacto : "Xavier Giuliano Delgado Delgado"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-06-24
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : joelortega   (#191 SortiOficial · VIP por FREC)
+  contacto : "Kenneth Joel Ortega "   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-12-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : joelortega   (#191 SortiOficial · VIP por FREC)
+  contacto : "Kenneth Joel  Ortega yepez  "   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-12-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : rojas   (#192 SortiOficial · VIP por FREC)
+  contacto : "Andrés Fernando Rojas Mestanza"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2026-07-26
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : juanse21   (#194 SortiOficial · VIP por FREC)
+  contacto : " Juan Sebastian Calderon Quishpe"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-06-10
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : cristhian_echeverria   (#200 SortiOficial · VIP por FREC)
+  contacto : "Cristhian Ronaldo Echeverria Valero"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-07-19
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jampy02   (#202 SortiOficial · VIP por FREC)
+  contacto : "Jerson Jampier Obando Muñoz"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-08-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : karinacastillo   (#205 SortiOficial · VIP por R90+FREC)
+  contacto : "Loyda Karina Castillo Cañarte"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-16
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : luis_pordomo   (#206 SortiOficial · VIP por FREC)
+  contacto : "Luis Humberto Perdomo Moreta"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-04
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : medardo   (#213 SortiOficial · VIP por R90)
+  contacto : "Ariel Medardo Jiménez Mayorga"   cuenta sistemas
+  actividad: 70 mensajes   ·   ultimo 2026-08-15
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : darioamores   (#222 SortiOficial · VIP por FREC)
+  contacto : "Wilson Dario Amores Morejon"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2026-06-04
+  evidencia: 4 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : jhonmar1981   (#223 SortiOficial · VIP por FREC)
+  contacto : "Jhonny Marcelo Choez Salazar"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-07-29
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : noelruiz   (#234 SortiOficial · VIP por FREC)
+  contacto : "Elkin Noel  Ruiz Liberio"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-07-18
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : yandry1212.09   (#237 SortiOficial · VIP por FREC)
+  contacto : " Yandry Alberto  Mera Pilligua"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-08-17
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : vicsosa12   (#248 SortiOficial · VIP por FREC)
+  contacto : "Victor Armando Sosa Intriago"   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2026-06-13
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : davidrivadeneira   (#255 SortiOficial · VIP por FREC)
+  contacto : "David Eduardo Rivadeneira Carrasco"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-08-07
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : davidrivadeneira   (#255 SortiOficial · VIP por FREC)
+  contacto : "David Eduardo Rivadeneira Carrasco"   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2026-08-07
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : juancarlos12   (#261 SortiOficial · VIP por R90)
+  contacto : "Juan Carlos Ricardo Quimis"   cuenta sistemas
+  actividad: 98 mensajes   ·   ultimo 2026-08-09
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : marcojaramillo   (#264 SortiOficial · VIP por FREC)
+  contacto : "Marco paul Jaramillo marquez"   cuenta sistemas
+  actividad: 3 mensajes   ·   ultimo 2026-07-25
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ec0705640571   (#265 SortiOficial · VIP por R90)
+  contacto : "Erik Daniel Vasquez Apolo"   cuenta sistemas
+  actividad: 5 mensajes   ·   ultimo 2026-08-17
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : ec1313084152   (#267 SortiOficial · VIP por R90)
+  contacto : "Cristhian Intriago "   cuenta sistemas
+  actividad: 2 mensajes   ·   ultimo 2025-09-08
+  evidencia: 2 menciones con etiqueta, sin competencia
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : diegohilec   (#268 SortiOficial · VIP por R90)
+  contacto : "Diego Alberto Hidalgo Jurado"   cuenta sistemas
+  actividad: 8 mensajes   ·   ultimo 2025-08-05
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+  username : arielyoza   (#271 SortiOficial · VIP por FREC)
+  contacto : "Franklin Ariel Yoza "   cuenta sistemas
+  actividad: 1 mensajes   ·   ultimo 2025-09-23
+  evidencia: el nombre del contacto encaja con el username
+  DECISION : [ ] correcto   [ ] MAL VINCULADO   [ ] no se
+
+==============================================================================
+FIN

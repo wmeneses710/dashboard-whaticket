@@ -85,8 +85,24 @@ que `seed_operator_status()`. **Commit + redeploy y la lista está.**
 En el log del arranque:
 
 ```
-INFO vip_players: 255 filas sembradas · vinculos vivos en esta base: 255 de 255
+INFO vip_players: 253 filas sembradas · vinculos vivos en esta base: 253 de 253
 ```
+
+**Solo los CONFIRMADOS quedan encendidos.** De los 253 vínculos, 151 tienen evidencia dura
+y alertan; los otros 102 entran a la tabla **apagados** — en stanby, no borrados. La lista
+para revisarlos es `docs/revision-vinculos-vip.txt`, que se regenera con:
+
+```bash
+python scripts/revision_vinculos_vip.py
+```
+
+Para encender uno ya verificado a mano:
+
+```sql
+UPDATE vip_players SET es_vip = true WHERE username = '<username>';
+```
+
+Ese cambio **sobrevive los deploys**: la siembra no pisa.
 
 **Lo único que hay que mirar son los vínculos vivos.** Si dice `0 de 255`, los `contact_id`
 son de otra base y no va a sonar una sola alerta — y sin ese número eso se vería idéntico a

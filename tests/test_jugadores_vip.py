@@ -114,3 +114,38 @@ def test_un_RANK_ilegible_no_revienta_la_ficha():
     assert j["rank"] is None
     j2 = vip.construir([_fila(rank="")], {}, "r.csv")["jugadores"][0]
     assert j2["rank"] is None
+
+
+# --- LA COLA DEBIL: 177 contra 1 no es ambiguedad, es ruido ------------------
+#
+# LO ENCONTRO EL NEGOCIO MIRANDO UNA ALERTA: `brysuye` salia como "Cristhian Oleas", y
+# Cristhian es AGENTE. La evidencia real:
+#
+#     Bryan David Su Ye  (593987757501)  ->  177 menciones CON etiqueta
+#     Cristhian Oleas                    ->    1 mencion  CON etiqueta
+#
+# `brysuye` es BRYan SU YE. Mi regla guardaba TODO contacto con al menos una etiqueta, asi
+# que 177 y 1 pesaban igual. Un username es de UNA persona: cuando uno domina, el resto es
+# que alguien lo nombro de paso.
+
+def test_cuando_un_contacto_DOMINA_el_resto_se_descarta():
+    cts = [{"contact_id": "bueno", "con_etiqueta": 177},
+           {"contact_id": "ruido", "con_etiqueta": 1}]
+    assert [c["contact_id"] for c in vip.dominantes(cts)] == ["bueno"]
+
+
+def test_dos_contactos_PAREJOS_se_quedan_los_dos():
+    """Una persona con dos lineas es real: 12 y 9 no es una cola, son dos contactos suyos."""
+    cts = [{"contact_id": "a", "con_etiqueta": 12}, {"contact_id": "b", "con_etiqueta": 9}]
+    assert len(vip.dominantes(cts)) == 2
+
+
+def test_un_solo_contacto_pasa_intacto():
+    cts = [{"contact_id": "a", "con_etiqueta": 3}]
+    assert vip.dominantes(cts) == cts
+
+
+def test_sin_etiquetas_no_decide_nada():
+    """La dominancia se mide sobre las ETIQUETAS. Sin ninguna no hay con que ordenar."""
+    cts = [{"contact_id": "a", "con_etiqueta": 0}, {"contact_id": "b", "con_etiqueta": 0}]
+    assert len(vip.dominantes(cts)) == 2

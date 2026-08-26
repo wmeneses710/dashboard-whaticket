@@ -112,14 +112,18 @@ def test_el_vinculo_BAJA_no_entra_a_la_tabla():
                                      {"contact_id": "x1", "account": "datos"},
                                      {"contact_id": "x2", "account": "datos"}])])
     assert {f["username"] for f in filas} == {"a", "b"}
-    assert all(f["es_vip"] for f in filas), "lo que entra, entra encendido"
 
 
-def test_el_booleano_sirve_para_APAGAR_a_mano_no_para_la_confianza():
-    """`es_vip` no codifica la confianza --eso ya lo filtro la entrada--: existe para que
-    el negocio pueda apagar un VIP sin perder su referencia."""
-    f = vip.filas_de_config([_jug()])[0]
+def test_es_vip_lo_decide_la_VERIFICACION_no_la_confianza():
+    """CAMBIO DEL 2026-08-26. Antes todo lo que entraba entraba ENCENDIDO y `es_vip` solo
+    servia para apagar a mano. Ahora lo enciende la VERIFICACION: `confianza` dice COMO se
+    encontro el vinculo, `verificacion` dice si la evidencia ALCANZA. Mezclarlas fue lo que
+    dejo a `brysuye` apuntando a un agente."""
+    d = _jug(); d["vinculo"]["verificacion"] = "confirmado"
+    f = vip.filas_de_config([d])[0]
     assert f["es_vip"] is True and f["confianza"] == "alta"
+    d2 = _jug(); d2["vinculo"]["verificacion"] = "probable"
+    assert vip.filas_de_config([d2])[0]["es_vip"] is False
 
 
 def test_la_fila_lleva_la_referencia_que_la_alerta_muestra():
@@ -321,3 +325,85 @@ def test_la_siembra_devuelve_CUANTOS_vinculos_viven():
 def test_la_siembra_sin_jugadores_no_revienta():
     cur = _FakeCursor(rows=[(0,)])
     assert vip.seed_from_config(cur, []) == (0, 0)
+
+
+# --- SOLO LOS CONFIRMADOS QUEDAN ACTIVOS ------------------------------------
+#
+# Decision del negocio (2026-08-26): "solo los confirmados estaran activos, los demas en
+# stanby hasta que consiga ver quienes son". La confianza (`alta`/`media`) decia COMO se
+# encontro el vinculo; la VERIFICACION dice si la evidencia alcanza. Son cosas distintas y
+# antes se estaban mezclando.
+
+def _ev(**kw):
+    base = {"es_telefono_exacto": False, "nombre_es_el_username": False,
+            "en_cola_vip": False, "en_extrainfo": False,
+            "etiquetas": 0, "domina": True, "nombre_encaja": False}
+    base.update(kw)
+    return base
+
+
+def test_el_telefono_exacto_CONFIRMA():
+    """El username ES el numero y coincide con `contacts.number`. Eso es identidad."""
+    t, pr = vip.clasificar_vinculo(_ev(es_telefono_exacto=True))
+    assert t == "confirmado" and any("tel" in p for p in pr)
+
+
+def test_el_username_que_ES_el_nombre_CONFIRMA():
+    """`evelynpalacios` y "Evelyn Palacios" normalizados son EL MISMO string. No es
+    parecido: es el mismo nombre escrito de dos formas."""
+    assert vip.clasificar_vinculo(_ev(nombre_es_el_username=True))[0] == "confirmado"
+
+
+def test_la_cola_VIP_del_CRM_CONFIRMA():
+    """Lo dice el CRM, no nosotros."""
+    assert vip.clasificar_vinculo(_ev(en_cola_vip=True))[0] == "confirmado"
+
+
+def test_muchas_etiquetas_SIN_competencia_CONFIRMAN():
+    assert vip.clasificar_vinculo(_ev(etiquetas=5, domina=True))[0] == "confirmado"
+
+
+def test_muchas_etiquetas_CON_competencia_no_alcanzan():
+    """Si otro contacto pelea el username, la cantidad sola no decide."""
+    assert vip.clasificar_vinculo(_ev(etiquetas=9, domina=False))[0] != "confirmado"
+
+
+def test_una_mencion_suelta_es_DUDOSA():
+    """Es exactamente como `brysuye` quedo pegado a `Cristhian Oleas`."""
+    t, pr = vip.clasificar_vinculo(_ev(etiquetas=0))
+    assert t == "dudoso"
+
+
+def test_dos_etiquetas_sin_competencia_es_PROBABLE():
+    assert vip.clasificar_vinculo(_ev(etiquetas=2, domina=True))[0] == "probable"
+
+
+def test_el_nombre_que_ENCAJA_sin_ser_identico_es_PROBABLE():
+    """`toni01` / "Anthony Loor" encaja pero no es prueba: apoya, no confirma."""
+    assert vip.clasificar_vinculo(_ev(nombre_encaja=True))[0] == "probable"
+
+
+# --- lo que decide si se alerta ---------------------------------------------
+
+def test_solo_el_CONFIRMADO_entra_encendido():
+    def j(u, ver):
+        d = _jug(u)
+        d["vinculo"]["verificacion"] = ver
+        return d
+    filas = vip.filas_de_config([j("a", "confirmado"), j("b", "probable"), j("c", "dudoso")])
+    assert {f["username"]: f["es_vip"] for f in filas} == {"a": True, "b": False, "c": False}
+
+
+def test_los_NO_confirmados_igual_entran_a_la_tabla_APAGADOS():
+    """En stanby, no borrados: la referencia queda para poder encenderlos cuando el negocio
+    los verifique, y para que se vea que fueron evaluados."""
+    d = _jug("b"); d["vinculo"]["verificacion"] = "dudoso"
+    filas = vip.filas_de_config([d])
+    assert len(filas) == 1 and filas[0]["es_vip"] is False
+    assert filas[0]["verificacion"] == "dudoso"
+
+
+def test_un_config_VIEJO_sin_verificacion_no_enciende_a_ciegas():
+    """Los generados antes de este cambio no traen el campo. El lado seguro es apagado."""
+    filas = vip.filas_de_config([_jug("a")])
+    assert filas[0]["es_vip"] is False

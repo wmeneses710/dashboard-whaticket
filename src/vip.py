@@ -44,11 +44,15 @@ _CREATE_STMTS = (
         ranking     integer,
         motivo      text,
         confianza   text,
+        verificacion text,
         updated_at  timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (account, contact_id)
     )""",
     # El indice PARCIAL y no uno comun: la alerta solo pregunta por los ENCENDIDOS, y los
     # apagados no tienen por que ocupar lugar en el arbol.
+    # ALTER para tablas ya creadas por una version previa (mismo patron que
+    # `conversions._CREATE_STMTS`): la de la copia ya existe y el CREATE no agrega columnas.
+    "ALTER TABLE vip_players ADD COLUMN IF NOT EXISTS verificacion text",
     "CREATE INDEX IF NOT EXISTS idx_vip_players_on ON vip_players (account) WHERE es_vip",
 )
 
@@ -56,9 +60,10 @@ _CREATE_STMTS = (
 # obliga a citar la columna en cada consulta.
 _INSERT = """
 INSERT INTO vip_players
-    (account, contact_id, es_vip, username, player_id, agencia, ranking, motivo, confianza)
+    (account, contact_id, es_vip, username, player_id, agencia, ranking, motivo,
+     confianza, verificacion)
 VALUES (%(account)s, %(contact_id)s, %(es_vip)s, %(username)s, %(player_id)s,
-        %(agencia)s, %(ranking)s, %(motivo)s, %(confianza)s)
+        %(agencia)s, %(ranking)s, %(motivo)s, %(confianza)s, %(verificacion)s)
 """
 # SEED: solo llena huecos. Respeta lo que alguien haya apagado a mano en produccion, que
 # es justo lo que no podemos ver desde afuera.
@@ -73,8 +78,65 @@ ON CONFLICT (account, contact_id) DO UPDATE SET
     ranking    = EXCLUDED.ranking,
     motivo     = EXCLUDED.motivo,
     confianza  = EXCLUDED.confianza,
+    verificacion = EXCLUDED.verificacion,
     updated_at = now()
 """
+
+# --- LA VERIFICACION: ¿la evidencia alcanza para alertar? -------------------
+#
+# NO ES LO MISMO QUE LA CONFIANZA. `confianza` dice COMO se encontro el vinculo (telefono,
+# etiqueta, mencion); `verificacion` dice si eso ALCANZA. Se estaban mezclando, y por eso
+# `brysuye` --que se encontro "con etiqueta", o sea confianza alta-- estaba apuntando a
+# `Cristhian Oleas`, que lo menciono UNA vez contra las 177 del contacto correcto.
+#
+# Decision del negocio (2026-08-26): "solo los confirmados estaran activos, los demas en
+# stanby hasta que consiga ver quienes son".
+
+CONFIRMADO, PROBABLE, DUDOSO = "confirmado", "probable", "dudoso"
+
+# Cuantas menciones CON etiqueta alcanzan, si nadie compite por el username.
+_ETIQUETAS_QUE_CONFIRMAN = 5
+_ETIQUETAS_QUE_APOYAN = 2
+
+
+def clasificar_vinculo(e: dict) -> tuple[str, list[str]]:
+    """`(verificacion, pruebas)` a partir de la evidencia junta.
+
+    CONFIRMA una sola de estas, porque cada una es una IDENTIDAD y no una inferencia:
+      · el username ES un telefono y coincide exacto con `contacts.number`
+      · el username normalizado ES el nombre del contacto (evelynpalacios = Evelyn Palacios)
+      · el contacto esta en la cola `Jugadores VIP` del CRM -- lo dice el CRM, no nosotros
+      · un operador lo cargo en `extraInfo` bajo la clave `usuario`
+      · 5+ menciones CON etiqueta y NADIE compitiendo por ese username
+
+    NO CONFIRMA una mencion suelta, ni muchas etiquetas si otro contacto pelea el username:
+    un agente nombra a muchos jugadores y ahi es donde nacen los falsos.
+    """
+    pr = []
+    if e.get("es_telefono_exacto"):
+        pr.append("el username es un teléfono y coincide exacto con el contacto")
+    if e.get("nombre_es_el_username"):
+        pr.append("el username ES el nombre del contacto")
+    if e.get("en_cola_vip"):
+        pr.append("el contacto está en la cola `Jugadores VIP` del CRM")
+    if e.get("en_extrainfo"):
+        pr.append("un operador lo cargó en extraInfo como `usuario`")
+    etq, domina = e.get("etiquetas") or 0, e.get("domina", True)
+    if etq >= _ETIQUETAS_QUE_CONFIRMAN and domina:
+        pr.append(f"{etq} menciones con etiqueta, sin otro contacto compitiendo")
+    if pr:
+        return CONFIRMADO, pr
+    if etq >= _ETIQUETAS_QUE_APOYAN and domina:
+        return PROBABLE, [f"{etq} menciones con etiqueta, sin competencia"]
+    if e.get("nombre_encaja"):
+        return PROBABLE, ["el nombre del contacto encaja con el username"]
+    faltas = [f"{etq} menciones con etiqueta"]
+    if not domina:
+        faltas.append("otro contacto compite por el mismo username")
+    if not e.get("nombre_encaja"):
+        faltas.append("el nombre no encaja con el username")
+    return DUDOSO, faltas
+
 
 # LA CONFIANZA QUE ENTRA A LA TABLA. `baja` NO entra, y no es por prolijidad: `baja`
 # significa que el username cae en MUCHOS contactos (`quezada` en 20, `medardo` en 10,
@@ -119,6 +181,24 @@ def verificar_origen(doc: dict, base_destino: str | None) -> str | None:
 # la base equivocada. La mitad es holgado a proposito -- el sintoma que se quiere atrapar
 # es el catastrofico (casi ninguno existe), no el ruido normal.
 _MINIMO_VINCULOS_VIVOS = 0.5
+
+
+# LA COLA DEBIL. Un contacto con menos de este porcentaje de las etiquetas del que mas
+# tiene no es "otro contacto del mismo jugador": es alguien que lo nombro de paso.
+# CASO REAL, encontrado por el negocio leyendo una alerta: `brysuye` salia como "Cristhian
+# Oleas" --que es AGENTE-- porque Cristhian lo menciono UNA vez, contra las 177 menciones
+# del contacto de "Bryan David Su Ye". `brysuye` es BRYan SU YE.
+# El 20% es holgado a proposito: dos lineas de la misma persona quedan parejas (12 y 9 se
+# guardan las dos), y lo que corta es el orden de magnitud.
+_PISO_DOMINANCIA = 0.2
+
+
+def dominantes(contactos: list[dict]) -> list[dict]:
+    """Descarta los contactos con una cola despreciable de etiquetas."""
+    mx = max((c.get("con_etiqueta") or 0) for c in contactos) if contactos else 0
+    if mx <= 0:
+        return contactos
+    return [c for c in contactos if (c.get("con_etiqueta") or 0) >= mx * _PISO_DOMINANCIA]
 
 
 def contactos_que_existen(cur, claves: list[tuple[str, str]]) -> int:
@@ -181,7 +261,12 @@ def filas_de_config(jugadores: list[dict]) -> list[dict]:
             filas.append({
                 "account": c["account"],
                 "contact_id": c["contact_id"],
-                "es_vip": True,          # entra encendido; apagar es a mano
+                # SOLO EL CONFIRMADO ENTRA ENCENDIDO. El resto queda en la tabla APAGADO
+                # --en stanby, no borrado-- para poder encenderlo cuando el negocio lo
+                # verifique y para que se vea que fue evaluado. Un config viejo sin el
+                # campo cae del lado seguro: apagado.
+                "es_vip": v.get("verificacion") == CONFIRMADO,
+                "verificacion": v.get("verificacion"),
                 "username": j.get("username"),
                 "player_id": j.get("player_id"),
                 "agencia": j.get("agencia"),
