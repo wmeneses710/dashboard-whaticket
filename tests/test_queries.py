@@ -1777,6 +1777,23 @@ def test_el_transcript_censura_el_dato_sensible():
     assert "mi cedula es" in texto and "@gmail.com" in texto
 
 
+def test_el_transcript_tapa_el_nombre_del_formulario_de_retiro():
+    """La puerta por donde el nombre se filtra de verdad: el chat. MEDIDO sobre los 69.394
+    mensajes que el tablero puede servir, 590 traen un formulario de retiro LLENO con el
+    nombre completo del titular, su cedula y su cuenta. El nombre del OPERADOR (`*Miguel:*`)
+    sigue en claro porque es el eje del tablero."""
+    from src.queries import _transcript
+    out = _transcript([_msg(0, False, "Monto a retirar: 15\n"
+                                      "Titular de la cuenta: Domenica Emperatriz Vera Olaya\n"
+                                      "Cédula: 1208567436"),
+                       _msg(1, True, "*Miguel:* listo amiga, ya lo proceso")])
+    texto = " ".join(m["text"] for m in out)
+    for crudo in ("Domenica", "Emperatriz", "Olaya", "1208567436"):
+        assert crudo not in texto, crudo
+    assert "Titular de la cuenta:" in texto, "la etiqueta se queda: dice QUE se tapo"
+    assert "*Miguel:*" in texto, "el nombre del operador es el eje del tablero"
+
+
 def test_el_transcript_NO_censura_los_montos_ni_el_texto_comun():
     from src.queries import _transcript
     out = _transcript([_msg(0, True, "la recarga minima es de $5, con gusto te ayudo")])
@@ -1836,11 +1853,15 @@ def test_las_filas_salen_con_el_telefono_enmascarado():
     assert out[0]["conversation_id"] == "abc"
 
 
-def test_el_nombre_NO_se_censura_todavia():
-    """DECISION PENDIENTE del negocio. El nombre del OPERADOR es el eje del tablero, y el
-    del cliente vive en su propia columna (`contacts.name`): taparlo es una decision de
-    producto, no un arreglo de seguridad. Este test fija el estado actual para que el dia
-    que se cambie sea a proposito."""
+def test_la_COLUMNA_del_nombre_sigue_en_claro_a_proposito():
+    """DECIDIDO el 2026-08-26, ya no es una pendiente. Desde esa fecha el nombre y el
+    apellido SI se tapan dentro del MENSAJE (ver src/censura.py), pero la columna se
+    queda, y el negocio dio el motivo: `contacts.name` casi nunca es un nombre de persona
+    --son usuarios de Facebook e Instagram, publicos de por si--.
+
+    Hay un motivo mas fuerte para que taparla tampoco sirviera: el dato que se filtra es
+    el TITULAR de la cuenta bancaria, que suele ser OTRA persona (la madre, el hermano).
+    La columna no lo contiene ni aunque quisiera."""
     from src.queries import _rows_as_dicts
     out = _rows_as_dicts(_CurFalso(["customer_name"], [("Erick Lopez",)]))
     assert out[0]["customer_name"] == "Erick Lopez"

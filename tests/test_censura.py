@@ -148,3 +148,171 @@ def test_es_idempotente_con_credenciales_y_digitos():
                   "escribime al +593991701676 o al 0967159807"):
         una = censurar_texto(texto)
         assert censurar_texto(una) == una, texto
+
+
+# --- EL NOMBRE Y EL APELLIDO DENTRO DEL MENSAJE ------------------------------
+#
+# Pedido del negocio el 2026-08-26. Hasta hoy el nombre se dejaba pasar porque "detectar
+# un nombre en texto libre necesita una lista". LA MEDICION SOBRE LA COPIA DIO VUELTA ESA
+# PREMISA: casi todo lo que hay que tapar viene con ETIQUETA, en el formulario de retiro.
+#
+#     Monto a retirar: 15
+#     Nombre completo del titular de la cuenta: Domenica Emperatriz Vera Olaya
+#     Cedula o DNI: 120856743-6
+#
+# Es la MISMA forma que las credenciales, que este modulo ya resuelve: etiqueta, separador
+# y valor. No hay que adivinar que palabra es un nombre.
+#
+# MEDIDO sobre los 69.394 mensajes que el tablero puede servir (los de cualquier sesion
+# con al menos una conversacion scoreada): **1.368 tocados (1,97%), 0 no idempotentes**, y
+# de los 590 formularios que venian LLENOS se tapan **582 (98,6%)**.
+#
+# LA COLUMNA `contacts.name` NO SE USA, y el negocio dio el motivo: casi nunca es un
+# nombre de persona (son usuarios de Facebook e Instagram, publicos de por si). Hay uno
+# mas fuerte todavia: el TITULAR de la cuenta bancaria suele ser OTRA persona -- la madre,
+# el hermano --, asi que la columna no lo contiene ni aunque quisiera.
+
+def test_tapa_el_nombre_detras_de_la_etiqueta_del_formulario():
+    out = censurar_texto("Titular de la cuenta: jean carlos arguello\nCédula: 0954285409")
+    assert "jean carlos arguello" not in out
+    assert "Titular de la cuenta:" in out, "la etiqueta se queda: dice QUE se tapo"
+
+
+def test_tapa_el_nombre_partido_en_dos_campos():
+    """El formulario de retiro parte el dato: los nombres en un campo y los apellidos en
+    otro. Es justo el caso que el negocio llamo peligroso -- dos nombres en una linea y
+    dos apellidos en la de abajo."""
+    out = censurar_texto("Nombres: Sandra Beatriz \nApellidos:  Saraguro Muñoz")
+    for crudo in ("Sandra", "Beatriz", "Saraguro", "Muñoz"):
+        assert crudo not in out, crudo
+
+
+def test_una_sola_palabra_DETRAS_DE_LA_ETIQUETA_si_se_tapa():
+    """El piso de dos palabras es del heuristico de linea suelta, NO de la etiqueta.
+    `Apellido: Mendoza` es un apellido porque el formulario lo dice, y la otra mitad esta
+    en el campo de al lado."""
+    out = censurar_texto("Nombre :Liceth \nApellido : Mendoza \nCédula: 1717900326")
+    assert "Liceth" not in out and "Mendoza" not in out
+
+
+def test_la_etiqueta_de_al_lado_sobrevive_al_valor():
+    """`Nombre: X Cédula: 1234` viene todo en una linea. Si el valor corre libre se come
+    la palabra `Cédula` y la fila queda ilegible."""
+    out = censurar_texto("Nombre: Mendoza López Luiggi Cédula: 1317021333")
+    assert "Mendoza" not in out and "Luiggi" not in out
+    assert "Cédula:" in out
+
+
+def test_tapa_el_nombre_en_la_plantilla_de_banco_con_negrita():
+    """La plantilla que manda el OPERADOR: `*Nombre:* Katty ... *Cédula:* 131...`. El
+    asterisco de negrita va entre los dos puntos y el valor."""
+    out = censurar_texto("*Nombre:* Katty Lisbeth Miranda Calderon *Cédula:*  1313932822")
+    assert "Katty" not in out and "Calderon" not in out
+
+
+def test_tapa_el_formulario_VERTICAL_con_el_valor_abajo():
+    out = censurar_texto("*Nombres:*\nAngelo José \n\n*Apellidos:*\nVera Castro")
+    for crudo in ("Angelo", "José", "Vera", "Castro"):
+        assert crudo not in out, crudo
+
+
+def test_tapa_la_etiqueta_SIN_dos_puntos_cuando_ocupa_su_propia_linea():
+    """`Nombres Gema Moran Espinales` en su linea. Fuera de la linea esto seria veneno --
+    "el titular enviado no deja que veamos" no lleva separador y se comeria la frase --,
+    pero anclado al arranque de la linea la prosa no entra."""
+    out = censurar_texto("Monto a retirar: $600\nNombres Gema Moran Espinales\n"
+                         "Cédula 1313468181\nBanco Pichincha")
+    assert "Gema" not in out and "Espinales" not in out
+    assert "Banco Pichincha" in out
+
+
+def test_tapa_el_nombre_SUELTO_sin_ninguna_etiqueta():
+    """El caso que no tiene etiqueta: el nombre solo, en su linea, dentro de un mensaje que
+    ya trae la cedula y la cuenta. Son 219 lineas en la copia."""
+    out = censurar_texto("Agencia: Moreira\nMonto:  34\nBanco Guayaquil\nCta ahorro\n"
+                         "0035888034\nMoreira Castillo Guilber Paul \nCédula: 1313059592")
+    assert "Guilber" not in out
+    assert "Banco Guayaquil" in out, "el vocabulario del formulario no es un nombre"
+
+
+def test_el_nombre_compuesto_con_conectores_tambien_se_tapa():
+    out = censurar_texto("Monto: $315\nBanco Bolivariano\n2001335401\n"
+                         "Washington Ariel Villavicencio De La Guerra \nCc: 0503673493")
+    assert "Washington" not in out and "Villavicencio" not in out
+
+
+# --- LO QUE NO SE PUEDE ROMPER -----------------------------------------------
+
+def test_el_prefijo_del_OPERADOR_no_se_toca():
+    """El nombre del operador es el EJE del tablero: sin el no hay a quien coachear. Viaja
+    en el cuerpo como `*Miguel:*`, que es una etiqueta con dos puntos igual que las del
+    formulario -- por eso el patron se ancla en la PALABRA de la etiqueta y no en la forma."""
+    for texto in ("*Miguel:*\nMonto a retirar: 24.50",
+                  "*Anggie Belén:*\nBANCO PICHINCHA 🟡 Cuenta Corriente: 2100261954"):
+        assert "Miguel" in censurar_texto(texto) or "Anggie" in censurar_texto(texto)
+    assert censurar_texto("*Miguel:*\nlisto amiga").startswith("*Miguel:*")
+
+
+def test_la_plantilla_VACIA_no_se_toca():
+    """El operador manda el formulario en blanco. No hay nada que tapar, y el valor no
+    puede comerse la etiqueta de la linea de abajo."""
+    vacia = "Monto a retirar:\nNombres:\nApellidos: \nCédula:\nBanco:\nTipo de cuenta:"
+    assert censurar_texto(vacia) == vacia
+
+
+def test_la_plantilla_de_REGISTRO_no_se_toca():
+    plantilla = "Para crear tu cuenta envíame estos datos:\nNombres:\nCorreo electrónico:\nNumero de celular:"
+    assert censurar_texto(plantilla) == plantilla
+
+
+def test_la_bienvenida_de_ATC_no_se_toca():
+    """`Tu nombre y apellido` / `Si eres jugador, tu usuario`: la etiqueta sin separador,
+    con la linea de abajo empezando por otra cosa. Una version anterior tapaba
+    "Si eres jugador"."""
+    bienvenida = ("Para poder ayudarte, por favor indícame:\n\n"
+                  "Tu nombre y apellido\nSi eres jugador, tu usuario\n"
+                  "Si eres agente, el nombre de tu agencia")
+    assert censurar_texto(bienvenida) == bienvenida
+
+
+def test_la_AGENCIA_no_es_una_persona():
+    """`Nombre de Agencia` es un nombre comercial y el supervisor lo necesita."""
+    texto = "*Nombre de Agencia:* Isaac09Sorti\n*Monto a retirar:* 10"
+    assert censurar_texto(texto) == texto
+
+
+def test_el_NOMBRE_DE_USUARIO_sigue_siendo_la_credencial():
+    """`Nombre de usuario` es la cuenta, no la persona, y `registro` premia que se vea la
+    entrega. Lo tapa el patron de credenciales cuando trae digito, no el de nombres."""
+    out = censurar_texto("Nombre de usuario: Paula2026")
+    assert "Nombre de usuario" in out
+
+
+def test_la_PROSA_con_titular_no_se_toca():
+    for frase in ("el titular enviado no deja que veamos movimientos",
+                  "su recarga esta en proceso porque el titular bancario presenta intermitencia",
+                  "debes solo pasarme numero de cuenta, el banco destino y titular de la cuenta"):
+        assert censurar_texto(frase) == frase, frase
+
+
+def test_una_linea_de_UNA_palabra_no_alcanza_para_tapar():
+    """El negocio puso el piso: un nombre solo no expone. Sin ese piso, `titular incorrecto`
+    y cualquier palabra suelta del formulario se tapaban."""
+    texto = "Monto a retirar: 20\nCédula: 1712345678\nRicardo\nBanco Pichincha"
+    assert "Ricardo" in censurar_texto(texto)
+
+
+def test_la_linea_suelta_NO_dispara_fuera_del_formulario():
+    """El heuristico de linea solo corre donde hay cedula o cuenta. En un chat comun,
+    dos palabras seguidas son dos palabras."""
+    charla = "buenas amigo\nya quedo resuelto\ngracias vale"
+    assert censurar_texto(charla) == charla
+
+
+def test_es_idempotente_TAMBIEN_con_los_nombres():
+    for texto in ("Titular de la cuenta: jean carlos arguello\nCédula: 0954285409",
+                  "*Nombres:*\nAngelo José \n\n*Apellidos:*\nVera Castro",
+                  "Monto: 34\nBanco Guayaquil\n0035888034\nMoreira Castillo Guilber Paul"):
+        una = censurar_texto(texto)
+        assert censurar_texto(una) == una, texto
+        assert censurar_texto(censurar_texto(una)) == una, texto
