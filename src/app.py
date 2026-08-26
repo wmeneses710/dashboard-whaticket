@@ -92,10 +92,47 @@ def seed_operator_status() -> None:
         log.warning("operator_status: no se pudo sembrar (%s); nadie queda apagado", exc)
 
 
+def seed_vip_players() -> None:
+    """Siembra `vip_players` desde config/jugadores_vip.json (idempotente).
+
+    Mismo patron y mismo contrato que `seed_operator_status`: corre en cada arranque, NO
+    PISA lo que alguien haya cambiado a mano, y falla suave -- si el archivo no esta o la
+    BD no responde, el tablero arranca igual y simplemente no hay VIP a quien alertar.
+
+    LO QUE HAY QUE MIRAR EN EL LOG son los VINCULOS VIVOS. `0 de 255` significa que los
+    `contact_id` son de otra base y que no va a sonar una sola alerta; sin ese numero eso
+    se ve exactamente igual que un dia sin VIP.
+    """
+    import json
+
+    from src import vip as vip_mod
+    log = logging.getLogger("uvicorn.error")
+    ruta = Path(__file__).resolve().parent.parent / "config" / "jugadores_vip.json"
+    if not ruta.exists():
+        log.info("vip_players: no hay config/jugadores_vip.json; nadie a quien alertar")
+        return
+    try:
+        doc = json.loads(ruta.read_text(encoding="utf-8"))
+        cfg = load_config()
+        with psycopg.connect(cfg.database_url, connect_timeout=8) as c:
+            with c.cursor() as cur:
+                filas, vivos = vip_mod.seed_from_config(cur, doc.get("jugadores", []))
+            c.commit()
+        log.info("vip_players: %s filas sembradas · vinculos vivos en esta base: %s de %s",
+                 filas, vivos, filas)
+        if filas and vivos < filas * 0.5:
+            log.warning("vip_players: solo %s de %s contact_id existen en esta base. "
+                        "El config se genero contra OTRA base: NO va a alertar a nadie.",
+                        vivos, filas)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("vip_players: no se pudo sembrar (%s); nadie a quien alertar", exc)
+
+
 def _bootstrap() -> None:
     """Tareas de arranque que no deben bloquear el event loop, en orden de importancia."""
     ensure_indexes()
     seed_operator_status()
+    seed_vip_players()
 
 
 @asynccontextmanager

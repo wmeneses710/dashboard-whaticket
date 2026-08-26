@@ -292,3 +292,32 @@ def test_el_umbral_de_pantalla_es_explicito():
     import pytest
     with pytest.raises(ValueError):
         vip.verificar_vinculos(existen=100, total=255)
+
+
+# --- SEMBRAR AL ARRANCAR, como operator_status ------------------------------
+#
+# Ahora que el JSON se versiona, entra a la imagen (`.dockerignore` NO excluye `config/`).
+# Entonces el contenedor puede sembrarse solo, igual que `seed_operator_status()`: commit,
+# redeploy, y la lista esta. Se acaban el `scp`, el `docker cp` y el paso manual.
+
+def test_la_siembra_NO_pisa_lo_que_alguien_cambio_a_mano():
+    """Mismo contrato que `operator_status`: si alguien apago un VIP en produccion, un
+    deploy no puede volver a encenderlo. Para que el archivo gane hay que pedirlo con
+    `--pisar`."""
+    cur = _FakeCursor(rows=[(1,)])
+    vip.seed_from_config(cur, [_jug()])
+    junto = " ".join(cur.sql)
+    assert "DO NOTHING" in junto and "DO UPDATE" not in junto
+
+
+def test_la_siembra_devuelve_CUANTOS_vinculos_viven():
+    """Es lo unico que hay que mirar en el log del arranque: si dice 0 de 255, el archivo
+    no corresponde a esa base y no va a alertar nadie."""
+    cur = _FakeCursor(rows=[(1,)])
+    filas, vivos = vip.seed_from_config(cur, [_jug()])
+    assert filas == 1 and vivos == 1
+
+
+def test_la_siembra_sin_jugadores_no_revienta():
+    cur = _FakeCursor(rows=[(0,)])
+    assert vip.seed_from_config(cur, []) == (0, 0)

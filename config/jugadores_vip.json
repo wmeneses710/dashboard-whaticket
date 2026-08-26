@@ -1,0 +1,6315 @@
+{
+  "version": 1,
+  "criterio": "jugadores VIP / criticos del reporte de negocio, vinculados a contactos del CRM",
+  "generado_en": "2026-08-26T19:42:23+00:00",
+  "generado_por": "scripts/dump_jugadores_vip.py",
+  "fuente": "reporte_jugadores_criterios_2026-08-21.csv",
+  "origen_bd": "whaticket_copia",
+  "nota": "La alerta resuelve por `contact_id`. `confianza` dice cuanto vale el vinculo: `alta` es el telefono exacto o el username con etiqueta (`Estimado X`, `Perfil X`); `media` es una mencion suelta en un solo contacto; `baja` es una mencion en varios y probablemente sea una palabra comun. Editable a mano: corregir un vinculo aca es valido y sobrevive hasta el proximo dump.",
+  "nota_sin_dato_personal": "NO lleva telefonos: la marca vive en `vip_players` (nuestra base, que ya los tiene en `contacts`) y aca queda solo la REFERENCIA. Un `contact_id` es un uuid: fuera de esa base no dice nada de nadie. OJO: 140 de los 334 `username` SON un numero de telefono, porque asi los identifica el casino; eso viene del reporte de origen y no lo agrega este archivo.",
+  "resumen": {
+    "jugadores": 334,
+    "por_confianza": {
+      "ninguna": 79,
+      "alta": 193,
+      "media": 49,
+      "baja": 13
+    }
+  },
+  "jugadores": [
+    {
+      "username": "quirozsabando",
+      "player_id": "49846",
+      "agencia": "ModoSorti",
+      "rank": 1,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "diegoalvarado917",
+      "player_id": "44794",
+      "agencia": "ModoSorti",
+      "rank": 2,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "7e93ded3-10b8-444e-9fff-b6a632f315a9",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "marilynbacilio",
+      "player_id": "44792",
+      "agencia": "ModoSorti",
+      "rank": 3,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "luisenrique2026",
+      "player_id": "49872",
+      "agencia": "ModoSorti",
+      "rank": 4,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "a5e622ed-fb0c-48a1-a6df-2d06c66ea161",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-07-07",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "fabianbg29",
+      "player_id": "50967",
+      "agencia": "ModoSorti",
+      "rank": 5,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "9ba37c13-0c34-44c8-b411-5e87308ae818",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-07-23",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "cruzmoran",
+      "player_id": "53976",
+      "agencia": "ModoSorti",
+      "rank": 6,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "hedeth2026",
+      "player_id": "55814",
+      "agencia": "ModoSorti",
+      "rank": 7,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "tonypalacios",
+      "player_id": "55972",
+      "agencia": "ModoSorti",
+      "rank": 8,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "f5e5dfcf-e4dd-434e-abab-c1c7ef233bab",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "marcktoab",
+      "player_id": "41398",
+      "agencia": "OnlySorti",
+      "rank": 1,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "af2d3b6f-e99e-4341-a903-60c2e4aa1d4b",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-10",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jendisc182",
+      "player_id": "39845",
+      "agencia": "OnlySorti",
+      "rank": 2,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "ab6979ee-6d1a-4a6e-80db-064a3f6d85d8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-28",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "gabino13",
+      "player_id": "46215",
+      "agencia": "OnlySorti",
+      "rank": 3,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "patrickfajardo661",
+      "player_id": "44421",
+      "agencia": "OnlySorti",
+      "rank": 4,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "70b32ae8-e83f-42bb-89e5-6123c9266dfe",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-06-05",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "darwinganchozo",
+      "player_id": "53621",
+      "agencia": "OnlySorti",
+      "rank": 5,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "4743d953-3207-4306-8771-8b8131c60d52",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-20",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "rudyrendon",
+      "player_id": "38855",
+      "agencia": "OnlySorti",
+      "rank": 6,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "2eba5c1f-77b8-45ad-b9da-79c6bb79f82d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-24",
+        "contactos_descartados": 2
+      }
+    },
+    {
+      "username": "danielsaltos",
+      "player_id": "35925",
+      "agencia": "OnlySorti",
+      "rank": 7,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "f7e8b9e5-b272-4b45-9aaa-15b682ab8b36",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-05-01",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "javierromero",
+      "player_id": "50972",
+      "agencia": "OnlySorti",
+      "rank": 8,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "bac987ef-01c4-4977-a360-6f680cea7740",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-07-18",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "chevez05",
+      "player_id": "48008",
+      "agencia": "OnlySorti",
+      "rank": 9,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "oscar96",
+      "player_id": "37950",
+      "agencia": "OnlySorti",
+      "rank": 10,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "efc0078d-dc29-4649-902d-ea873e7650b2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-20",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "evelynpalacios",
+      "player_id": "54126",
+      "agencia": "OnlySorti",
+      "rank": 11,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "c947d934-7870-4ca8-a804-a9988abc7d7e",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "eliocontreras",
+      "player_id": "34447",
+      "agencia": "OnlySorti",
+      "rank": 12,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "fafae21a-3b5d-41cf-9062-283856758b65",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "ricardoespinoza",
+      "player_id": "47459",
+      "agencia": "OnlySorti",
+      "rank": 13,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "ab27d376-56e4-41b6-840f-38207049e9b1",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-07-06",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "tseremp",
+      "player_id": "50718",
+      "agencia": "OnlySorti",
+      "rank": 14,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "29772a43-0347-4408-9f40-68c2b0e12483",
+            "account": "datos"
+          },
+          {
+            "contact_id": "7a3eb14b-8ef0-4879-b718-dcbec1279294",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 10,
+        "ultimo_mensaje": "2026-08-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jimmy19",
+      "player_id": "37932",
+      "agencia": "OnlySorti",
+      "rank": 15,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "83ec0b90-58d3-4386-bf36-91ded5838d93",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-05-19",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jeffersonramos",
+      "player_id": "38354",
+      "agencia": "OnlySorti",
+      "rank": 16,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "1285070d-f26c-4f3f-823a-04b33883e539",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-07-27",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "josecisneros",
+      "player_id": "46470",
+      "agencia": "OnlySorti",
+      "rank": 17,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "andersonguerrero",
+      "player_id": "44768",
+      "agencia": "OnlySorti",
+      "rank": 18,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "bdde416a-1e54-40a5-8eac-58ceaa1a5f5e",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "robertocarlos2",
+      "player_id": "34378",
+      "agencia": "OnlySorti",
+      "rank": 19,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "654a9686-e83c-4dc6-a0ec-8fd2d1d367ce",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-02",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "rocioramirez",
+      "player_id": "52197",
+      "agencia": "OnlySorti",
+      "rank": 20,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "11e446cd-36e6-4578-b65a-9c38c400419f",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-08-03",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jilua",
+      "player_id": "34291",
+      "agencia": "OnlySorti",
+      "rank": 21,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "327ac77b-104c-4fa4-be11-18c56c4450d1",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-05-25",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "danielpa1984",
+      "player_id": "45108",
+      "agencia": "OnlySorti",
+      "rank": 22,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "f282b58b-d010-4d9e-8016-6282372ad91c",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-11",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "diegoarias",
+      "player_id": "53013",
+      "agencia": "OnlySorti",
+      "rank": 23,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "0cbeefbb-95bf-4146-9552-110339d305b9",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "88e853b3-7ba7-4d84-bc5c-69ce07fb06dd",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-12",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "migue86",
+      "player_id": "48344",
+      "agencia": "OnlySorti",
+      "rank": 24,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "eliza1984",
+      "player_id": "45823",
+      "agencia": "OnlySorti",
+      "rank": 25,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "4db1fbe7-9503-42af-8bbf-13606e41c756",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-13",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "victoria95",
+      "player_id": "40429",
+      "agencia": "OnlySorti",
+      "rank": 26,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "062d8955-7c7b-4472-ac06-27b8fc06ca48",
+            "account": "datos"
+          },
+          {
+            "contact_id": "71717a54-1fad-47ad-8554-85c1ab7fffa0",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "eefb01e5-ce8b-4825-96f0-ab2a9e32011d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-11",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "hildegan10",
+      "player_id": "35816",
+      "agencia": "OnlySorti",
+      "rank": 27,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "80aa64d6-db3d-4fdb-a44d-5428a3ed8833",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-05-08",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "alan1121mc",
+      "player_id": "47603",
+      "agencia": "OnlySorti",
+      "rank": 28,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "ac6b248f-cefd-4392-92eb-26694af27379",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-06-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "eduinvera",
+      "player_id": "44403",
+      "agencia": "OnlySorti",
+      "rank": 29,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "gabrielposligua",
+      "player_id": "52749",
+      "agencia": "OnlySorti",
+      "rank": 30,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "1ae830f0-fe69-4a6c-a3c7-27b24e0f8872",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-10",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "bryan2004",
+      "player_id": "47869",
+      "agencia": "OnlySorti",
+      "rank": 31,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "8abf667f-4657-428b-a2c1-a07e05e1f7a5",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-06-25",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "javidocan3",
+      "player_id": "46117",
+      "agencia": "OnlySorti",
+      "rank": 32,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "30838ba9-f2ad-4b43-9f08-831d5c993828",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-14",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "andyherrera",
+      "player_id": "33295",
+      "agencia": "OnlySorti",
+      "rank": 33,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "3f1648a4-6757-4eb6-b9c2-47f378be74f7",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "48c72685-4e51-4059-ac3b-c4cc01353228",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-07-19",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "dixondario",
+      "player_id": "35265",
+      "agencia": "OnlySorti",
+      "rank": 34,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "damian593",
+      "player_id": "51153",
+      "agencia": "OnlySorti",
+      "rank": 35,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "4252d06d-cda3-4afd-be80-83b2b24e7c31",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-07-22",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jason",
+      "player_id": "50098",
+      "agencia": "OnlySorti",
+      "rank": 36,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "62ae9d45-4abd-4402-a672-914999719d07",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "cc64db20-8aa6-427f-99ce-db33079c778b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-12-17",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "paultorres",
+      "player_id": "46223",
+      "agencia": "OnlySorti",
+      "rank": 37,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "8f6cde27-bd61-437a-b62b-ba1702a0d76d",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-15",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jacqueline1971",
+      "player_id": "52952",
+      "agencia": "OnlySorti",
+      "rank": 38,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "axel09",
+      "player_id": "50964",
+      "agencia": "OnlySorti",
+      "rank": 39,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "ba38929f-b8eb-4607-8649-50cd15936e94",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-07-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "moreirafelix",
+      "player_id": "32997",
+      "agencia": "OnlySorti",
+      "rank": 40,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "quezada",
+      "player_id": "49131",
+      "agencia": "OnlySorti",
+      "rank": 41,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "110f8498-9790-4b54-817d-6798a7223a8d",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "132efe7a-64e5-46e2-9c0c-6c202c3c950b",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "2c4dd921-fff9-4094-ac80-71d5c046ade3",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "524dc459-5579-497c-9537-4e70058bb21f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "5417f63e-38e6-490a-b22f-6464cd14532f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "8eb9ed9d-c188-4867-a975-4f0c5a5ea8a9",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "93ca5d19-6ebd-4589-905d-0e90f35216ae",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "9fd88f93-a4bf-4aee-98c6-c14681065ad0",
+            "account": "datos"
+          },
+          {
+            "contact_id": "aab5f3a3-90ec-4bca-96b7-157f0ee4c7e5",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "bb818e48-030c-4ca5-b606-03773617b82d",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "bd9bbe25-6985-4655-bb89-c5185786d67d",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "dab1e5b0-6d18-4d51-883a-149d05c70231",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "e2ec8cce-ca2a-4425-a762-6ee6ac616ea2",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "eef01f72-1a7d-4845-ad71-63ecc6fe0f1e",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "f4c95c89-b5c9-4555-a7c9-bb200728f8e1",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 135,
+        "ultimo_mensaje": "2026-07-31",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "alfonsoguarnizo",
+      "player_id": "43049",
+      "agencia": "OnlySorti",
+      "rank": 42,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "629dc7a9-ff74-4cca-80f0-44e14327296d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-05-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "franklinmacias",
+      "player_id": "54772",
+      "agencia": "OnlySorti",
+      "rank": 43,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "1fd5add1-a161-4190-aef0-5c9f8f564876",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-15",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "arielchabez",
+      "player_id": "54622",
+      "agencia": "OnlySorti",
+      "rank": 44,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "edgarsoliz",
+      "player_id": "42912",
+      "agencia": "OnlySorti",
+      "rank": 45,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "bc35e7c2-7457-40ee-92bf-2287ff6a2c76",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-05-26",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "darwinyepez",
+      "player_id": "55070",
+      "agencia": "OnlySorti",
+      "rank": 46,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "9c6749c6-c6f2-4cd8-b7d4-8a479c70633d",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-16",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "toni01",
+      "player_id": "47047",
+      "agencia": "OnlySorti",
+      "rank": 47,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "08118f43-9b4d-49cf-87c7-db936089e9ea",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-06-22",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "darwin1999",
+      "player_id": "55684",
+      "agencia": "OnlySorti",
+      "rank": 48,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "adce492b-dc4c-4485-9044-44652725d822",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-08-21",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "ginapenafiel",
+      "player_id": "55124",
+      "agencia": "OnlySorti",
+      "rank": 49,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "fernando06",
+      "player_id": "55224",
+      "agencia": "OnlySorti",
+      "rank": 50,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "renesuarez",
+      "player_id": "52087",
+      "agencia": "OnlySorti",
+      "rank": 51,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "f3117b43-3464-495c-83b6-017bded52aaf",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-07-26",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "miguelandres19",
+      "player_id": "34288",
+      "agencia": "OnlySorti",
+      "rank": 52,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "153cddb7-dcad-4ae5-8e8f-5554a3fd04a7",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 9,
+        "ultimo_mensaje": "2026-08-24",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "zambranoj08",
+      "player_id": "47313",
+      "agencia": "SortiGo",
+      "rank": 1,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "2af10bd7-a41e-466c-a3af-565e16d3e61b",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-06-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "rafael12",
+      "player_id": "42921",
+      "agencia": "SortiGo",
+      "rank": 2,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "27710d3e-a1d1-4eec-a605-68d05d4bfc24",
+            "account": "datos"
+          },
+          {
+            "contact_id": "98c957df-ef75-498d-b1cd-d17db6d13514",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-14",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "marcelovn04",
+      "player_id": "55182",
+      "agencia": "SortiGo",
+      "rank": 3,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "4e8096b8-6e01-418c-93ea-f3c85b6ff0b3",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-18",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "brysuye",
+      "player_id": "8",
+      "agencia": "SortiOficial",
+      "rank": 1,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "27bb67dd-b5d4-4919-88a9-695e2c38e04f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "2eaaf519-f519-4a26-9be0-6815c63929b1",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 179,
+        "ultimo_mensaje": "2026-08-16",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0981601125",
+      "player_id": "10",
+      "agencia": "SortiOficial",
+      "rank": 2,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "f6279c2c-d375-48b8-9d2e-142e2596a08d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6049,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "e1717900326",
+      "player_id": "14",
+      "agencia": "SortiOficial",
+      "rank": 3,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "194d5d83-bd49-44e9-b97b-0f3014cbd2d0",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "a3d93cf2-1c5f-4fda-a852-d68badaec8bc",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-12-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0998313791",
+      "player_id": "21",
+      "agencia": "SortiOficial",
+      "rank": 4,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "d5fb2295-f7e9-47d1-b5f2-09dfcdc11308",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5985,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "0982810459",
+      "player_id": "151",
+      "agencia": "SortiOficial",
+      "rank": 5,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "b1e42265-2d0e-455d-afb4-196a0aa554b1",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4913,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0988662475",
+      "player_id": "73",
+      "agencia": "SortiOficial",
+      "rank": 6,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "3d5abf46-e622-4ed3-867a-e1c23dc02904",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "1eb8b60c-62cd-4e3d-b0b4-7028a76c79ac",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 8370,
+        "ultimo_mensaje": "2026-08-21"
+      }
+    },
+    {
+      "username": "0981996809",
+      "player_id": "74",
+      "agencia": "SortiOficial",
+      "rank": 7,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "725e41af-8c8e-491f-8dec-44ecd119551f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5098,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "gustavoch399",
+      "player_id": "37620",
+      "agencia": "SortiOficial",
+      "rank": 8,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0985287884",
+      "player_id": "589",
+      "agencia": "SortiOficial",
+      "rank": 9,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "6defdad7-e265-4cbd-84c7-21777e50e55b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2887,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0989947928",
+      "player_id": "103",
+      "agencia": "SortiOficial",
+      "rank": 10,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "6149c35d-0ed8-477c-aad4-f83b87c27ff9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5406,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "0983965921",
+      "player_id": "23",
+      "agencia": "SortiOficial",
+      "rank": 11,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "b7971473-d78d-4932-9770-985af0c25359",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1113,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0968329317",
+      "player_id": "339",
+      "agencia": "SortiOficial",
+      "rank": 12,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "86c2a946-d05b-4acc-8d61-e4c289658b5e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 10564,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0981909762",
+      "player_id": "236",
+      "agencia": "SortiOficial",
+      "rank": 13,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "kassandrabp",
+      "player_id": "28175",
+      "agencia": "SortiOficial",
+      "rank": 14,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "5e15fabd-9891-41cb-8831-74edd97ed83f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "d833abb2-3d82-4f61-9b19-fada7ca8f987",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2025-12-18",
+        "contactos_descartados": 2
+      }
+    },
+    {
+      "username": "0996962582",
+      "player_id": "13445",
+      "agencia": "SortiOficial",
+      "rank": 15,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "b87f5264-6e68-4d90-a3d9-1f54b589bb1a",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 846,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0990739588",
+      "player_id": "884",
+      "agencia": "SortiOficial",
+      "rank": 16,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "4b72b4c2-cc4a-4d65-89dc-6b2081d77e45",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2599,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0967854139",
+      "player_id": "370",
+      "agencia": "SortiOficial",
+      "rank": 17,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "e8d05661-2d2d-4205-b97d-fbe4403f328c",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2098,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "numa06",
+      "player_id": "128",
+      "agencia": "SortiOficial",
+      "rank": 18,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "cabf1a3d-3188-4ca0-ae16-fe0096410afc",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-04-15",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "0999599218",
+      "player_id": "238",
+      "agencia": "SortiOficial",
+      "rank": 19,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "eb8df7de-c739-44ae-ac70-5ee6ec10906e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3149,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0968608714",
+      "player_id": "170",
+      "agencia": "SortiOficial",
+      "rank": 20,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0963956262",
+      "player_id": "132",
+      "agencia": "SortiOficial",
+      "rank": 21,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "ffecdec3-1912-479b-9c79-4c71f035ff4b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 7275,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0993804562",
+      "player_id": "233",
+      "agencia": "SortiOficial",
+      "rank": 22,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "8c0b7dbc-445f-4879-91cd-3ad7332a3ae5",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 7809,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "e0917525776",
+      "player_id": "81",
+      "agencia": "SortiOficial",
+      "rank": 23,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "ee7c10c0-b1b9-4153-a232-f104232bdca5",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-01-08",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0961688964",
+      "player_id": "187",
+      "agencia": "SortiOficial",
+      "rank": 24,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "2575883f-eca1-4361-b6b2-17a7398fd05f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6172,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "0992695384",
+      "player_id": "6835",
+      "agencia": "SortiOficial",
+      "rank": 25,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "6c620a82-8bd8-428e-9afd-eafd0b91c9ce",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 495,
+        "ultimo_mensaje": "2026-07-31"
+      }
+    },
+    {
+      "username": "e1314924489",
+      "player_id": "438",
+      "agencia": "SortiOficial",
+      "rank": 26,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "13fed2b9-39dc-4e0d-9077-61bbbfacf182",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-10-06",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0960180980",
+      "player_id": "53",
+      "agencia": "SortiOficial",
+      "rank": 27,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "133b9a5c-1689-4847-994a-56cc33d57f3c",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2803,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "ec0951964055",
+      "player_id": "239",
+      "agencia": "SortiOficial",
+      "rank": 28,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "a939d628-7112-4c58-af3f-653e8e6700c7",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-09-27",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0987335926",
+      "player_id": "117",
+      "agencia": "SortiOficial",
+      "rank": 29,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "d4ea090d-f3a5-45a7-89f0-815338293e83",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3095,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "bismarch",
+      "player_id": "26986",
+      "agencia": "SortiOficial",
+      "rank": 30,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0961619855",
+      "player_id": "85",
+      "agencia": "SortiOficial",
+      "rank": 31,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "3124edb8-a3ba-4b6e-8525-e87a2968a147",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3444,
+        "ultimo_mensaje": "2026-05-19"
+      }
+    },
+    {
+      "username": "steveen",
+      "player_id": "27416",
+      "agencia": "SortiOficial",
+      "rank": 32,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "fee2aa67-4c6a-4f32-b528-dcd57720a594",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 72,
+        "ultimo_mensaje": "2026-08-22",
+        "contactos_descartados": 10
+      }
+    },
+    {
+      "username": "sasha",
+      "player_id": "21414",
+      "agencia": "SortiOficial",
+      "rank": 33,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "3c0f7686-0b00-47ff-8e7f-78a7a90a58ac",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 28,
+        "ultimo_mensaje": "2026-07-19",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0968119223",
+      "player_id": "163",
+      "agencia": "SortiOficial",
+      "rank": 34,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "dbd8769e-8886-4872-88f2-343678fbced2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 8382,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "perezjhonson07",
+      "player_id": "30973",
+      "agencia": "SortiOficial",
+      "rank": 35,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "7f6c59ab-8d6d-4455-9d1b-bb69ffe3aa80",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-02-11",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0997013159",
+      "player_id": "1176",
+      "agencia": "SortiOficial",
+      "rank": 36,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "3e565855-89b1-40e4-8059-c52b171e9ae7",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5125,
+        "ultimo_mensaje": "2026-06-30"
+      }
+    },
+    {
+      "username": "0968906713",
+      "player_id": "316",
+      "agencia": "SortiOficial",
+      "rank": 37,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "0aebfd0d-31b4-41c6-9529-9f5533333abd",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4968,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0979526733",
+      "player_id": "2067",
+      "agencia": "SortiOficial",
+      "rank": 38,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "e00f254e-efc3-4b85-be33-fd663fd83551",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1079,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "claudiotigre",
+      "player_id": "22170",
+      "agencia": "SortiOficial",
+      "rank": 39,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "ec3f393a-7dca-4109-a560-a71a444e9277",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-09-21",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "ec0913109749",
+      "player_id": "292",
+      "agencia": "SortiOficial",
+      "rank": 40,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "ae452110-8c73-42f0-a396-0df5af2a3abd",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-09-02",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "lescano338",
+      "player_id": "43763",
+      "agencia": "SortiOficial",
+      "rank": 41,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "8f069310-cb09-437f-aa78-609206e8c620",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-05-30",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "sc3003",
+      "player_id": "36156",
+      "agencia": "SortiOficial",
+      "rank": 42,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "c59c81af-6af6-4053-9c85-917fde5790c7",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-10",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "bryansito",
+      "player_id": "43579",
+      "agencia": "SortiOficial",
+      "rank": 43,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0939887008",
+      "player_id": "240",
+      "agencia": "SortiOficial",
+      "rank": 44,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "89b6905e-1f6c-480f-9575-3d03fa1532a3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4310,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0914920194",
+      "player_id": "320",
+      "agencia": "SortiOficial",
+      "rank": 45,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "1105013914ec",
+      "player_id": "1811",
+      "agencia": "SortiOficial",
+      "rank": 46,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "47c109c0-518f-4306-a48f-b1400d2dd38f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2025-11-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "fabian46",
+      "player_id": "295",
+      "agencia": "SortiOficial",
+      "rank": 47,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "9d26e394-610e-4d25-b56c-4293ebbf320b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2024-09-14",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0997786247",
+      "player_id": "13449",
+      "agencia": "SortiOficial",
+      "rank": 48,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "kassandra123",
+      "player_id": "20829",
+      "agencia": "SortiOficial",
+      "rank": 49,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "cae1963c-d61c-4f80-a9e8-8a96b407b375",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-12-12",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "0980745749",
+      "player_id": "20262",
+      "agencia": "SortiOficial",
+      "rank": 50,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "dfb87b5f-7a5d-47a3-a81e-c66cb0435937",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 535,
+        "ultimo_mensaje": "2026-02-10"
+      }
+    },
+    {
+      "username": "josue030428",
+      "player_id": "41801",
+      "agencia": "SortiOficial",
+      "rank": 51,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "840ca2f1-757b-4f0d-a449-bb7e1f59dee7",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-05-12",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0982530013",
+      "player_id": "291",
+      "agencia": "SortiOficial",
+      "rank": 52,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "93377ade-87f3-4b7b-a55e-31bce7eff67a",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1809,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "ranasa85",
+      "player_id": "23843",
+      "agencia": "SortiOficial",
+      "rank": 53,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0986626852",
+      "player_id": "161",
+      "agencia": "SortiOficial",
+      "rank": 54,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "834be8bd-fa15-4de1-8547-a1d4110ed537",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3214,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "1726256025ec",
+      "player_id": "237",
+      "agencia": "SortiOficial",
+      "rank": 55,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "1a60f61d-d651-416e-a96a-6287f5cfaabf",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2025-11-12",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0930911680",
+      "player_id": "486",
+      "agencia": "SortiOficial",
+      "rank": 56,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "cristianzambrano",
+      "player_id": "25807",
+      "agencia": "SortiOficial",
+      "rank": 57,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "1fdbbbf8-44a9-4d95-9f77-d44ecdd6b701",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4,
+        "ultimo_mensaje": "2025-11-18",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "0993447365",
+      "player_id": "160",
+      "agencia": "SortiOficial",
+      "rank": 58,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "df064cc7-4b2f-4e22-bb04-23272f5f4059",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1536,
+        "ultimo_mensaje": "2025-12-27"
+      }
+    },
+    {
+      "username": "0992341226",
+      "player_id": "1926",
+      "agencia": "SortiOficial",
+      "rank": 59,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "583bf179-7eeb-42d3-a160-b5d92a35bab3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1260,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0984133607",
+      "player_id": "1975",
+      "agencia": "SortiOficial",
+      "rank": 60,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "87d50d3a-df89-4fe3-b706-3dfd1b0bcb5b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3327,
+        "ultimo_mensaje": "2026-08-03"
+      }
+    },
+    {
+      "username": "0996263334",
+      "player_id": "315",
+      "agencia": "SortiOficial",
+      "rank": 61,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "85a04cca-236e-4050-8bc0-a4d90d7eab29",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5329,
+        "ultimo_mensaje": "2026-08-05"
+      }
+    },
+    {
+      "username": "0981156935",
+      "player_id": "603",
+      "agencia": "SortiOficial",
+      "rank": 62,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "3e97c44c-d639-4b32-9eb6-d00abad3a0f4",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1460,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0980762025",
+      "player_id": "19572",
+      "agencia": "SortiOficial",
+      "rank": 63,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0997670615",
+      "player_id": "653",
+      "agencia": "SortiOficial",
+      "rank": 64,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "c98cde8d-b6f9-415c-b422-cb0b2730a195",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 42,
+        "ultimo_mensaje": "2026-01-21"
+      }
+    },
+    {
+      "username": "0987351100",
+      "player_id": "289",
+      "agencia": "SortiOficial",
+      "rank": 65,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "e93b23da-a648-4fe0-ac63-0b46bb6869bc",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3098,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0984047560",
+      "player_id": "399",
+      "agencia": "SortiOficial",
+      "rank": 66,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "4e1eeebc-165e-4811-94eb-4ac9bfd87d1d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1132,
+        "ultimo_mensaje": "2025-12-21"
+      }
+    },
+    {
+      "username": "0939395445",
+      "player_id": "324",
+      "agencia": "SortiOficial",
+      "rank": 67,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "95f76d2c-5dd1-4d25-9155-f9ca43020166",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4379,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0991246107",
+      "player_id": "1880",
+      "agencia": "SortiOficial",
+      "rank": 68,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "1aadb455-9ad7-4a6f-b662-c3f2aec9c093",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 389,
+        "ultimo_mensaje": "2025-11-29"
+      }
+    },
+    {
+      "username": "ec1250156716",
+      "player_id": "83",
+      "agencia": "SortiOficial",
+      "rank": 69,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "50fdc41e-b31f-445b-b4b2-6bd2b8a1dfac",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6,
+        "ultimo_mensaje": "2025-04-30",
+        "contactos_descartados": 2
+      }
+    },
+    {
+      "username": "0994918716",
+      "player_id": "6185",
+      "agencia": "SortiOficial",
+      "rank": 70,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "9793e2fe-cef1-4aa3-9d48-ea27265abf28",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5082,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0992099769",
+      "player_id": "171",
+      "agencia": "SortiOficial",
+      "rank": 71,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "7478e037-078c-4d9b-9e05-ff46b906560f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4568,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "brayanxcx",
+      "player_id": "29904",
+      "agencia": "SortiOficial",
+      "rank": 72,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "79d1393f-56d9-48d4-8604-fb7bf6e22378",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-01-21",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "bryanquesada",
+      "player_id": "35733",
+      "agencia": "SortiOficial",
+      "rank": 73,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "dioselynft",
+      "player_id": "6386",
+      "agencia": "SortiOficial",
+      "rank": 74,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "lkik27",
+      "player_id": "28638",
+      "agencia": "SortiOficial",
+      "rank": 75,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "3f7a9f05-f153-49c5-a94e-70dbb53d9cb5",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6,
+        "ultimo_mensaje": "2025-12-29",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0988157743",
+      "player_id": "865",
+      "agencia": "SortiOficial",
+      "rank": 76,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0967514407",
+      "player_id": "312",
+      "agencia": "SortiOficial",
+      "rank": 77,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "4f203640-72f1-485b-aa08-587775f3a06d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3890,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "9820613162",
+      "player_id": "371",
+      "agencia": "SortiOficial",
+      "rank": 78,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "ledesma97",
+      "player_id": "44803",
+      "agencia": "SortiOficial",
+      "rank": 79,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0987754384",
+      "player_id": "13440",
+      "agencia": "SortiOficial",
+      "rank": 80,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0998687456",
+      "player_id": "3444",
+      "agencia": "SortiOficial",
+      "rank": 81,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "0882d74d-3537-457d-8d28-010d274747f4",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2010,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "dargon",
+      "player_id": "135",
+      "agencia": "SortiOficial",
+      "rank": 82,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "e4bf92b8-5dc6-44dd-9b65-cc3bcebec653",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-03-07",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jeffersonalvarado",
+      "player_id": "23352",
+      "agencia": "SortiOficial",
+      "rank": 83,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "443f5f03-46dd-416c-b6be-4bee1c02ab02",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 18,
+        "ultimo_mensaje": "2026-08-11",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "0962021164",
+      "player_id": "270",
+      "agencia": "SortiOficial",
+      "rank": 84,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "c74de9c2-d6d3-45b7-b3b4-ce3a236e0559",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4128,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0968423870",
+      "player_id": "338",
+      "agencia": "SortiOficial",
+      "rank": 85,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "b6e90b1b-bb25-4946-89c2-63477326a675",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4685,
+        "ultimo_mensaje": "2026-08-13"
+      }
+    },
+    {
+      "username": "0988667342",
+      "player_id": "511",
+      "agencia": "SortiOficial",
+      "rank": 86,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "4f3e30b1-b3fb-48d9-8dc8-f5699aedb44f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4486,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "1316582988ec",
+      "player_id": "1227",
+      "agencia": "SortiOficial",
+      "rank": 87,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "5abed85f-de0e-41b0-93bc-7645974d5d78",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-08-05",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "aramos22",
+      "player_id": "43897",
+      "agencia": "SortiOficial",
+      "rank": 88,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "62b93cd6-735b-4fc6-8180-97b92d6d7f40",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2026-06-13",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "mosquera96",
+      "player_id": "41130",
+      "agencia": "SortiOficial",
+      "rank": 89,
+      "motivo": "GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "0efc5cce-b0fc-45ae-a264-3e90302676fd",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-11-18",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0978604964",
+      "player_id": "414",
+      "agencia": "SortiOficial",
+      "rank": 90,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "1066f179-2fbb-43ca-b019-cd44061b9ad6",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1996,
+        "ultimo_mensaje": "2026-08-22"
+      }
+    },
+    {
+      "username": "0962188986",
+      "player_id": "703",
+      "agencia": "SortiOficial",
+      "rank": 91,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0939324813",
+      "player_id": "475",
+      "agencia": "SortiOficial",
+      "rank": 92,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "ce1cbacc-6b63-4f50-8ac3-a04ceb9c498e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6335,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "yanahyms13",
+      "player_id": "27089",
+      "agencia": "SortiOficial",
+      "rank": 93,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "f2001e94-b047-4e18-90b7-59665c538681",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2025-12-29",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0988946620",
+      "player_id": "688",
+      "agencia": "SortiOficial",
+      "rank": 94,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "ef7c1228-7b79-48a9-b0c3-024064f97f7e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3120,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "1725712168ec",
+      "player_id": "6374",
+      "agencia": "SortiOficial",
+      "rank": 95,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "25d0dae0-6a31-4ceb-888d-7ebd31757c1b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-08-30",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0961587883",
+      "player_id": "249",
+      "agencia": "SortiOficial",
+      "rank": 96,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0986829657",
+      "player_id": "345",
+      "agencia": "SortiOficial",
+      "rank": 97,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "5260eff6-8cb9-4327-a04e-9d3f8c576a23",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1798,
+        "ultimo_mensaje": "2025-12-17"
+      }
+    },
+    {
+      "username": "1203473962",
+      "player_id": "205",
+      "agencia": "SortiOficial",
+      "rank": 98,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0988647913",
+      "player_id": "1727",
+      "agencia": "SortiOficial",
+      "rank": 99,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "236ac96d-a033-4412-944d-a28df816b030",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0985966164",
+      "player_id": "1223",
+      "agencia": "SortiOficial",
+      "rank": 100,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "israelmateo12",
+      "player_id": "25458",
+      "agencia": "SortiOficial",
+      "rank": 101,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "b9c29370-3b70-416b-94af-c5d265df00f2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 93,
+        "ultimo_mensaje": "2026-07-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "e1728392158",
+      "player_id": "6372",
+      "agencia": "SortiOficial",
+      "rank": 102,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "e1a76381-5aad-4e53-9a47-e884e9459546",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-11-22",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "cr7",
+      "player_id": "35543",
+      "agencia": "SortiOficial",
+      "rank": 103,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "75ac43b2-f166-439c-bdf6-7f8d574ce600",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-04-07",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0996589735",
+      "player_id": "447",
+      "agencia": "SortiOficial",
+      "rank": 104,
+      "motivo": "GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "047c06c0-d609-47f3-8be5-0c972b6082e3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 955,
+        "ultimo_mensaje": "2026-07-30"
+      }
+    },
+    {
+      "username": "0939431456",
+      "player_id": "1492",
+      "agencia": "SortiOficial",
+      "rank": 105,
+      "motivo": "R90+GGRx5",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "f5f6745c-7a77-4209-9035-e61285f8f88a",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1960,
+        "ultimo_mensaje": "2026-08-09"
+      }
+    },
+    {
+      "username": "joserosales",
+      "player_id": "20387",
+      "agencia": "SortiOficial",
+      "rank": 106,
+      "motivo": "R90+GGRx5+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "2f133da2-a759-4a8b-962a-f8be8c64e910",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-09-03",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0981952813",
+      "player_id": "490",
+      "agencia": "SortiOficial",
+      "rank": 107,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "7350960f-b5fb-406f-8ed4-5983134043e2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2597,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "1726571613",
+      "player_id": "996",
+      "agencia": "SortiOficial",
+      "rank": 108,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0989996579",
+      "player_id": "3265",
+      "agencia": "SortiOficial",
+      "rank": 109,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "a1d070ee-b9ec-4cef-8bea-69dd9c80cdc8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2721,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0995557606",
+      "player_id": "356",
+      "agencia": "SortiOficial",
+      "rank": 110,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0989111318",
+      "player_id": "743",
+      "agencia": "SortiOficial",
+      "rank": 111,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "70fb8ba3-9834-4dd0-bf20-ac111fe699b6",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3930,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0979034881",
+      "player_id": "13390",
+      "agencia": "SortiOficial",
+      "rank": 112,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "bcdab04e-0709-4749-8ae8-9b746e8297b3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2291,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "hilda",
+      "player_id": "32645",
+      "agencia": "SortiOficial",
+      "rank": 113,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "d51f9322-6141-41b9-98d4-038da1fc9ece",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 56,
+        "ultimo_mensaje": "2026-07-15",
+        "contactos_descartados": 6
+      }
+    },
+    {
+      "username": "0985873819",
+      "player_id": "938",
+      "agencia": "SortiOficial",
+      "rank": 114,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "ed2dc152-6cb3-413b-95f8-64917fe39968",
+            "account": "datos"
+          },
+          {
+            "contact_id": "2d591842-7681-4cd4-a38c-10b8b9f32d6d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4330,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "joseparraga",
+      "player_id": "38337",
+      "agencia": "SortiOficial",
+      "rank": 115,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "84279cab-22cf-4bcd-b719-39ce5b3cb879",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-07-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0963103050",
+      "player_id": "68",
+      "agencia": "SortiOficial",
+      "rank": 116,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "carlosvilla0105",
+      "player_id": "42144",
+      "agencia": "SortiOficial",
+      "rank": 117,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "ab1ee61d-7376-4560-b4eb-cb0bccfc47a1",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-05-16",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jimmyjavier",
+      "player_id": "32898",
+      "agencia": "SortiOficial",
+      "rank": 118,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "1d65ee29-5975-4d87-aac9-bb4d25b769cb",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-04-05",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "nohemi",
+      "player_id": "33510",
+      "agencia": "SortiOficial",
+      "rank": 119,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "d49da630-1726-4ba2-9723-c2b04e8d498d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-14",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0979275984",
+      "player_id": "2005",
+      "agencia": "SortiOficial",
+      "rank": 120,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "86bb5313-641b-45cb-a861-7c86bee6afec",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1898,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0994638730",
+      "player_id": "22476",
+      "agencia": "SortiOficial",
+      "rank": 121,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "a6dc6da2-9469-411b-a66c-03dd41c5ffdf",
+            "account": "datos"
+          },
+          {
+            "contact_id": "1b67dfce-5e9c-4e78-b8d1-af9bb001bdac",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1644,
+        "ultimo_mensaje": "2026-08-21"
+      }
+    },
+    {
+      "username": "psanchez7",
+      "player_id": "48359",
+      "agencia": "SortiOficial",
+      "rank": 122,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "c3e412b7-5106-4652-98f0-ddd9e61078cf",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-29",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0985918977",
+      "player_id": "918",
+      "agencia": "SortiOficial",
+      "rank": 123,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "6f52d1d0-0cd9-4ade-9944-7a4ec8a3d0c3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1481,
+        "ultimo_mensaje": "2025-12-02"
+      }
+    },
+    {
+      "username": "0988160493",
+      "player_id": "1587",
+      "agencia": "SortiOficial",
+      "rank": 124,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "ff792c41-31ac-448b-b2ac-5cfeacf5a26d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2783,
+        "ultimo_mensaje": "2026-08-20"
+      }
+    },
+    {
+      "username": "0997421494",
+      "player_id": "753",
+      "agencia": "SortiOficial",
+      "rank": 125,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "7e4f7f71-e78a-4520-b426-87a052650de7",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2236,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "toala2023",
+      "player_id": "495",
+      "agencia": "SortiOficial",
+      "rank": 126,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "e6ba27a6-a5a5-4c32-8d58-a562f021721d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-22",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0983217908",
+      "player_id": "1749",
+      "agencia": "SortiOficial",
+      "rank": 127,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "2a02aac0-b25f-446e-8a07-4359d01a79ff",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1842,
+        "ultimo_mensaje": "2026-08-01"
+      }
+    },
+    {
+      "username": "0963724991",
+      "player_id": "6315",
+      "agencia": "SortiOficial",
+      "rank": 128,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "c8ef2b21-8954-405a-8fd9-b69b115e8607",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4071,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "120793435",
+      "player_id": "1050",
+      "agencia": "SortiOficial",
+      "rank": 129,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "e1206774844",
+      "player_id": "839",
+      "agencia": "SortiOficial",
+      "rank": 130,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "460076b7-c8d5-4153-b7d3-2218fe0dee19",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-03",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "1312243627",
+      "player_id": "1421",
+      "agencia": "SortiOficial",
+      "rank": 131,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "willyc",
+      "player_id": "50426",
+      "agencia": "SortiOficial",
+      "rank": 132,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0999548083",
+      "player_id": "392",
+      "agencia": "SortiOficial",
+      "rank": 133,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "70465b80-5331-43d5-a3ff-27a73c8ecdb8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2651,
+        "ultimo_mensaje": "2026-02-07"
+      }
+    },
+    {
+      "username": "0994571397",
+      "player_id": "1346",
+      "agencia": "SortiOficial",
+      "rank": 134,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "4235cafe-6ee3-4296-91f1-698777beae84",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 833,
+        "ultimo_mensaje": "2026-06-19"
+      }
+    },
+    {
+      "username": "torres20",
+      "player_id": "29628",
+      "agencia": "SortiOficial",
+      "rank": 135,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "julian87",
+      "player_id": "2180",
+      "agencia": "SortiOficial",
+      "rank": 136,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "74607137-1d0c-49a1-8674-e1ee3f8b44e0",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-08-03",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0993163355",
+      "player_id": "1200",
+      "agencia": "SortiOficial",
+      "rank": 137,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "61aa3fa2-4ef7-449d-9a83-7b56ef1aa2e8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1526,
+        "ultimo_mensaje": "2026-08-21"
+      }
+    },
+    {
+      "username": "vinic88",
+      "player_id": "31242",
+      "agencia": "SortiOficial",
+      "rank": 138,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "43f056ff-efb7-4cdd-9371-c53c37ba4652",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "55b9aac3-40d9-43d7-a7ea-d97d3ec9989a",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 40,
+        "ultimo_mensaje": "2026-08-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0997053354",
+      "player_id": "2320",
+      "agencia": "SortiOficial",
+      "rank": 139,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "503ab40f-852e-41af-a2c9-affed75ec120",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 961,
+        "ultimo_mensaje": "2026-08-22"
+      }
+    },
+    {
+      "username": "josselin",
+      "player_id": "47366",
+      "agencia": "SortiOficial",
+      "rank": 140,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "a7c1ae00-4c5c-4019-8fe7-7489b02b3607",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "addbf505-a9a2-4fe0-8a49-9ed8857f550a",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "b726632e-966e-4ecb-b8cf-3ef4cb3d28f8",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "bfc18308-8395-4eb1-97f7-b700ec36d623",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "c4ff03fe-b561-4967-9f05-b19a20db71f4",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6,
+        "ultimo_mensaje": "2026-08-07",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0982607034",
+      "player_id": "2340",
+      "agencia": "SortiOficial",
+      "rank": 141,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "angelmendoza",
+      "player_id": "28922",
+      "agencia": "SortiOficial",
+      "rank": 142,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "8bf4a199-d81d-4cee-9c9b-6147720488e4",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-01-01",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0926542044",
+      "player_id": "910",
+      "agencia": "SortiOficial",
+      "rank": 143,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "yova1970",
+      "player_id": "23921",
+      "agencia": "SortiOficial",
+      "rank": 144,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "68f55248-fa48-4a37-903c-a1ba1372ea7b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 172,
+        "ultimo_mensaje": "2026-03-14",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0939865996",
+      "player_id": "2140",
+      "agencia": "SortiOficial",
+      "rank": 145,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "9343ce44-6041-4043-8857-72a0923b9490",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2265,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "ider",
+      "player_id": "31800",
+      "agencia": "SortiOficial",
+      "rank": 146,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "0484b704-7a79-43ff-902e-057e1ac3662c",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 121,
+        "ultimo_mensaje": "2026-08-24",
+        "contactos_descartados": 4
+      }
+    },
+    {
+      "username": "0988509789",
+      "player_id": "2147",
+      "agencia": "SortiOficial",
+      "rank": 147,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0939649803",
+      "player_id": "6058",
+      "agencia": "SortiOficial",
+      "rank": 148,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "f4c95c89-b5c9-4555-a7c9-bb200728f8e1",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 966,
+        "ultimo_mensaje": "2025-12-10"
+      }
+    },
+    {
+      "username": "0997052301",
+      "player_id": "737",
+      "agencia": "SortiOficial",
+      "rank": 149,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "d0f7282a-a011-4d6e-9838-babe01ad0876",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2323,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "0999622253",
+      "player_id": "896",
+      "agencia": "SortiOficial",
+      "rank": 150,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "a020dfc1-a076-4ab4-9d35-0238e68d4db5",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3577,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "dancruz",
+      "player_id": "20805",
+      "agencia": "SortiOficial",
+      "rank": 151,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "a8a6a685-3b0f-480e-b86a-0e7801ef5623",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2025-10-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "leomar2",
+      "player_id": "565",
+      "agencia": "SortiOficial",
+      "rank": 152,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "bdfb3bc8-1bbe-454f-96f7-2fcac57c6b49",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 9,
+        "ultimo_mensaje": "2026-08-12",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0999730730",
+      "player_id": "439",
+      "agencia": "SortiOficial",
+      "rank": 153,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0978930098",
+      "player_id": "1464",
+      "agencia": "SortiOficial",
+      "rank": 154,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "38ccf3a0-a8a0-4455-97cd-12ca66498bfe",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 944,
+        "ultimo_mensaje": "2026-03-08"
+      }
+    },
+    {
+      "username": "pedroreyes",
+      "player_id": "489",
+      "agencia": "SortiOficial",
+      "rank": 155,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "e2a8d1e4-3b39-4b1b-8ad5-d4d12ecb8b82",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-09",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "jonayker",
+      "player_id": "31547",
+      "agencia": "SortiOficial",
+      "rank": 156,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "60412a02-5a7f-4769-a44e-588bdb97200d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 150,
+        "ultimo_mensaje": "2026-08-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0958894016",
+      "player_id": "851",
+      "agencia": "SortiOficial",
+      "rank": 157,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "c31acf90-ac5b-46f7-bfc8-2b82cfdb1172",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4046,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "0989705267",
+      "player_id": "1357",
+      "agencia": "SortiOficial",
+      "rank": 158,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0950714337ec",
+      "player_id": "858",
+      "agencia": "SortiOficial",
+      "rank": 159,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "aafaccb3-04db-49e3-b485-29a59e377ae2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-10-05",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "chuequito",
+      "player_id": "41518",
+      "agencia": "SortiOficial",
+      "rank": 160,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "3482f99b-94d0-4979-8915-6c5d2c3ecbe8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-05-10",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0984905088",
+      "player_id": "1105",
+      "agencia": "SortiOficial",
+      "rank": 161,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "af5b7efa-f0ce-4a13-8afa-87d663a853ca",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3291,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "eduardo894",
+      "player_id": "953",
+      "agencia": "SortiOficial",
+      "rank": 162,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "875ec8c2-b495-42e1-8830-9d94ac2f9890",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-06-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0984600701",
+      "player_id": "838",
+      "agencia": "SortiOficial",
+      "rank": 163,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "d144a04f-e19e-4265-8cfa-a4021102a424",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 437,
+        "ultimo_mensaje": "2026-02-07"
+      }
+    },
+    {
+      "username": "0969269926",
+      "player_id": "19749",
+      "agencia": "SortiOficial",
+      "rank": 164,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "75f7271f-2491-431c-8de7-685489754c32",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1423,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "0998697491",
+      "player_id": "13450",
+      "agencia": "SortiOficial",
+      "rank": 165,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "904b1d7e-4bae-47bd-87af-0f43f276ac4a",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 29,
+        "ultimo_mensaje": "2026-05-30"
+      }
+    },
+    {
+      "username": "0992244305",
+      "player_id": "1907",
+      "agencia": "SortiOficial",
+      "rank": 166,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "d6ff2ed6-80f5-4a50-b8e7-f59a32698727",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 754,
+        "ultimo_mensaje": "2026-07-18"
+      }
+    },
+    {
+      "username": "0939121285",
+      "player_id": "803",
+      "agencia": "SortiOficial",
+      "rank": 167,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "80cd7443-d64d-4516-9758-8fcc6c90104e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 761,
+        "ultimo_mensaje": "2026-01-13"
+      }
+    },
+    {
+      "username": "0984038702",
+      "player_id": "1069",
+      "agencia": "SortiOficial",
+      "rank": 168,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "69cab874-057c-480d-a529-3bfefba58e65",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2132,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "0994258351",
+      "player_id": "618",
+      "agencia": "SortiOficial",
+      "rank": 169,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "00fa7ff1-7fd1-405c-bea4-ff20863ee74c",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 784,
+        "ultimo_mensaje": "2026-05-31"
+      }
+    },
+    {
+      "username": "0987307528",
+      "player_id": "13413",
+      "agencia": "SortiOficial",
+      "rank": 170,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "cb09e2ec-3d40-4ab7-a6c9-a6705765f3ca",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 517,
+        "ultimo_mensaje": "2026-01-01"
+      }
+    },
+    {
+      "username": "0980546769",
+      "player_id": "1460",
+      "agencia": "SortiOficial",
+      "rank": 171,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "f04a0fc0-97fd-4391-bc2f-5abccf945514",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "4179cd2c-33da-4d0d-a577-40abb472cc51",
+            "account": "datos"
+          }
+        ],
+        "mensajes": 2215,
+        "ultimo_mensaje": "2026-08-09"
+      }
+    },
+    {
+      "username": "alexispiguave",
+      "player_id": "48570",
+      "agencia": "SortiOficial",
+      "rank": 172,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "3fba1536-a851-4a39-9c62-93b651d3b115",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-30",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0984732462",
+      "player_id": "4675",
+      "agencia": "SortiOficial",
+      "rank": 173,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "282bbc25-dc7e-4fad-a7a2-22a7fd143be6",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 883,
+        "ultimo_mensaje": "2026-07-21"
+      }
+    },
+    {
+      "username": "manolo",
+      "player_id": "47672",
+      "agencia": "SortiOficial",
+      "rank": 174,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "930a6720-0241-4039-b33b-dd473eac14a9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 102,
+        "ultimo_mensaje": "2026-08-25",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0998422572",
+      "player_id": "1151",
+      "agencia": "SortiOficial",
+      "rank": 175,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "b8fe7615-e526-4f2f-904e-7857d35d44d9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1662,
+        "ultimo_mensaje": "2026-03-27"
+      }
+    },
+    {
+      "username": "0994294986",
+      "player_id": "936",
+      "agencia": "SortiOficial",
+      "rank": 176,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "93a5f452-00ce-45a7-9d11-60780c086a8f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1606,
+        "ultimo_mensaje": "2026-08-20"
+      }
+    },
+    {
+      "username": "jimmysarango",
+      "player_id": "713",
+      "agencia": "SortiOficial",
+      "rank": 177,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "fea30db0-d48e-4d9d-9f91-86d2d36f2775",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2025-08-06",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "0986864860",
+      "player_id": "880",
+      "agencia": "SortiOficial",
+      "rank": 178,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "8e358318-8211-423d-909a-d34c784bb700",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 515,
+        "ultimo_mensaje": "2025-11-21"
+      }
+    },
+    {
+      "username": "0979581911",
+      "player_id": "2028",
+      "agencia": "SortiOficial",
+      "rank": 179,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "11c3bd7e-f978-4667-befe-d8d75a2af186",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 816,
+        "ultimo_mensaje": "2026-08-22"
+      }
+    },
+    {
+      "username": "0504872292",
+      "player_id": "458",
+      "agencia": "SortiOficial",
+      "rank": 180,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0923675334",
+      "player_id": "983",
+      "agencia": "SortiOficial",
+      "rank": 181,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "1723085393ec",
+      "player_id": "1541",
+      "agencia": "SortiOficial",
+      "rank": 182,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "99a40fd1-097d-4dbb-a45e-13ea730ae934",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2025-07-08",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "adonis.m",
+      "player_id": "47396",
+      "agencia": "SortiOficial",
+      "rank": 183,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "didihergg",
+      "player_id": "46401",
+      "agencia": "SortiOficial",
+      "rank": 184,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "19794d2c-2d6a-459f-b904-2dbc99444ff8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2026-08-15",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "gibson",
+      "player_id": "43050",
+      "agencia": "SortiOficial",
+      "rank": 185,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "aefdc25c-0dde-46e2-a3e9-40de6b1defc6",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 57,
+        "ultimo_mensaje": "2026-08-20",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0604392787",
+      "player_id": "872",
+      "agencia": "SortiOficial",
+      "rank": 186,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "gabrie",
+      "player_id": "47536",
+      "agencia": "SortiOficial",
+      "rank": 187,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "11ad0ee2-2fc6-43ca-85bd-8abb7cae7eff",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0986591003",
+      "player_id": "2184",
+      "agencia": "SortiOficial",
+      "rank": 188,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "a466d5c7-a0fb-4c5f-a0e5-b7281306161e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2641,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "xavierdelgado",
+      "player_id": "45720",
+      "agencia": "SortiOficial",
+      "rank": 189,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "4392df23-d430-42a9-a78f-78ed2879e337",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-24",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "juney",
+      "player_id": "21673",
+      "agencia": "SortiOficial",
+      "rank": 190,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "70b74065-d1d6-4461-9491-8f7d271a7931",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "db915c19-369e-489c-997b-4f8b35014357",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 15,
+        "ultimo_mensaje": "2026-08-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "joelortega",
+      "player_id": "21698",
+      "agencia": "SortiOficial",
+      "rank": 191,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "476ed05a-15aa-4633-9872-974094eba928",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "ba150fec-b9fa-4276-adce-21b1d198b09f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-12-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "rojas",
+      "player_id": "47037",
+      "agencia": "SortiOficial",
+      "rank": 192,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "1f7dac72-27fe-4b2d-b3c4-f2c22a140714",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2026-07-26",
+        "contactos_descartados": 60
+      }
+    },
+    {
+      "username": "0969707772",
+      "player_id": "2172",
+      "agencia": "SortiOficial",
+      "rank": 193,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "84c6c3a0-2e9e-459a-aedd-6be2cd8ad4c2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1039,
+        "ultimo_mensaje": "2026-08-22"
+      }
+    },
+    {
+      "username": "juanse21",
+      "player_id": "43433",
+      "agencia": "SortiOficial",
+      "rank": 194,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "68e3e9aa-a68f-4d9f-9f8c-1e0fda13741f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-06-10",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "ec1351658628",
+      "player_id": "1709",
+      "agencia": "SortiOficial",
+      "rank": 195,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "1f6f1e75-1f6c-400a-bf04-afa45461477f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "bdb564bd-9fa6-45f6-a1d2-0bf20634c9ef",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 13,
+        "ultimo_mensaje": "2026-04-10",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0992775235",
+      "player_id": "1984",
+      "agencia": "SortiOficial",
+      "rank": 196,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "a32aa926-ea57-4538-b9bc-1a56ee1deb0f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2616,
+        "ultimo_mensaje": "2026-08-20"
+      }
+    },
+    {
+      "username": "0997396515",
+      "player_id": "146",
+      "agencia": "SortiOficial",
+      "rank": 197,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "d4f4782b-bf2c-423e-a4b4-ea90b7504400",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 6622,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "e0993230740",
+      "player_id": "22822",
+      "agencia": "SortiOficial",
+      "rank": 198,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "193807fd-806c-4d9f-975b-db8389fcfe9f",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-11-10",
+        "contactos_descartados": 2
+      }
+    },
+    {
+      "username": "0987361229",
+      "player_id": "3154",
+      "agencia": "SortiOficial",
+      "rank": 199,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "86f1976e-bef1-43f3-a7b1-102572499bb4",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1310,
+        "ultimo_mensaje": "2026-08-25"
+      }
+    },
+    {
+      "username": "cristhian_echeverria",
+      "player_id": "51317",
+      "agencia": "SortiOficial",
+      "rank": 200,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "526c3bdb-442d-454c-b136-118ed9adf089",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-07-19",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jordanbalarezo",
+      "player_id": "31475",
+      "agencia": "SortiOficial",
+      "rank": 201,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "jampy02",
+      "player_id": "53064",
+      "agencia": "SortiOficial",
+      "rank": 202,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "c3ef678b-b78d-44f3-8495-fabad67a63b6",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-08-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0986220259",
+      "player_id": "5880",
+      "agencia": "SortiOficial",
+      "rank": 203,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "110cf7e3-9a02-42cc-a72f-296916d653d9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1559,
+        "ultimo_mensaje": "2026-08-12"
+      }
+    },
+    {
+      "username": "dianaponce",
+      "player_id": "47395",
+      "agencia": "SortiOficial",
+      "rank": 204,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "karinacastillo",
+      "player_id": "26938",
+      "agencia": "SortiOficial",
+      "rank": 205,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "509d5c70-6cc5-4f0f-825a-836c3a4d8efa",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-16",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "luis_pordomo",
+      "player_id": "34371",
+      "agencia": "SortiOficial",
+      "rank": 206,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "08667b78-d479-4f18-ab02-4b4e84d826b9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-04",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0994487898",
+      "player_id": "1918",
+      "agencia": "SortiOficial",
+      "rank": 207,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "ericson",
+      "player_id": "44023",
+      "agencia": "SortiOficial",
+      "rank": 208,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "0fe94ce7-2660-4a2e-83de-331ce9ed2562",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 17,
+        "ultimo_mensaje": "2026-08-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "crissflores11",
+      "player_id": "45130",
+      "agencia": "SortiOficial",
+      "rank": 209,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0983627491",
+      "player_id": "1272",
+      "agencia": "SortiOficial",
+      "rank": 210,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "a3370304-f074-4f1f-9527-e2ead44ffaba",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2688,
+        "ultimo_mensaje": "2026-07-09"
+      }
+    },
+    {
+      "username": "0961585378",
+      "player_id": "4201",
+      "agencia": "SortiOficial",
+      "rank": 211,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "c6bbe122-11ad-4f60-bc2d-eac4cdca7a5c",
+            "account": "datos"
+          },
+          {
+            "contact_id": "b7dcd1af-b36f-4d52-989d-f7943acac41a",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 250,
+        "ultimo_mensaje": "2026-08-03"
+      }
+    },
+    {
+      "username": "carlosmanzo02",
+      "player_id": "52742",
+      "agencia": "SortiOficial",
+      "rank": 212,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "medardo",
+      "player_id": "24515",
+      "agencia": "SortiOficial",
+      "rank": 213,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "03a15e54-8644-4a3b-89d6-09cc8a66c0f7",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "1c256f3b-2ef6-4a4d-9f31-c0fdfdd9c22f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "21b77a8c-7da5-4a02-ab32-5c87731f1528",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "524dc459-5579-497c-9537-4e70058bb21f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "6a93fb02-3055-47ed-a473-a400f8c655ad",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "aefe83b9-5d7f-40b5-bdd9-294f3e54f2d3",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "caf8c8af-7524-4907-9686-b9dea3f4a213",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 70,
+        "ultimo_mensaje": "2026-08-15",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "vicentegs25",
+      "player_id": "30854",
+      "agencia": "SortiOficial",
+      "rank": 214,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0959663852",
+      "player_id": "6336",
+      "agencia": "SortiOficial",
+      "rank": 215,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "809e1028-f163-4075-b505-4e40161e9f25",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2068,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "e0957375736",
+      "player_id": "1834",
+      "agencia": "SortiOficial",
+      "rank": 216,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "3db3e57b-7528-4572-9736-5af9d8d2982e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-01-12",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0967778963",
+      "player_id": "903",
+      "agencia": "SortiOficial",
+      "rank": 217,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "angello0727",
+      "player_id": "49355",
+      "agencia": "SortiOficial",
+      "rank": 218,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "jj_salinasc",
+      "player_id": "37318",
+      "agencia": "SortiOficial",
+      "rank": 219,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0980258891",
+      "player_id": "4729",
+      "agencia": "SortiOficial",
+      "rank": 220,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "6ad7fdc8-2be0-40c0-8afc-ef4a697f077b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 563,
+        "ultimo_mensaje": "2026-08-19"
+      }
+    },
+    {
+      "username": "0990652816",
+      "player_id": "1550",
+      "agencia": "SortiOficial",
+      "rank": 221,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "aa220dd9-3790-4534-a95e-d90dbb03bf96",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2137,
+        "ultimo_mensaje": "2026-08-23"
+      }
+    },
+    {
+      "username": "darioamores",
+      "player_id": "38450",
+      "agencia": "SortiOficial",
+      "rank": 222,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "9a3c152e-5a11-4ffc-bc6e-650dd068d18c",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2026-06-04",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jhonmar1981",
+      "player_id": "52466",
+      "agencia": "SortiOficial",
+      "rank": 223,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "b4f5d379-acc1-426e-a6c2-7447344f517d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-07-29",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "brenda05",
+      "player_id": "46595",
+      "agencia": "SortiOficial",
+      "rank": 224,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "wilao96",
+      "player_id": "46889",
+      "agencia": "SortiOficial",
+      "rank": 225,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "d4f11b00-18c4-481c-8608-be11565f9396",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-19",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jorgelaje1992",
+      "player_id": "20987",
+      "agencia": "SortiOficial",
+      "rank": 226,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "834e9daf-4b1d-4278-8060-c4223194af51",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "c7276972-51a5-4403-848e-60894efda7f3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 167,
+        "ultimo_mensaje": "2026-08-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "david777av",
+      "player_id": "51088",
+      "agencia": "SortiOficial",
+      "rank": 227,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0985197488",
+      "player_id": "816",
+      "agencia": "SortiOficial",
+      "rank": 228,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "3bdc5976-9aa2-4144-a191-97eb5713e3a3",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 910,
+        "ultimo_mensaje": "2025-12-04"
+      }
+    },
+    {
+      "username": "0920750320",
+      "player_id": "1522",
+      "agencia": "SortiOficial",
+      "rank": 229,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "andrea_deniss",
+      "player_id": "47453",
+      "agencia": "SortiOficial",
+      "rank": 230,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "5c9489b6-fdc3-4287-ac64-8ce4d311836e",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "93cd7f4f-79df-4a1e-bcbe-493d00ba346c",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-07-15",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0995646720",
+      "player_id": "2004",
+      "agencia": "SortiOficial",
+      "rank": 231,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "2308c518-f224-4af1-a67e-a3d3f74562a9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 247,
+        "ultimo_mensaje": "2026-04-13"
+      }
+    },
+    {
+      "username": "0980679812",
+      "player_id": "6098",
+      "agencia": "SortiOficial",
+      "rank": 232,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "beto",
+      "player_id": "38651",
+      "agencia": "SortiOficial",
+      "rank": 233,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "277ddf3b-e32f-4e59-9164-9a3f54e497a1",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "2820aeef-31bb-464b-80f5-3d1d926a252e",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "d3c7019c-3a42-48e1-a8f4-1f7f76fe581d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 4,
+        "ultimo_mensaje": "2026-06-12",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "noelruiz",
+      "player_id": "49356",
+      "agencia": "SortiOficial",
+      "rank": 234,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "97c3263a-c952-4c45-81d8-10a6909afca8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-07-18",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "holgermoises",
+      "player_id": "49204",
+      "agencia": "SortiOficial",
+      "rank": 235,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0960815761",
+      "player_id": "1996",
+      "agencia": "SortiOficial",
+      "rank": 236,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "fb1adb83-1e88-414f-abb4-4aa5ef1d7bfd",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 674,
+        "ultimo_mensaje": "2026-06-01"
+      }
+    },
+    {
+      "username": "yandry1212.09",
+      "player_id": "52111",
+      "agencia": "SortiOficial",
+      "rank": 237,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "99c78387-8403-4ccf-bc48-96ed9429c048",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-08-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "victorbasurto",
+      "player_id": "54387",
+      "agencia": "SortiOficial",
+      "rank": 238,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "mperero",
+      "player_id": "55388",
+      "agencia": "SortiOficial",
+      "rank": 239,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "alanzamora",
+      "player_id": "48145",
+      "agencia": "SortiOficial",
+      "rank": 240,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "zayko",
+      "player_id": "55520",
+      "agencia": "SortiOficial",
+      "rank": 241,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0986754103",
+      "player_id": "2649",
+      "agencia": "SortiOficial",
+      "rank": 242,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "89c599c7-a5d7-4233-be1e-40500f3393b2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 213,
+        "ultimo_mensaje": "2026-06-20"
+      }
+    },
+    {
+      "username": "mattew",
+      "player_id": "46855",
+      "agencia": "SortiOficial",
+      "rank": 243,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "deco1990",
+      "player_id": "54844",
+      "agencia": "SortiOficial",
+      "rank": 244,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "cc08fa67-6305-4b78-a64f-bc2dc7a12cf8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-14",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "jhonathanjsjs",
+      "player_id": "43646",
+      "agencia": "SortiOficial",
+      "rank": 245,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "batman",
+      "player_id": "55930",
+      "agencia": "SortiOficial",
+      "rank": 246,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "0d5107e9-37ed-4c97-a8d3-37e2f3b03b7d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "kevinchuqui666",
+      "player_id": "49612",
+      "agencia": "SortiOficial",
+      "rank": 247,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "vicsosa12",
+      "player_id": "45851",
+      "agencia": "SortiOficial",
+      "rank": 248,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "8e8fa8a4-53c1-446d-ad0e-1e553ace2891",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-06-13",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "olecramrey1993",
+      "player_id": "54839",
+      "agencia": "SortiOficial",
+      "rank": 249,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "angieromero",
+      "player_id": "55961",
+      "agencia": "SortiOficial",
+      "rank": 250,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "df1a7a87-783f-4243-8484-07dc79d2f051",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-23",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "ephydemah",
+      "player_id": "51001",
+      "agencia": "SortiOficial",
+      "rank": 251,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "yao",
+      "player_id": "55848",
+      "agencia": "SortiOficial",
+      "rank": 252,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "4f4c239c-6f5a-4633-891a-d34e95b5d4d5",
+            "account": "datos"
+          },
+          {
+            "contact_id": "7b5f72d1-52dd-4f84-913d-7871e1c56ed6",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-06-28",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "nahim",
+      "player_id": "54826",
+      "agencia": "SortiOficial",
+      "rank": 253,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "21709c68-08f0-4cde-a304-a09018bcf4fa",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 268,
+        "ultimo_mensaje": "2026-08-17",
+        "contactos_descartados": 3
+      }
+    },
+    {
+      "username": "juanc0321",
+      "player_id": "55900",
+      "agencia": "SortiOficial",
+      "rank": 254,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "davidrivadeneira",
+      "player_id": "50791",
+      "agencia": "SortiOficial",
+      "rank": 255,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "baja",
+        "metodo": "username_ambiguo",
+        "contactos": [
+          {
+            "contact_id": "3da4eeb6-0c6e-4aba-b73a-a78307fe363f",
+            "account": "sistemas"
+          },
+          {
+            "contact_id": "e36c8c68-974d-408b-8aed-33122a8df30e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2026-08-07",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0981577667",
+      "player_id": "2576",
+      "agencia": "SortiOficial",
+      "rank": 256,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0960726511",
+      "player_id": "3051",
+      "agencia": "SortiOficial",
+      "rank": 257,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "125a6a0d-c8ab-4adc-b375-577c957f66c2",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 997,
+        "ultimo_mensaje": "2026-04-08"
+      }
+    },
+    {
+      "username": "edwinsito7777",
+      "player_id": "55738",
+      "agencia": "SortiOficial",
+      "rank": 258,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "09d08c64-1c63-43a9-b930-690deb8217f8",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-08-22",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "manuelnavas",
+      "player_id": "47247",
+      "agencia": "SortiOficial",
+      "rank": 259,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "1715489751",
+      "player_id": "1552",
+      "agencia": "SortiOficial",
+      "rank": 260,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "juancarlos12",
+      "player_id": "28866",
+      "agencia": "SortiOficial",
+      "rank": 261,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "304b7a44-eaa0-4e23-b6e4-240b401a413b",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 98,
+        "ultimo_mensaje": "2026-08-09",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0983846086",
+      "player_id": "625",
+      "agencia": "SortiOficial",
+      "rank": 262,
+      "motivo": "R90+FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "8492d2ff-4972-4894-a1cb-bc4c0e56298d",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3302,
+        "ultimo_mensaje": "2026-08-24"
+      }
+    },
+    {
+      "username": "e1755252952",
+      "player_id": "16",
+      "agencia": "SortiOficial",
+      "rank": 263,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "e2d556e2-afd6-40da-8918-c91d3f721102",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2026-03-16",
+        "contactos_descartados": 1
+      }
+    },
+    {
+      "username": "marcojaramillo",
+      "player_id": "50987",
+      "agencia": "SortiOficial",
+      "rank": 264,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "dd150ec2-f7f1-4ec9-98c3-330c285dd967",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 3,
+        "ultimo_mensaje": "2026-07-25",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "ec0705640571",
+      "player_id": "2357",
+      "agencia": "SortiOficial",
+      "rank": 265,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "9f43b206-9274-42af-9a6f-bfd3ee7abded",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 5,
+        "ultimo_mensaje": "2026-08-17",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "0963356043",
+      "player_id": "559",
+      "agencia": "SortiOficial",
+      "rank": 266,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "690c9893-d57c-4f7f-8d12-c7043eaa2854",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1227,
+        "ultimo_mensaje": "2026-07-19"
+      }
+    },
+    {
+      "username": "ec1313084152",
+      "player_id": "642",
+      "agencia": "SortiOficial",
+      "rank": 267,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "9eb42ae1-d756-40bd-8576-8102a2ffac5e",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 2,
+        "ultimo_mensaje": "2025-09-08",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "diegohilec",
+      "player_id": "457",
+      "agencia": "SortiOficial",
+      "rank": 268,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "username_con_etiqueta",
+        "contactos": [
+          {
+            "contact_id": "c2cde155-b35c-4c0d-b3f9-b24c705872ce",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 8,
+        "ultimo_mensaje": "2025-08-05",
+        "contactos_descartados": 0
+      }
+    },
+    {
+      "username": "gustabo",
+      "player_id": "27600",
+      "agencia": "SortiOficial",
+      "rank": 269,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "ninguna",
+        "metodo": null,
+        "contactos": [],
+        "mensajes": 0,
+        "ultimo_mensaje": null
+      }
+    },
+    {
+      "username": "0963675210",
+      "player_id": "1130",
+      "agencia": "SortiOficial",
+      "rank": 270,
+      "motivo": "R90",
+      "vinculo": {
+        "confianza": "alta",
+        "metodo": "telefono",
+        "contactos": [
+          {
+            "contact_id": "f132865e-57f0-43e2-bfe8-b90b30501023",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1113,
+        "ultimo_mensaje": "2026-05-09"
+      }
+    },
+    {
+      "username": "arielyoza",
+      "player_id": "22362",
+      "agencia": "SortiOficial",
+      "rank": 271,
+      "motivo": "FREC",
+      "vinculo": {
+        "confianza": "media",
+        "metodo": "username_mencionado",
+        "contactos": [
+          {
+            "contact_id": "253fb173-e724-4401-a13a-1706fadb27c9",
+            "account": "sistemas"
+          }
+        ],
+        "mensajes": 1,
+        "ultimo_mensaje": "2025-09-23",
+        "contactos_descartados": 0
+      }
+    }
+  ]
+}

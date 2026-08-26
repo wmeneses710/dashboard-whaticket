@@ -29,14 +29,22 @@ LO QUE ESTE ARCHIVO NO ES. No es una lista de a quien alertar y ya: los `media` 
 contacto, pero nadie lo llamo usuario"; alertarlo puede ser correcto o puede ser ruido, y
 esa decision es del negocio.
 
-EL TELEFONO NO SALE ACA. La marca de VIP vive en `vip_players` (ver src/vip.py), que esta
-en la misma base que `contacts` y por lo tanto no expone ni un numero nuevo. Este archivo
-se queda con la REFERENCIA: `contact_id`, que es un uuid y fuera de esa base no dice nada
-de nadie. Empujarlo a la tabla es `scripts/load_jugadores_vip.py`.
+QUE SALE Y QUE NO. El archivo SE VERSIONA, asi que lleva lo minimo:
 
-OJO igual: 140 de los 334 `username` SON un numero de telefono, porque asi los identifica
-el casino. Eso viene del reporte de origen; este archivo no lo agrega ni lo puede quitar
-sin perder la llave del negocio.
+  ENTRA  `username`, `player_id`, `agencia`, `rank`, `motivo` y la lista de `contact_id`.
+         Son las llaves del negocio y las que los dos mensajes imprimen.
+  NO ENTRA  el telefono (`contacts.number`) ni el dato financiero (`ggr_casa`, `turnover`,
+         `depositos`, `retiros`, `kyc`). Lo financiero venia del reporte y no lo lee NADIE
+         --ni el loader ni los mensajes--, pero es lo mas sensible que habia: cuanto
+         deposita, cuanto retira y cuanto pierde una persona identificable, en un repo,
+         para siempre. Lo que no se usa no se guarda.
+
+`contact_id` es un uuid: fuera de esta base no dice nada de nadie. Empujarlo a la tabla es
+`scripts/load_jugadores_vip.py`.
+
+OJO: 140 de los 334 `username` SON un numero de telefono, porque asi los identifica el
+casino. Viene del reporte de origen y no se puede quitar sin perder la llave con la que el
+negocio nombra a sus jugadores -- es el mismo dato que ya circula en el CSV.
 
 Uso:  .venv/bin/python scripts/dump_jugadores_vip.py <reporte.csv> [salida.json]
 """
@@ -70,13 +78,6 @@ _ES_TELEFONO = re.compile(r"\d{6,}")
 # EL LARGO DEL NUMERO Y NO `is_group`: de los tres grupos que aparecieron, `is_group`
 # llegaba en false en DOS. `length(number) > 15` es la regla que el repo ya usa para esto
 # (ver el comentario de _rows_as_dicts sobre por que la censura conserva el largo).
-
-
-def _num(v: str) -> float | None:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
 
 
 def cargar_reporte(ruta: str) -> list[dict]:
@@ -182,11 +183,12 @@ def construir(filas: list[dict], vinculo: dict[str, dict], fuente: str,
             "agencia": f["agencia"],
             "rank": int(f["rank"]) if f["rank"].isdigit() else None,
             "motivo": f["motivo"],
-            "kyc": f["kyc"].strip().lower() == "si",
-            "ggr_casa": _num(f["ggr_casa"]),
-            "turnover": _num(f["turnover"]),
-            "depositos": _num(f["depositos"]),
-            "retiros": _num(f["retiros"]),
+            # EL DATO FINANCIERO NO ENTRA, y el archivo se versiona. `ggr_casa`,
+            # `turnover`, `depositos`, `retiros` y `kyc` venian del reporte y no los lee
+            # NADIE --ni el loader ni los dos mensajes--, pero son lo mas sensible que
+            # habia: cuanto deposita, cuanto retira y cuanto pierde una persona
+            # identificable, en un repo, para siempre. Lo que no se usa no se guarda; si
+            # algun dia hace falta, esta en el CSV de origen.
             "vinculo": v or {"confianza": "ninguna", "metodo": None, "contactos": [],
                              "mensajes": 0, "ultimo_mensaje": None},
         })

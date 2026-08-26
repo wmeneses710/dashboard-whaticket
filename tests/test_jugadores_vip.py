@@ -58,6 +58,18 @@ def test_el_jugador_sin_rastro_queda_con_confianza_ninguna():
     assert doc["resumen"]["jugadores"] == 1
 
 
+def test_la_ficha_NO_lleva_el_dato_financiero():
+    """EL ARCHIVO SE VERSIONA, asi que lo que no se usa no entra. `ggr_casa`, `turnover`,
+    `depositos`, `retiros` y `kyc` venian del reporte y **no los lee nadie** --ni el loader
+    ni los dos mensajes--, pero son lo mas sensible que habia ahi: cuanto deposita, cuanto
+    retira y cuanto pierde una persona identificable, en un repo, para siempre.
+
+    Lo que no se usa no se guarda. Si algun dia hace falta, esta en el CSV de origen."""
+    j = vip.construir([_fila()], {}, "reporte.csv")["jugadores"][0]
+    for prohibido in ("ggr_casa", "turnover", "depositos", "retiros", "kyc"):
+        assert prohibido not in j, prohibido
+
+
 def test_la_ficha_lleva_lo_que_las_DOS_alertas_necesitan():
     """La de resumen necesita identificar al jugador y su peso; la de espera solo necesita
     resolver el contacto. Las dos arrancan en `contact_id`."""
@@ -68,8 +80,6 @@ def test_la_ficha_lleva_lo_que_las_DOS_alertas_necesitan():
     j = vip.construir([_fila()], v, "reporte.csv")["jugadores"][0]
     assert j["username"] == "quirozsabando" and j["player_id"] == "49846"
     assert j["agencia"] == "ModoSorti" and j["rank"] == 1 and j["motivo"] == "GGRx5"
-    assert j["kyc"] is True
-    assert j["ggr_casa"] == 95.08 and j["depositos"] == 110.0
     assert j["vinculo"]["contactos"][0]["contact_id"] == "abc"
 
 
@@ -96,8 +106,11 @@ def test_el_resumen_cuenta_por_confianza():
     assert doc["resumen"]["por_confianza"] == {"alta": 1, "baja": 1, "ninguna": 1}
 
 
-def test_un_numero_ilegible_no_revienta_la_ficha():
-    """El reporte viene de una exportacion: una celda vacia o con texto no puede tumbar
-    el dump entero."""
-    j = vip.construir([_fila(ggr_casa="", depositos="n/d", rank="—")], {}, "r.csv")["jugadores"][0]
-    assert j["ggr_casa"] is None and j["depositos"] is None and j["rank"] is None
+def test_un_RANK_ilegible_no_revienta_la_ficha():
+    """El reporte viene de una exportacion: una celda vacia o con texto no puede tumbar el
+    dump entero. `rank` es el unico numero que sobrevive al recorte, asi que es el unico
+    que puede venir sucio."""
+    j = vip.construir([_fila(rank="—")], {}, "r.csv")["jugadores"][0]
+    assert j["rank"] is None
+    j2 = vip.construir([_fila(rank="")], {}, "r.csv")["jugadores"][0]
+    assert j2["rank"] is None

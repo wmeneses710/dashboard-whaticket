@@ -9,15 +9,15 @@ nuevo, no hay endpoint nuevo.
 - `scripts/dump_jugadores_vip.py` — reporte del casino → `config/jugadores_vip.json`.
 - `scripts/load_jugadores_vip.py` — el JSON → `vip_players`.
 
-> **El JSON NO está versionado** (`.gitignore`), y no hace falta que lo esté: producción
-> lee `vip_players`, nunca el archivo. El JSON es solo el papel con el que se carga la
-> tabla. Se ignora porque 140 de los 334 `username` son un número de teléfono —así los
-> identifica el casino— y eso no tiene por qué vivir en el repo.
+> **El JSON SÍ está versionado**, y por eso lleva lo mínimo:
 >
-> **Consecuencia**: la única copia de la lista fuera de la base es el CSV que manda el
-> negocio. Guardarlo en un lugar compartido, no en la carpeta de descargas de alguien.
-> Para cambiar la lista se regenera el JSON y se vuelve a cargar; para apagar a UNO,
-> alcanza el `UPDATE` de más abajo.
+> - **entra**: `username`, `player_id`, `agencia`, `rank`, `motivo` y los `contact_id`.
+> - **no entra**: el teléfono, ni `ggr_casa`, `turnover`, `depositos`, `retiros`, `kyc`.
+>   Eso venía del reporte y **no lo lee nadie** —ni el loader ni los mensajes—, pero es lo
+>   más sensible que había. Lo que no se usa no se guarda.
+>
+> Versionarlo hace que actualizar la lista sea un commit y un redeploy, con historial de
+> quién entró y quién salió. Producción igual lee `vip_players`, nunca el archivo.
 
 ---
 
@@ -76,73 +76,55 @@ Desplegar sin `TELEGRAM_TOKEN_VIP` ni `TELEGRAM_CHAT_VIP`. En el log del worker:
 
 Las dos tablas quedan creadas y vacías. Nada se envía.
 
-### 4 y 5. Cargar la lista en PRODUCCIÓN
+### 4. La lista se siembra sola
 
-**Cloudflare no interviene acá.** Proxea HTTP(S) —el tablero—; Postgres es TCP en 5432 y
-no pasa por él. Lo que hay que resolver es que la base es interna a EasyPanel.
+**No hay paso manual.** El JSON está versionado, `.dockerignore` no excluye `config/`, así
+que entra a la imagen; y `seed_vip_players()` corre en cada arranque del contenedor, igual
+que `seed_operator_status()`. **Commit + redeploy y la lista está.**
 
-El contenedor de la app **ya tiene todo**: `psycopg`, los dos scripts y `DATABASE_URL`
-apuntando a la base interna. Solo falta meterle el archivo.
+En el log del arranque:
 
-#### Por qué el JSON de la copia SIRVE en producción
+```
+INFO vip_players: 255 filas sembradas · vinculos vivos en esta base: 255 de 255
+```
 
-La base local es un **restore del dump de EasyPanel**: los `contact_id` son los mismos
-uuid. Por eso el loader **no** bloquea por el nombre de la base —eso sería un proxy malo,
-y frenaría una carga válida—. Lo que verifica es lo que importa: **que esos uuid existan
-de verdad en la base destino**. Si no existen, se planta.
+**Lo único que hay que mirar son los vínculos vivos.** Si dice `0 de 255`, los `contact_id`
+son de otra base y no va a sonar una sola alerta — y sin ese número eso se vería idéntico a
+un día tranquilo. Por eso además loguea un `WARNING` explícito debajo de la mitad.
 
-#### El procedimiento
+La siembra **NO PISA** (`ON CONFLICT DO NOTHING`), mismo contrato que `operator_status`: si
+alguien apagó un VIP en producción, un deploy no puede volver a encenderlo. Ensayado.
 
-**1. Encontrar el contenedor** (por eso no hace falta saber dónde está nada):
+#### Cuando cambia la lista
 
 ```bash
-docker ps --format 'table {{.Names}}\t{{.Image}}' | grep -i dashboard
+DATABASE_URL="<la copia>" python scripts/dump_jugadores_vip.py <reporte-nuevo.csv>
+git add config/jugadores_vip.json && git commit -m "chore(vip): lista de <fecha>"
 ```
 
-**2. Copiar el JSON adentro:**
+Redeploy y listo. Los `contact_id` de la copia sirven en producción porque la copia es un
+**restore del dump de EasyPanel**: son los mismos uuid. El arranque lo verifica igual.
+
+#### Cuando hace falta que el archivo GANE
+
+La siembra solo llena huecos. Para pisar lo que esté en la base:
 
 ```bash
-docker cp config/jugadores_vip.json <contenedor>:/tmp/vip.json
+C=$(docker ps --format '{{.Names}}' | grep -i whaticket-dashboard | head -1)
+docker exec "$C" python scripts/load_jugadores_vip.py --dry-run   # mirar
+docker exec "$C" python scripts/load_jugadores_vip.py --pisar     # pisar
+docker exec "$C" python scripts/load_jugadores_vip.py --podar     # borrar lo que ya no está
 ```
 
-**3. Ensayar SIN escribir** — acá es donde se ve si los vínculos son válidos:
-
-```bash
-docker exec <contenedor> python scripts/load_jugadores_vip.py \
-  --config /tmp/vip.json --dry-run
-```
-
-Lo que tiene que decir:
-
-```
-  vinculos vivos en esta base: 255 de 255
-dry-run: no se escribio nada
-```
-
-Si dice `solo 0 de 255`, **parar**: el archivo no corresponde a esa base.
-
-**4. Cargar:**
-
-```bash
-docker exec <contenedor> python scripts/load_jugadores_vip.py \
-  --config /tmp/vip.json --pisar
-```
-
-**5. Borrar el archivo del contenedor:**
-
-```bash
-docker exec <contenedor> rm /tmp/vip.json
-```
-
-El dato ya vive en `vip_players`, que es donde tiene que estar. El archivo era el papel.
+El archivo ya viaja dentro de la imagen: no hace falta `scp` ni `docker cp`.
 
 #### Lo que NO hay que hacer
 
 Publicar el puerto 5432 hacia afuera. Docker publica saltando el firewall del host (sus
 reglas van a la cadena `DOCKER` de iptables, no a `INPUT`), así que un `ufw deny 5432`
-**no lo tapa** — es la misma razón por la que el compose local ata la base a `127.0.0.1`.
+**no lo tapa**.
 
-### 6. Encender
+### 5. Encender
 
 Poner `TELEGRAM_TOKEN_VIP` y `TELEGRAM_CHAT_VIP` en EasyPanel y reiniciar. En el log:
 

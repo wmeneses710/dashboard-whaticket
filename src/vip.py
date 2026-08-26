@@ -248,6 +248,31 @@ def podar(cur, jugadores: list[dict]) -> int:
     return len(huerfanas)
 
 
+def seed_from_config(cur, jugadores: list[dict]) -> tuple[int, int]:
+    """Siembra `vip_players` desde la config. Devuelve `(filas, vinculos_vivos)`.
+
+    CORRE EN CADA ARRANQUE del contenedor, igual que `seed_operator_status`. Ahora que el
+    JSON se versiona entra a la imagen (`.dockerignore` NO excluye `config/`), asi que un
+    commit y un redeploy dejan la lista puesta: se acaban el `scp` y el `docker cp`.
+
+    NO PISA (`ON CONFLICT DO NOTHING`), mismo contrato que `operator_status`: si alguien
+    apago un VIP en produccion, ese cambio vive en la BD y un deploy no puede borrarlo. El
+    archivo solo llena huecos. Para que el archivo gane hay que pedirlo a mano con
+    `scripts/load_jugadores_vip.py --pisar`.
+
+    DEVUELVE LOS VINCULOS VIVOS y no solo las filas: es lo unico que hay que mirar en el
+    log del arranque. "0 de 255" significa que los uuid son de otra base y que no va a
+    sonar una sola alerta -- sin ese numero, eso se ve igual que un dia tranquilo.
+    """
+    ensure_table(cur)
+    filas = filas_de_config(jugadores)
+    if not filas:
+        return 0, 0
+    vivos = contactos_que_existen(cur, [(f["account"], f["contact_id"]) for f in filas])
+    cur.executemany(_SEED, filas)
+    return len(filas), vivos
+
+
 def contactos_vip(cur, account: str) -> dict[str, dict]:
     """`{contact_id: ficha}` de los VIP ENCENDIDOS de una cuenta.
 
