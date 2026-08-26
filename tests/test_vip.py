@@ -407,3 +407,44 @@ def test_un_config_VIEJO_sin_verificacion_no_enciende_a_ciegas():
     """Los generados antes de este cambio no traen el campo. El lado seguro es apagado."""
     filas = vip.filas_de_config([_jug("a")])
     assert filas[0]["es_vip"] is False
+
+
+# --- LA HUERFANA QUE SOBREVIVE AL DEPLOY ------------------------------------
+#
+# CASO REAL, reportado desde produccion: `brysuye` seguia alertando como "Cristhian Oleas"
+# DESPUES de subir el arreglo. No era que faltara desplegar:
+#
+#   1. el primer deploy metio el vinculo malo en `vip_players`
+#   2. el arreglo lo saco DEL CONFIG
+#   3. al redeployar, la siembra hace `ON CONFLICT DO NOTHING` -> no toca la fila vieja,
+#      y como ya no esta en el config, nadie la corrige NUNCA
+#
+# "No pisar" protege lo que alguien apago a mano. Pero una fila que el config RETIRO no es
+# una decision de nadie: es un vinculo RETRACTADO, y dejarlo prendido manda alertas malas.
+
+def test_la_siembra_BORRA_los_vinculos_que_el_config_retiro():
+    """Solo de los usernames que el config SIGUE trayendo: si `brysuye` esta en el archivo
+    apuntando a un contacto, cualquier otra fila suya quedo retractada."""
+    cur = _FakeCursor(rows=[(1,)])
+    vip.seed_from_config(cur, [_jug("brysuye", contactos=[
+        {"contact_id": "bueno", "account": "sistemas"}])])
+    junto = " ".join(cur.sql)
+    assert "DELETE FROM vip_players" in junto
+    assert "username" in junto and "contact_id" in junto
+
+
+def test_NO_toca_los_usernames_que_el_config_no_menciona():
+    """Alguien pudo agregar un VIP a mano. Si el config no habla de el, no opinamos."""
+    cur = _FakeCursor(rows=[(1,)])
+    vip.seed_from_config(cur, [_jug("a", contactos=[{"contact_id": "c1", "account": "sistemas"}])])
+    borrado = [p for s, p in zip(cur.sql, cur.params) if "DELETE" in s]
+    assert borrado and borrado[0][0] == ["a"], "el DELETE se acota a los usernames del config"
+
+
+def test_el_apagado_a_mano_SIGUE_sobreviviendo():
+    """Lo que se borra es la fila RETIRADA del config, no la que el config trae y alguien
+    apago. Esa sigue protegida por el ON CONFLICT DO NOTHING."""
+    cur = _FakeCursor(rows=[(1,)])
+    vip.seed_from_config(cur, [_jug()])
+    junto = " ".join(cur.sql)
+    assert "DO NOTHING" in junto and "DO UPDATE" not in junto

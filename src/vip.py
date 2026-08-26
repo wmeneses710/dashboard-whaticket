@@ -355,6 +355,19 @@ def seed_from_config(cur, jugadores: list[dict]) -> tuple[int, int]:
         return 0, 0
     vivos = contactos_que_existen(cur, [(f["account"], f["contact_id"]) for f in filas])
     cur.executemany(_SEED, filas)
+    # BORRA LO QUE EL CONFIG RETIRO, y solo eso. CASO REAL: `brysuye` seguia alertando
+    # como "Cristhian Oleas" despues de subir el arreglo, porque el `ON CONFLICT DO
+    # NOTHING` no toca una fila que ya existe y el config ya no la nombraba: quedaba
+    # HUERFANA y encendida para siempre.
+    # "No pisar" protege lo que alguien apago A MANO. Una fila que el config RETIRO no es
+    # la decision de nadie: es un vinculo retractado, y dejarlo prendido manda alertas
+    # malas. Se acota a los usernames que el config SIGUE trayendo -- de los que no
+    # menciona no opinamos, porque pudieron agregarse a mano.
+    cur.execute(
+        "DELETE FROM vip_players WHERE username = ANY(%s) "
+        "AND (account, contact_id) <> ALL(SELECT unnest(%s::text[]), unnest(%s::text[]))",
+        (sorted({f["username"] for f in filas}),
+         [f["account"] for f in filas], [f["contact_id"] for f in filas]))
     return len(filas), vivos
 
 
