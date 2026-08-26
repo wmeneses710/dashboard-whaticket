@@ -72,6 +72,22 @@ UMBRAL_ESPERA_SEGUNDOS = 900
 # y va igual porque es gratis y hace la alerta defendible.
 PRORROGA_SEGUNDOS = 300
 
+# LAS DOS VENTANAS, y son distintas a proposito. El negocio lo dijo asi: "no me importan
+# los de ayer, solo alertar a los de ahora".
+#
+#   RESUMEN: un resumen viejo NO es noticia. La conversacion cerro, la nota esta puesta y
+#   el tablero la tiene. Dos horas alcanzan de sobra como red por si el worker se
+#   reinicio; mas que eso es replicar historia. (Era un DIA, y con el ledger vacio eso
+#   son 155 mensajes de golpe.)
+#
+#   ESPERA: una espera vieja SIGUE ABIERTA -- el cliente continua sin respuesta, asi que
+#   todavia es un problema de AHORA. Ademas el ETL tarda p90 2 h en traernos el mensaje
+#   del cliente: una ventana corta perderia justo las esperas largas, que son las unicas
+#   que este pipeline logra ver a tiempo. Lo que la acota de verdad no es el numero, es
+#   `en_horario` (a las 04:00 nadie trabaja) y el ledger.
+VENTANA_RESUMEN_HORAS = 2
+VENTANA_ESPERA_HORAS = 48
+
 # El tipo del ledger para la PRIMERA observacion. No es una alerta: es la anotacion que
 # permite confirmarla en la siguiente pasada.
 TIPO_VISTA = "espera_vista"
@@ -176,6 +192,15 @@ def ensure_table(cur) -> None:
     for stmt in _CREATE_STMTS:
         cur.execute(stmt)
     ensure_vip(cur)
+
+
+def ledger_vacio(cur, account: str) -> bool:
+    """No hay rastro de ninguna alerta de esta cuenta: es el PRIMER arranque."""
+    cur.execute("SELECT count(*) FROM alertas_enviadas WHERE account = %s", (account,))
+    fila = cur.fetchone()
+    # Sin fila es lo mismo que sin rastro: se trata como primer arranque, que es el lado
+    # seguro -- siembra y no manda.
+    return not fila or fila[0] == 0
 
 
 def clave_espera(ticket_id: str, ultimo_cliente_at: datetime) -> str:
@@ -309,7 +334,7 @@ WITH ultimo AS (
       AND t.closed_at IS NULL
       AND NOT coalesce(t.is_group, false)
       AND coalesce(m.is_note, false) = false
-      AND m.created_at > now() - interval '2 days'
+      AND m.created_at > now() - make_interval(hours => %(ventana_h)s)
     ORDER BY m.ticket_id, m.created_at DESC
 )
 SELECT u.ticket_id::text AS ticket_id,
@@ -317,12 +342,18 @@ SELECT u.ticket_id::text AS ticket_id,
        v.username, v.ranking, v.agencia,
        v.motivo           AS motivo_vip,
        q.name             AS queue,
-       usr.name           AS operador
+       usr.name           AS operador,
+       -- LA LLAVE PARA BUSCAR EN EL TABLERO. El buscador matchea `contacts.name`,
+       -- `contacts.number` y el operador ("cliente u operador..."): por el `username` del
+       -- CASINO no se puede buscar. Y la cuenta dice cual de los dos tableros abrir.
+       ct.name            AS cliente,
+       t.account          AS account
 FROM ultimo u
 JOIN tickets t   ON t.id = u.ticket_id
 JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
-LEFT JOIN queues q  ON q.id = t.queue_id
-LEFT JOIN users usr ON usr.id = t.user_id
+LEFT JOIN queues q   ON q.id = t.queue_id
+LEFT JOIN users usr  ON usr.id = t.user_id
+LEFT JOIN contacts ct ON ct.id = t.contact_id
 WHERE u.from_me = false
 """
 
@@ -340,9 +371,13 @@ SELECT cs.conversation_id::text AS session_id,
        v.motivo         AS motivo_vip,
        cs.user_name     AS operador,
        cs.motivo        AS motivo,
-       cs.stars, cs.first_response_seconds, cs.resolution_seconds
+       cs.stars, cs.first_response_seconds, cs.resolution_seconds,
+       -- Ver la nota de `_ESPERA_SQL`: por el `username` del casino no se busca.
+       ct.name          AS cliente,
+       cs.account       AS account
 FROM conversation_scores cs
-JOIN tickets t     ON t.id = cs.ticket_id
+JOIN tickets t      ON t.id = cs.ticket_id
+LEFT JOIN contacts ct ON ct.id = t.contact_id
 JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = cs.account
 LEFT JOIN alertas_enviadas a
        ON a.account = cs.account AND a.tipo = 'resumen'
@@ -351,7 +386,7 @@ WHERE v.es_vip
   AND cs.account = %(account)s
   AND a.clave IS NULL
   AND cs.eval_status = 'evaluated'
-  AND cs.scored_at > now() - interval '1 day'
+  AND cs.scored_at > now() - make_interval(hours => %(ventana_h)s)
 """
 
 
@@ -367,13 +402,13 @@ def candidatos_espera(cur, account: str) -> list[dict]:
     codigo de produccion y sabe descontar la noche. Reimplementar esa resta en SQL seria
     una segunda version del contrato.
     """
-    cur.execute(_ESPERA_SQL, {"account": account})
+    cur.execute(_ESPERA_SQL, {"account": account, "ventana_h": VENTANA_ESPERA_HORAS})
     return _dicts(cur)
 
 
 def resumenes_pendientes(cur, account: str) -> list[dict]:
     """Sesiones VIP ya calificadas que todavia no se avisaron."""
-    cur.execute(_RESUMEN_SQL, {"account": account})
+    cur.execute(_RESUMEN_SQL, {"account": account, "ventana_h": VENTANA_RESUMEN_HORAS})
     return _dicts(cur)
 
 
@@ -420,6 +455,18 @@ def _quien(v) -> str:
     return _esc(str(v).strip()) if v not in (None, "") else "sin asignar"
 
 
+def _buscar_en(d: dict) -> str:
+    """La linea con que ABRIR el caso: el nombre entre comillas y la cuenta.
+
+    ENTRECOMILLADO a proposito: es lo que se pega tal cual en el buscador del tablero. Un
+    contacto sin nombre no imprime comillas vacias --no sirven para buscar nada-- pero la
+    cuenta va igual, porque sin ella no se sabe cual de los dos tableros abrir.
+    """
+    cli = (d.get("cliente") or "").strip()
+    nombre = f'"{_esc(cli)}" · ' if cli else ""
+    return f"🔎 {nombre}cuenta {_esc(d.get('account') or _SIN_DATO)}"
+
+
 def _titulo(d: dict) -> str:
     puesto = f" #{_esc(d['ranking'])}" if d.get("ranking") else ""
     agencia = f" · {_esc(d['agencia'])}" if d.get("agencia") else ""
@@ -445,6 +492,7 @@ def mensaje_espera(d: dict) -> str:
     cuerpo = [
         f"👤 <b>{_esc(d.get('username') or _SIN_DATO)}</b>"
         f"  <code>#{_esc(d.get('ranking') or '?')}</code>  {_esc(d.get('agencia') or _SIN_DATO)}",
+        _buscar_en(d),
         f"📋 {_quien(d.get('queue'))} · 🧑‍💼 {_quien(d.get('operador'))}",
     ]
     if isinstance(hora, datetime):
@@ -478,6 +526,7 @@ def mensaje_resumen(d: dict) -> str:
         "",
         f"👤 <b>{_esc(d.get('username') or _SIN_DATO)}</b>"
         f"  <code>#{_esc(d.get('ranking') or '?')}</code>  {_esc(d.get('agencia') or _SIN_DATO)}",
+        _buscar_en(d),
         f"🧑‍💼 {_quien(d.get('operador'))} · 📌 {_esc(d.get('motivo') or _SIN_DATO)}",
         f"{_estrellas(estrellas)}  {nota}",
         f"⏱ 1ª respuesta {duracion(d.get('first_response_seconds'))}"
@@ -491,7 +540,7 @@ def mensaje_resumen(d: dict) -> str:
 def barrer(conn, account: str, canal: Canal,
            ahora: datetime | None = None,
            umbral_segundos: int = UMBRAL_ESPERA_SEGUNDOS,
-           log=None) -> dict:
+           log=None, ledger_vacio_=None) -> dict:
     """Un ciclo de alertas de UNA cuenta. Devuelve `{"espera": n, "resumen": n}`.
 
     EL ORDEN DE CADA ALERTA ES: marcar primero, mandar despues. Al reves, un fallo de red
@@ -506,7 +555,7 @@ def barrer(conn, account: str, canal: Canal,
     # ciclo fallaban, esto daba {espera:0, resumen:0}, que es lo MISMO que devuelve un dia
     # tranquilo. El worker solo loguea cuando hay algo, asi que un canal caido se veia
     # identico a que no hubiera pasado nada.
-    hecho = {"espera": 0, "resumen": 0, "fallos": 0}
+    hecho = {"espera": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
     # El worker escribe con timestamp por `emit`; el `logger` de la libreria sale por
     # stderr sin hora ni nombre y en un log de contenedor mezclado con uvicorn no se
     # rastrea. Con el `log` inyectado la falla aparece en la misma corriente que el resto.
@@ -518,6 +567,13 @@ def barrer(conn, account: str, canal: Canal,
             # escribieron los timestamps que vamos a restar.
             if ahora is None:
                 ahora = ahora_de_la_base(cur)
+            # EL PRIMER ARRANQUE NO REPLICA HISTORIA. El despliegue sube el codigo con el
+            # token VACIO, asi que el ledger llega vacio al momento de encender, y la
+            # consulta de resumen mira 24 h atras. MEDIDO: 0 en 24 h sobre la copia pero
+            # **155 con ventana de 72 h** -- en produccion, poner el token dispararia el
+            # backlog entero de un saque y el canal nace quemado. Un canal de alertas
+            # arranca en AHORA: la primera pasada SIEMBRA el ledger sin mandar nada.
+            primera = ledger_vacio(cur, account) if ledger_vacio_ is None else ledger_vacio_
         conn.commit()
 
         # ESPERA. La compuerta del horario va ANTES de la consulta: un barrido cada 60 s
@@ -537,6 +593,9 @@ def barrer(conn, account: str, canal: Canal,
                     nueva = marcar_enviada(cur, account, "espera", clave)
                 conn.commit()
                 if not nueva:
+                    continue
+                if primera:
+                    hecho["sembrados"] += 1
                     continue
                 estado = canal.enviar(mensaje_espera(c))
                 if estado == OK:
@@ -560,6 +619,9 @@ def barrer(conn, account: str, canal: Canal,
                 conn.commit()
                 if not nueva:
                     continue
+                if primera:
+                    hecho["sembrados"] += 1
+                    continue
                 estado = canal.enviar(mensaje_resumen(r))
                 if estado == OK:
                     hecho["resumen"] += 1
@@ -571,6 +633,9 @@ def barrer(conn, account: str, canal: Canal,
                         desmarcar(cur, account, "resumen", clave_resumen(r["session_id"]))
                     conn.commit()
                 time.sleep(THROTTLE_SEGUNDOS)
+        if primera and hecho["sembrados"]:
+            decir(f"[alertas] {account}: PRIMER arranque, {hecho['sembrados']} del backlog "
+                  f"quedan marcados SIN enviar. Desde el proximo ciclo se avisa lo nuevo.")
     except Exception as e:  # noqa: BLE001 - el scoring es el producto, la alerta es el aviso
         hecho["fallos"] += 1
         decir(f"[alertas] barrido {account} ROTO: {type(e).__name__}: {e}")

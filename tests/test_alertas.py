@@ -282,7 +282,7 @@ def test_el_barrido_no_manda_nada_si_el_canal_esta_apagado(monkeypatch):
     conn = _ConnFalsa(cur)
     r = alertas.barrer(conn, "sistemas", alertas.Canal("", ""),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert r == {"espera": 0, "resumen": 0, "fallos": 0}
+    assert r == {"espera": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
     assert llamadas == [], "un canal apagado no tiene que pegarle a la red"
     assert not any("INSERT INTO alertas_enviadas" in s for s in cur.sql), \
         "y tampoco puede marcar como enviada una alerta que nunca salio"
@@ -536,3 +536,103 @@ def test_barrer_acepta_un_log_para_hablar_por_el_mismo_canal_que_el_worker(monke
     alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                    ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ), log=dichos.append)
     assert any("400" in d or "descarta" in d.lower() for d in dichos), dichos
+
+
+# --- EL PRIMER ARRANQUE NO REPLICA HISTORIA ---------------------------------
+#
+# El despliegue va: subir el codigo con el token VACIO, y encender despues. Con el canal
+# apagado `barrer` no marca nada, asi que el ledger llega VACIO al momento de encender --
+# y la consulta de resumen mira 24 h hacia atras. Medido sobre la copia: 0 en 24 h pero
+# **155 con ventana de 72 h**. En produccion, donde el scoring corre todo el dia, poner el
+# token dispararia el backlog entero de un saque.
+#
+# Un canal de alertas arranca en AHORA, no replica lo que ya paso. La primera pasada
+# SIEMBRA el ledger sin mandar nada; desde la segunda, solo lo nuevo.
+
+def test_el_PRIMER_barrido_siembra_el_ledger_y_NO_manda(monkeypatch):
+    enviados = []
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: (
+        enviados.append(1), type("R", (), {"status_code": 200, "text": ""})())[1])
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _FakeCursor(rows=[("s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
+    cur.rowcount = 1
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ), ledger_vacio_=True)
+    assert enviados == [], "el backlog no se replica al encender"
+    assert r["sembrados"] == 1
+    assert "INSERT INTO alertas_enviadas" in " ".join(cur.sql), "pero SI queda marcado"
+
+
+def test_saber_si_el_ledger_esta_vacio():
+    cur = _FakeCursor(rows=[(0,)])
+    assert alertas.ledger_vacio(cur, "sistemas") is True
+    cur2 = _FakeCursor(rows=[(31,)])
+    assert alertas.ledger_vacio(cur2, "sistemas") is False
+
+
+# --- SOLO LO DE AHORA -------------------------------------------------------
+
+def test_las_dos_ventanas_son_constantes_con_nombre():
+    """El negocio lo dijo claro: "no me importan los de ayer, solo alertar a los de ahora".
+    Las ventanas no pueden estar enterradas en un string de SQL."""
+    assert alertas.VENTANA_RESUMEN_HORAS <= 4, "un resumen viejo ya no es noticia"
+    # `make_interval` y no `interval '...'`: el parametro dentro de un literal SQL no se
+    # sustituye de forma confiable y quedaria un intervalo roto en runtime.
+    for sql in (alertas._RESUMEN_SQL, alertas._ESPERA_SQL):
+        assert "make_interval(hours => %(ventana_h)s)" in sql
+
+
+def test_la_ventana_de_ESPERA_es_mas_larga_a_proposito():
+    """Un resumen viejo no es noticia; una ESPERA vieja sigue abierta -- el cliente todavia
+    esta sin respuesta. Son preguntas distintas y por eso los numeros son distintos."""
+    assert alertas.VENTANA_ESPERA_HORAS > alertas.VENTANA_RESUMEN_HORAS
+
+
+# --- LA LLAVE PARA BUSCAR EN EL TABLERO -------------------------------------
+#
+# El `username` es del CASINO y en el tablero NO se puede buscar por el: el buscador
+# matchea `contacts.name`, `contacts.number` y el nombre del operador ("cliente u
+# operador…"). Sin el nombre del contacto, el que lee la alerta sabe QUIEN es pero no
+# tiene con que abrirlo. Y sin la cuenta no sabe en cual de los dos tableros mirar.
+
+def test_la_ALERTA_trae_con_que_buscar_en_el_tablero():
+    a = alertas.mensaje_espera({"username": "quirozsabando", "ranking": 1, "agencia": "A",
+                                "motivo_vip": "M", "operador": "O", "queue": "Q",
+                                "espera_segundos": 400, "cliente": "Juan Pérez",
+                                "account": "sistemas"})
+    assert '"Juan Pérez"' in a, "entrecomillado: es lo que se pega en el buscador"
+    assert "sistemas" in a
+
+
+def test_el_RESUMEN_tambien():
+    r = alertas.mensaje_resumen({"username": "u", "ranking": 1, "agencia": "A",
+                                 "motivo_vip": "M", "operador": "O", "motivo": "deposito",
+                                 "stars": 4, "first_response_seconds": 10,
+                                 "resolution_seconds": 20, "cliente": "Ana Gómez",
+                                 "account": "datos"})
+    assert '"Ana Gómez"' in r and "datos" in r
+
+
+def test_un_contacto_SIN_nombre_no_imprime_comillas_vacias():
+    """Hay contactos sin `name`. Una linea con `""` no sirve para buscar nada."""
+    for f in (alertas.mensaje_espera, alertas.mensaje_resumen):
+        t = f({"username": "u", "ranking": 1, "agencia": "A", "motivo_vip": "M",
+               "operador": "O", "motivo": "d", "stars": 3, "espera_segundos": 400,
+               "first_response_seconds": 1, "resolution_seconds": 2,
+               "cliente": None, "account": "sistemas"})
+        assert '""' not in t and "None" not in t
+        assert "sistemas" in t, "la cuenta va igual: sin ella no se sabe que tablero abrir"
+
+
+def test_el_nombre_del_cliente_se_ESCAPA():
+    """Viene del CRM: lo escribe quien quiera."""
+    t = alertas.mensaje_espera({"username": "u", "ranking": 1, "agencia": "A",
+                                "motivo_vip": "M", "operador": "O", "queue": "Q",
+                                "espera_segundos": 400, "cliente": "A & <b>B</b>",
+                                "account": "sistemas"})
+    assert "&amp;" in t and "&lt;b&gt;" in t
+
+
+def test_las_consultas_TRAEN_el_nombre_y_la_cuenta():
+    for sql in (alertas._ESPERA_SQL, alertas._RESUMEN_SQL):
+        assert "AS cliente" in sql and "AS account" in sql
