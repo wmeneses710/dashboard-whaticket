@@ -381,6 +381,7 @@ SELECT cs.conversation_id::text AS session_id,
        cs.user_name     AS operador,
        cs.motivo        AS motivo,
        cs.stars, cs.first_response_seconds, cs.resolution_seconds,
+       cs.segment       AS segment,
        -- Ver la nota de `_ESPERA_SQL`: por el `username` del casino no se busca.
        ct.name          AS cliente,
        cs.account       AS account
@@ -526,6 +527,19 @@ def _estrellas(v) -> str:
     return "★" * n + "☆" * (5 - n)
 
 
+# QUE SE DICE CUANDO NO HAY `motivo`. No es un dato faltante: el motivo (deposito, retiro,
+# registro) es de la rubrica del JUGADOR, y a un agente se lo juzga con otra. Poner "N/D"
+# hace pensar en un bug -- se vio en una alerta real de produccion.
+_PARA_QUE_SIN_MOTIVO = {"agente": "atención a agente", "interno": "consulta interna"}
+
+
+def _para_que(d: dict) -> str:
+    motivo = (d.get("motivo") or "").strip()
+    if motivo:
+        return _esc(motivo)
+    return _esc(_PARA_QUE_SIN_MOTIVO.get(d.get("segment"), "sin clasificar"))
+
+
 def mensaje_resumen(d: dict) -> str:
     """RESUMEN. Es un REGISTRO: se lee sin apuro y no pide hacer nada.
 
@@ -541,7 +555,7 @@ def mensaje_resumen(d: dict) -> str:
         f"👤 <b>{_esc(d.get('username') or _SIN_DATO)}</b>"
         f"  <code>#{_esc(d.get('ranking') or '?')}</code>  {_esc(d.get('agencia') or _SIN_DATO)}",
         _buscar_en(d),
-        f"🧑‍💼 {_quien(d.get('operador'))} · 📌 {_esc(d.get('motivo') or _SIN_DATO)}",
+        f"🧑‍💼 {_quien(d.get('operador'))} · 📌 {_para_que(d)}",
         f"{_estrellas(estrellas)}  {nota}",
         f"⏱ 1ª respuesta {duracion(d.get('first_response_seconds'))}"
         f" · duró {duracion(d.get('resolution_seconds'))}",

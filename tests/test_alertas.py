@@ -659,3 +659,38 @@ def test_la_ventana_de_la_conversacion_es_mas_ancha_que_la_del_scoreo():
     siendo noticia. Lo que no puede pasar es que una de marzo cuente como de hoy."""
     assert alertas.VENTANA_CHARLA_HORAS > alertas.VENTANA_RESUMEN_HORAS
     assert alertas.VENTANA_CHARLA_HORAS <= 48
+
+
+# --- EL `N/D` DEL MOTIVO ----------------------------------------------------
+#
+# VISTO EN UNA ALERTA REAL de produccion: `📌 N/D`. El 10,2% de las sesiones evaluadas no
+# tiene `motivo`, y **185 de esas 299 son del segmento `agente`**: el motivo (deposito,
+# retiro, registro) es de la rubrica del JUGADOR, y a un agente se lo juzga con otra. No
+# es un dato faltante, es una pregunta que no aplica -- y "N/D" hace pensar en un bug.
+
+def test_sin_motivo_se_dice_el_SEGMENTO_en_vez_de_N_D():
+    r = alertas.mensaje_resumen({"username": "u", "ranking": 1, "agencia": "A",
+                                 "motivo_vip": "M", "operador": "O", "motivo": None,
+                                 "segment": "agente", "stars": 4, "account": "sistemas",
+                                 "first_response_seconds": 10, "resolution_seconds": 20})
+    assert "N/D" not in r and "atención a agente" in r
+
+
+def test_un_jugador_sin_motivo_dice_sin_clasificar():
+    r = alertas.mensaje_resumen({"username": "u", "ranking": 1, "agencia": "A",
+                                 "motivo_vip": "M", "operador": "O", "motivo": None,
+                                 "segment": "jugador", "stars": 4, "account": "sistemas",
+                                 "first_response_seconds": 10, "resolution_seconds": 20})
+    assert "sin clasificar" in r and "N/D" not in r
+
+
+def test_con_motivo_manda_el_motivo():
+    r = alertas.mensaje_resumen({"username": "u", "ranking": 1, "agencia": "A",
+                                 "motivo_vip": "M", "operador": "O", "motivo": "deposito",
+                                 "segment": "agente", "stars": 4,
+                                 "first_response_seconds": 10, "resolution_seconds": 20})
+    assert "deposito" in r and "agente" not in r
+
+
+def test_la_consulta_trae_el_segmento():
+    assert "cs.segment" in alertas._RESUMEN_SQL
