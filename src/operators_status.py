@@ -59,29 +59,66 @@ _CREATE_STMTS = (
     "ON operator_status (account) WHERE activo = false",
 )
 
-_SEED = """
+# LA MISMA CLAVE QUE LA LECTURA. La PK es `(account, operator_name)` — el string EXACTO —
+# pero los cuatro puntos de lectura comparan por CLAVE (minusculas, sin tildes) desde el
+# 2026-08-07. Escribir por la PK y leer por la clave no falla: MIENTE.
+#
+# Medido en produccion el 2026-08-27: la tabla tenia 'RAMIREZ' (sembrado el 06-ago del dump
+# del 04-ago) y el modal mandaba 'Ramirez' (el nombre RESUELTO, que sale de users.name).
+# `ON CONFLICT` no matcheaba, insertaba una SEGUNDA fila, y como `_ADMIN_ROWS` hace
+# `coalesce(bool_and(os.activo), true)` sobre el join por clave, matcheaba las dos:
+# `false AND true = false`. El PUT devolvia 200 {"actualizados": 1} y el operador NO se
+# prendia NUNCA. Ramirez tenia 222 sesiones recientes y actividad ese mismo dia.
+#
+# Se compara por clave en vez de renombrar las filas, por el mismo motivo que en la lectura:
+# renombrar arregla el caso de hoy y deja la trampa armada para la proxima grafia.
+_CLAVE_FILA = clave_sql("operator_name")
+_CLAVE_ARG = clave_sql("%(operador)s")
+
+# Siembra del arranque: NO PISA. Antes se apoyaba en `ON CONFLICT DO NOTHING`, que mira la
+# PK exacta — asi que con una grafia distinta re-insertaba la fila apagada en CADA arranque
+# del contenedor y deshacia el cambio hecho desde la UI en el siguiente deploy.
+_SEED = f"""
 INSERT INTO operator_status (account, operator_name, activo, updated_by)
-VALUES (%s, %s, %s, %s)
-ON CONFLICT (account, operator_name) DO NOTHING
+SELECT %(account)s, %(operador)s, %(activo)s, %(updated_by)s
+ WHERE NOT EXISTS (
+   SELECT 1 FROM operator_status
+    WHERE account = %(account)s AND {_CLAVE_FILA} = {_CLAVE_ARG}
+ )
 """
 
-_APPLY = """
+# Escritura del modal y de `--pisar`. ACTUALIZA todo lo que matchee por clave (en plural: si
+# ya quedaron dos filas duplicadas de antes, las dos tienen que terminar iguales, porque el
+# `bool_and` de la lectura se apaga con que UNA siga en false) e INSERTA solo si no habia
+# nada. Sin `LIMIT`: alcanzar una sola fila dejaria a la otra apagando.
+_APPLY = f"""
+WITH tocadas AS (
+  UPDATE operator_status
+     SET activo = %(activo)s, updated_by = %(updated_by)s, updated_at = now()
+   WHERE account = %(account)s AND {_CLAVE_FILA} = {_CLAVE_ARG}
+  RETURNING 1
+)
 INSERT INTO operator_status (account, operator_name, activo, updated_by)
-VALUES (%s, %s, %s, %s)
-ON CONFLICT (account, operator_name) DO UPDATE
-   SET activo = EXCLUDED.activo,
-       updated_by = EXCLUDED.updated_by,
-       updated_at = now()
+SELECT %(account)s, %(operador)s, %(activo)s, %(updated_by)s
+ WHERE NOT EXISTS (SELECT 1 FROM tocadas)
 """
 
-# Segunda mitad de `--pisar`: prende a los que ya no figuran en el archivo. `= ANY(...)`
-# con lista vacía es FALSE para toda fila, así que un archivo sin apagados reactiva a todos
-# los de esa cuenta — que es exactamente lo que pidió.
-_REACTIVAR = """
+# Segunda mitad de `--pisar`: prende a los que ya no figuran en el archivo. Con lista vacía
+# el NOT EXISTS es verdadero para toda fila, así que un archivo sin apagados reactiva a
+# todos los de esa cuenta — que es exactamente lo que pidió, y la misma semántica que tenía
+# el `= ANY(...)` de antes.
+#
+# Compara por CLAVE, como las otras dos escrituras: con string exacto, una grafía distinta
+# saca al operador de la lista de "mantener apagado" y lo PRENDE sin que nadie lo pida. Es
+# el error simétrico del de `_APPLY` y es igual de silencioso.
+_REACTIVAR = f"""
 UPDATE operator_status
    SET activo = true, updated_by = %(updated_by)s, updated_at = now()
  WHERE account = %(account)s AND activo = false
-   AND NOT (operator_name = ANY(%(mantener_apagados)s))
+   AND NOT EXISTS (
+         SELECT 1 FROM unnest(%(mantener_apagados)s::text[]) AS m
+          WHERE {clave_sql("m")} = {_CLAVE_FILA}
+       )
 """
 
 # Se consultan los APAGADOS, no los activos: ver el docstring del módulo (default = activo).
@@ -195,10 +232,21 @@ def dump_config(cur, criterio: str = "", generado_en: str = "") -> dict:
 
 # --- BD ---------------------------------------------------------------------
 
+def _params(filas, updated_by: str) -> list[dict]:
+    """(cuenta, operador, activo) -> los parámetros con nombre que esperan las escrituras.
+
+    Con nombre y no posicionales: las tres consultas repiten `account` y `operador` en dos
+    lugares (el match por clave y el INSERT), y con `%s` posicional eso se convierte en
+    contar placeholders a mano — que es exactamente el tipo de error que este módulo ya pagó.
+    """
+    return [{"account": c, "operador": o, "activo": a, "updated_by": updated_by}
+            for c, o, a in filas]
+
+
 def seed_from_config(cur, cfg: dict, updated_by: str = "seed:config") -> int:
-    """Siembra SIN pisar (ON CONFLICT DO NOTHING). Es lo que corre al arrancar el
-    contenedor: llena huecos y respeta cualquier cambio hecho desde la UI."""
-    filas = [(c, o, a, updated_by) for c, o, a in config_rows(cfg)]
+    """Siembra SIN pisar. Es lo que corre al arrancar el contenedor: llena huecos y respeta
+    cualquier cambio hecho desde la UI — incluido el hecho sobre otra grafía del nombre."""
+    filas = _params(config_rows(cfg), updated_by)
     if filas:
         cur.executemany(_SEED, filas)
     return len(filas)
@@ -214,7 +262,7 @@ def apply_config(cur, cfg: dict, updated_by: str = "script:load") -> int:
     Sin la segunda, sacar a alguien de la lista no tendría efecto y el archivo mentiría.
     Solo se tocan las cuentas que el archivo menciona: una cuenta ausente se deja intacta.
     """
-    filas = [(c, o, a, updated_by) for c, o, a in config_rows(cfg)]
+    filas = _params(config_rows(cfg), updated_by)
     if filas:
         cur.executemany(_APPLY, filas)
     for cuenta in config_accounts(cfg):
@@ -314,7 +362,7 @@ def admin_rows(cur, account: str, dias: int = 30) -> list[dict]:
 def set_many(cur, account: str, pares, updated_by: str = "ui") -> int:
     """Aplica una tanda de (operador, activo) de UNA cuenta. Lo usa el PUT del modal: se
     guarda todo junto, no de a uno, para que no quede a medias si se corta."""
-    filas = [(account, nombre, bool(activo), updated_by) for nombre, activo in pares]
+    filas = _params(((account, nombre, bool(activo)) for nombre, activo in pares), updated_by)
     if filas:
         cur.executemany(_APPLY, filas)
     return len(filas)

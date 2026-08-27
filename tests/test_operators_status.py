@@ -128,8 +128,14 @@ def test_seed_from_config_NO_pisa_lo_que_ya_esta_en_la_bd():
     cfg = {"apagados": {"datos": [{"operador": "Kathya", "comentario": ""}]}}
     seed_from_config(cur, cfg)
     sql, params = cur.executed[-1]
-    assert "ON CONFLICT (account, operator_name) DO NOTHING" in sql
-    assert params == [("datos", "Kathya", False, "seed:config")]
+    # "No pisa" = inserta SOLO si no hay ya una fila para esa persona. Se afirma el
+    # CONTRATO y no la sintaxis: dejó de ser `ON CONFLICT DO NOTHING` (que mira la PK
+    # exacta y por eso re-sembraba la grafía vieja en cada arranque) y pasó a ser un
+    # INSERT guardado por un NOT EXISTS que compara por clave. Ver test_apagar_operador.py.
+    assert "WHERE NOT EXISTS" in sql
+    assert "UPDATE operator_status" not in sql, "la semilla del arranque NO puede pisar"
+    assert params == [{"account": "datos", "operador": "Kathya",
+                       "activo": False, "updated_by": "seed:config"}]
 
 
 def test_apply_config_pisa_Y_reactiva_a_los_que_no_estan_en_el_archivo():
@@ -140,8 +146,10 @@ def test_apply_config_pisa_Y_reactiva_a_los_que_no_estan_en_el_archivo():
     cfg = {"apagados": {"datos": [{"operador": "Kathya", "comentario": ""}]}}
     apply_config(cur, cfg, updated_by="script:load")
     sqls = [q for q, _ in cur.executed]
-    # apaga a los listados...
-    assert any("DO UPDATE" in q and "activo = EXCLUDED.activo" in q for q in sqls)
+    # apaga a los listados... (el contrato, no la sintaxis: `ON CONFLICT DO UPDATE` miraba
+    # la PK exacta y creaba una fila duplicada cuando la grafía no coincidía)
+    assert any("UPDATE operator_status" in q and "SET activo = %(activo)s" in q
+               for q in sqls), "falta el UPDATE que apaga a los listados"
     # ...y reactiva al resto DE ESA CUENTA (nunca de una cuenta ausente del archivo)
     reactiva = [(q, p) for q, p in cur.executed if "activo = true" in q]
     assert reactiva, "falta el UPDATE que reactiva a los no listados"
