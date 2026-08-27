@@ -666,3 +666,66 @@ def test_la_nota_no_se_rotula_como_operador():
     m = re.search(r"function bubAuthor\(m\) \{(.*?)\n", html, re.S)
     assert m, "cambio bubAuthor, revisar este test"
     assert "SISTEMA" in m.group(1), "la nota se rotularia 'Operador'"
+
+
+def test_el_modal_se_abre_por_INTERACCION_y_no_por_conversacion():
+    """Grano interaccion (2026-08-27): con N notas por charla, abrir por `conversation_id`
+    muestra una cualquiera de las N."""
+    from pathlib import Path
+    html = Path("web/index.html").read_text(encoding="utf-8")
+    assert "openModal(cv.interaccion_id)" in html, (
+        "el front sigue abriendo por conversacion: la fila que se clickea y la nota que se "
+        "muestra pueden ser de operadores distintos"
+    )
+
+
+# --- LA UI DESPUES DEL GRANO INTERACCION (2026-08-27) ------------------------
+#
+# El chip "N operadores en esta sesión" era una ADVERTENCIA: avisaba que la nota describia
+# un tramo y tapaba el trabajo de los demas. Su ayuda lo decia con todas las letras --
+# "describe UN tramo y no el trabajo de todos" -- citando que no se podia repartir sin
+# partir la sesion.
+#
+# Ahora SE REPARTE: cada atencion tiene su fila y su operador. Dejar ese texto es peor que
+# no tener chip, porque le dice al supervisor que desconfie de un numero que ya es correcto.
+
+def _html():
+    from pathlib import Path
+    return Path("web/index.html").read_text(encoding="utf-8")
+
+
+def test_la_ayuda_ya_no_dice_que_la_nota_tapa_el_trabajo_de_otros():
+    # `varios_operadores: "` con espacio: el otro (`varios_operadores:"`) es la etiqueta
+    # corta de AYUDA_TITULO y aparece ANTES. Sin el espacio el test lee el texto equivocado
+    # y pasa en verde sin haber mirado nada -- paso al escribirlo.
+    ayuda = _html().split('varios_operadores: "', 1)[1].split('",', 1)[0]
+    for mentira in ("no el trabajo de todos", "no figura en esta fila",
+                    "quien más mensajes escribió"):
+        assert mentira not in ayuda, (
+            f"la ayuda sigue declarando una limitacion que ya no existe: {mentira!r}"
+        )
+
+
+def test_el_modal_dice_DE_CUAL_atencion_es_la_nota():
+    """Con N filas del mismo cliente, sin el numero de atencion el que mira no puede saber
+    cual de las cuatro esta abriendo."""
+    html = _html()
+    assert "interaccion_seq" in html, (
+        "el modal no muestra de que atencion es la fila: cuatro notas del mismo cliente se "
+        "ven identicas"
+    )
+
+
+def test_el_modal_no_se_abre_nunca_con_un_id_vacio():
+    """`GET /api/conversation/undefined` -> 500, visto en el front durante el rescore.
+
+    El drill NO se cambia a interaccion: apunta a una CONVERSACION de verdad (la de entrada
+    de un cliente, `player_conversions.first_conversation_id`), y el endpoint la acepta. Lo
+    que faltaba es la guarda: una fila sin id no tiene que llegar a pedir nada.
+    """
+    html = _html()
+    i = html.index("async function openModal(")
+    cuerpo = html[i:i + 400]
+    assert "if (!id)" in cuerpo or "if(!id)" in cuerpo, (
+        "openModal no se protege de un id vacio: manda 'undefined' al servidor"
+    )

@@ -820,8 +820,8 @@
           </div>
         </div>
         <div class="tk-body">
-          <div class="conv" v-for="cv in t.convs" :key="cv.conversation_id" role="button" tabindex="0"
-               @click="openModal(cv.conversation_id)" @keydown.enter.prevent="openModal(cv.conversation_id)" @keydown.space.prevent="openModal(cv.conversation_id)">
+          <div class="conv" v-for="cv in t.convs" :key="cv.interaccion_id || cv.conversation_id" role="button" tabindex="0"
+               @click="openModal(cv.interaccion_id)" @keydown.enter.prevent="openModal(cv.interaccion_id)" @keydown.space.prevent="openModal(cv.interaccion_id)">
             <span class="when num">{{ fmtDate(cv.conversation_created_at) }}</span>
             <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
             <span class="op" :title="opTip(cv)">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
@@ -922,8 +922,8 @@
               <span class="chip" v-if="dimClaridad(modal.detail.dimensions)==='confuso'" :title="AYUDA.confuso" style="background:color-mix(in srgb, var(--r-deficiente) 15%, transparent);color:var(--r-deficiente)">poco claro</span>
               <span class="chip" v-if="dimAbandono(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
                     :title="AYUDA.abandono">el cliente no contestó más</span>
-              <span class="chip" v-if="dimVariosOperadores(modal.detail.dimensions)" style="background:color-mix(in srgb, var(--r-aceptable) 15%, transparent);color:var(--r-aceptable)"
-                    :title="AYUDA.varios_operadores">{{ dimOperadores(modal.detail.dimensions) }} operadores en esta sesión</span>
+              <span class="chip" v-if="dimVariasAtenciones(modal.detail)" style="background:color-mix(in srgb, var(--faint) 18%, transparent);color:var(--fg)"
+                    :title="AYUDA.varios_operadores">atención {{ modal.detail.interaccion_seq }} de {{ dimInteracciones(modal.detail.dimensions) }}</span>
               <button type="button" class="ap-mini" @click="ayudaModal=!ayudaModal"
                       :title="'Qué significan estas etiquetas'">?</button>
             </div>
@@ -1222,7 +1222,7 @@ const AMBIENTES = [
 const AYUDA_TITULO = {
   motivo:"Motivo", estrella:"La estrella", empujo:"empujó", pasivo:"pasivo",
   no_respondio:"no respondió", claro:"claro", confuso:"poco claro",
-  abandono:"el cliente no contestó más", varios_operadores:"varios operadores",
+  abandono:"el cliente no contestó más", varios_operadores:"una de varias atenciones",
   sin_evaluar:"sin evaluar", reloj:"⏱ el reloj", convirtio:"volvió después",
 };
 const AYUDA = {
@@ -1235,7 +1235,7 @@ const AYUDA = {
   confuso:     "La respuesta dejó al cliente teniendo que inferir. Solo baja la nota si además el cliente reinsistió o el operador no resolvió.",
   reinsistio:  "El cliente insistió y el negocio estuvo callado al menos 5 minutos. Una ráfaga de mensajes seguidos NO cuenta: si nadie tuvo tiempo de contestar, no fue ignorado.",
   abandono:    "El operador pidió u ofreció algo concreto y el cliente no volvió a escribir. El trámite quedó abierto por el cliente, no por el operador: lo que dependía de esa respuesta no cuenta como error.",
-  varios_operadores: "El CRM reabrió esta conversación y la atendieron varias personas en visitas distintas. La nota se le atribuye a quien más mensajes escribió, así que describe UN tramo y no el trabajo de todos. Son el 3,2% de las sesiones; en ellas dos de cada tres interacciones son de alguien que no figura en esta fila.",
+  varios_operadores: "El CRM reabrió esta conversación varias veces y cada visita fue una atención distinta. Ésta es una de ellas: tiene su propio operador, sus propios tiempos y su propia nota, y el chat de abajo muestra sólo este tramo. Las otras atenciones de la charla están en la lista como filas aparte, cada una con la nota de quien la trabajó.",
   sin_evaluar: "Esta sesión no lleva nota. Queda registrada para que la cobertura sea visible, sin ensuciar los promedios.",
   reloj:       "Cuánto tardó la primera respuesta del negocio desde que el cliente escribió.",
   convirtio:   "Esta persona escribía por primera vez y después volvió a interactuar. Es la señal de que el contacto no se perdió.",
@@ -1560,6 +1560,9 @@ createApp({
 
     // ---- modal ----
     async function openModal(id) {
+      // Sin id no se pide nada: una fila sin `interaccion_id` mandaba la cadena
+      // "undefined" al servidor y volvia un 500 (visto en el front el 2026-08-27).
+      if (!id) return;
       modal.open = true; modal.loading = true; modal.detail = null; modal.title = "Cargando…";
       try { const r = await fetchJSON("/api/conversation/" + encodeURIComponent(id));
         modal.detail = r; modal.title = esc(r.customer_name||"Cliente") + ` <small>· ${fmtDate(r.conversation_created_at)}</small>`;
@@ -1913,11 +1916,16 @@ createApp({
     // CUÁNTA GENTE TRABAJÓ ESTA SESIÓN. La fila es UNA nota con UN operador, pero el CRM
     // reabre la misma conversación y puede haber varias visitas con gente distinta: la nota
     // se la lleva el de más mensajes. Son 504 de 15.562 sesiones (3,2%), y ahí el 66,7% de
-    // las interacciones son de alguien que no recibió la nota. No se puede repartir sin
-    // partir la sesión (rechazado por el negocio, docs/handoff.md §10), así que se DECLARA:
-    // el que mira sabe que la nota describe un tramo y no las seis visitas.
+    // las interacciones eran de alguien que no recibía la nota. ESO SE ARREGLÓ el
+    // 2026-08-27: cada atención tiene su fila, su operador y su nota (grano interacción).
+    // El dato dejó de ser una ADVERTENCIA y pasó a ser CONTEXTO — ya no dice "desconfiá de
+    // este número", dice "esta charla tuvo N atenciones y estás viendo la número X".
     function dimOperadores(dims) { return (dims&&dims.operadores_en_la_sesion)||0; }
     function dimVariosOperadores(dims) { return dimOperadores(dims) > 1; }
+    function dimInteracciones(dims) { return (dims&&dims.interacciones_en_la_sesion)||0; }
+    function dimVariasAtenciones(d) {
+      return !!(d && d.interaccion_seq && dimInteracciones(d.dimensions) > 1);
+    }
     function metaGrid(r) { const m=(l,v)=>`<div class="m"><span>${l}:</span> <b>${v}</b></div>`;
       const opT = opTip(r);
       const opCell = opT? `<span title="${esc(opT)}" style="border-bottom:1px dotted currentColor;cursor:help">${esc(opName(r))}</span>` : esc(opName(r));
@@ -2126,7 +2134,8 @@ createApp({
       bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
       dimPractica, dimSituacion,
       fmtDur, dimTiempos, dimConteos, dimHechos,
-      dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores, SITUACION_LABEL,
+      dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores,
+      dimInteracciones, dimVariasAtenciones, SITUACION_LABEL,
       nuevaInteraccion, metaGrid, AYUDA, AYUDA_TITULO,
       ayudaAbierta, ayudaModal, AMBIENTES, setAmbiente, horaEc, bubGap,
       CONTRAPARTE, contraparte, ambienteLbl, composicionActual, SEGMENT_LABEL,

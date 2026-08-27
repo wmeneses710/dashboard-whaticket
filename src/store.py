@@ -9,6 +9,7 @@ re-scorear. Ver db/scores_schema.sql.
 """
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Any
 
 from psycopg.types.json import Jsonb
@@ -759,7 +760,30 @@ SCORING_VERSION = "2026.08-rubricas-v22"
 # =============================================================================
 _CREATE_SCORES_TABLE = """
 CREATE TABLE IF NOT EXISTS conversation_scores (
-    conversation_id         uuid PRIMARY KEY,
+    -- GRANO INTERACCION (2026-08-27). Una fila por INTERACCION del CRM, no por
+    -- conversacion ni por sesion. `src/interacciones.py` ya corta la sesion en
+    -- interacciones desde el 2026-08-11 y ese corte ya lo usan deposito, retiro,
+    -- registro, agilidad y el front; lo que faltaba era EMITIR una nota por cada una.
+    --
+    -- MEDIDO sobre la copia: 2.145 conversaciones contienen 10.381 atenciones de
+    -- operadores distintos (hasta 14 personas en una fila) y se reparten 2.145 notas.
+    -- 8.236 atenciones no recibian ninguna y el trabajo de quien las hizo no entraba
+    -- en ningun denominador. Ese es el bug que esta clave arregla.
+    --
+    -- `conversation_id` NO se pudo reciclar como clave: queries.py la usa como
+    -- conversacion de verdad (`m.conversation_id = cs.conversation_id` para traer los
+    -- mensajes, y el join con `player_conversions.first_conversation_id`).
+    -- La clave es de UNA columna a proposito: una PK compuesta obligaria a cambiar
+    -- upsert_score, /api/conversation/{cid}, alertas_enviadas.clave y el front, que
+    -- pasan UN id.
+    interaccion_id          uuid PRIMARY KEY,
+    -- Que interaccion de la sesion es (1-based), y su ventana. Persistidas porque sin
+    -- ellas la nota no se puede verificar mirando el chat: es el problema que documenta
+    -- el docstring de src/interacciones.py.
+    interaccion_seq         integer,
+    interaccion_ini         timestamptz,
+    interaccion_fin         timestamptz,
+    conversation_id         uuid NOT NULL,
     account                 text NOT NULL,
     ticket_id               uuid,
     segment                 text,
@@ -861,8 +885,35 @@ def ensure_session_scoring_migration(cur) -> dict:
     # competir en el RENAME. El advisory lock serializa la migración; se libera solo
     # al commit de la transacción del caller. El 2do worker espera y ve el backup ya
     # creado -> no re-renombra.
+    return _migrar_a_tabla_fresca(cur, _SCORES_BACKUP_TABLE, "_presess")
+
+
+# Backup de la tabla de grano SESION que deja la migración al grano INTERACCION.
+# Nombre distinto del anterior a proposito: son dos migraciones y las dos tienen que poder
+# convivir en la misma base sin que la segunda pise el respaldo de la primera.
+_SCORES_BACKUP_INTERACCION = "conversation_scores_pre_interaccion"
+
+
+def ensure_interaccion_scoring_migration(cur) -> dict:
+    """Migración al grano INTERACCION. Mismo patrón "desde cero con backup" y mismo gate.
+
+    HACE FALTA porque `CREATE TABLE IF NOT EXISTS` NO cambia una PRIMARY KEY, y produccion
+    tiene la tabla con `conversation_id PRIMARY KEY`. Sin esto el deploy arranca, no falla,
+    y sigue pisando una interaccion con la siguiente EN SILENCIO -- el peor desenlace: el
+    sintoma es identico a que todo funcione.
+
+    Se rehace desde cero por pedido explicito del negocio ("se debe truncar y reescorear") y
+    el momento es el correcto: la tabla esta a mitad de un rescore (5.186 filas de 144.959
+    sesiones elegibles), asi que no hay historia que preservar. Migrar en vez de rehacer
+    obligaria a inventarle una clave a filas calculadas con OTRA unidad.
+    """
+    return _migrar_a_tabla_fresca(cur, _SCORES_BACKUP_INTERACCION, "_preint")
+
+
+def _migrar_a_tabla_fresca(cur, backup_table: str, sufijo_idx: str) -> dict:
+    """El patron compartido: renombrar a `backup_table` y crear la fresca. Idempotente."""
     cur.execute("SELECT pg_advisory_xact_lock(hashtext('conversation_scores_migration'))")
-    cur.execute(f"SELECT to_regclass('{_SCORES_BACKUP_TABLE}')")
+    cur.execute(f"SELECT to_regclass('{backup_table}')")
     backup = cur.fetchone()[0]
     if backup is None:
         cur.execute("SELECT to_regclass('conversation_scores')")
@@ -870,7 +921,7 @@ def ensure_session_scoring_migration(cur) -> dict:
         migrated = old is not None
         if migrated:
             cur.execute(
-                f"ALTER TABLE conversation_scores RENAME TO {_SCORES_BACKUP_TABLE}"
+                f"ALTER TABLE conversation_scores RENAME TO {backup_table}"
             )
             # RENAME TABLE NO renombra los indices: quedan con sus nombres canonicos
             # pegados al backup, y el CREATE INDEX IF NOT EXISTS de la fresca los
@@ -878,11 +929,12 @@ def ensure_session_scoring_migration(cur) -> dict:
             # Liberamos los nombres canonicos renombrando los indices del backup.
             cur.execute(
                 "SELECT indexname FROM pg_indexes WHERE tablename = %s",
-                (_SCORES_BACKUP_TABLE,),
+                (backup_table,),
             )
             for (idxname,) in cur.fetchall():
-                if not idxname.endswith("_presess"):
-                    cur.execute(f'ALTER INDEX "{idxname}" RENAME TO "{idxname}_presess"')
+                if not idxname.endswith(sufijo_idx):
+                    cur.execute(
+                        f'ALTER INDEX "{idxname}" RENAME TO "{idxname}{sufijo_idx}"')
         _create_fresh_scores(cur)
         return {"migrated": migrated}
     # Ya migrado: no tocar el backup ni la fresca existente, solo asegurar forma.
@@ -890,6 +942,7 @@ def ensure_session_scoring_migration(cur) -> dict:
     return {"migrated": False}
 
 _COLUMNS = (
+    "interaccion_id", "interaccion_seq", "interaccion_ini", "interaccion_fin",
     "conversation_id", "account", "ticket_id", "segment", "queue_name", "channel",
     "user_id", "user_name", "conversation_created_at", "resolved_at",
     "rubric", "eval_status", "skip_reason",
@@ -912,6 +965,13 @@ _SCORES_COLUMN_TYPES = (
     ("session_id", "uuid"),
     ("rating_applicable", "boolean NOT NULL DEFAULT true"),
     ("motivo", "text"),
+    # Grano interacción (2026-08-27). La PK se cambia en la migración, no acá: un ALTER
+    # no puede mover una PRIMARY KEY. Estas columnas se agregan igual para que una tabla
+    # de producción ya creada las tenga antes de que el worker empiece a escribirlas.
+    ("interaccion_id", "uuid"),
+    ("interaccion_seq", "integer"),
+    ("interaccion_ini", "timestamptz"),
+    ("interaccion_fin", "timestamptz"),
 )
 
 
@@ -921,6 +981,33 @@ def ensure_scores_columns(cur) -> None:
         cur.execute(
             f"ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS {col} {coltype}"
         )
+
+
+# Namespace fijo para derivar el id de una interaccion. Fijo y versionado en el codigo:
+# si cambiara, TODAS las filas se re-keyarian y el rescore duplicaria la tabla entera.
+_NS_INTERACCION = _uuid.UUID("6f1c1e2a-8b7d-4f39-9c14-0d5a2b3c4e5f")
+
+
+def interaccion_id_de(session_id, ini, *, conversation_id=None):
+    """Identidad DETERMINISTA de una interaccion. Misma interaccion -> mismo id, siempre.
+
+    Se deriva de (sesion, INSTANTE DE INICIO) y no del numero de orden: si el ETL trae
+    una interaccion mas vieja de la misma sesion, el orden de todas se corre y las filas
+    se re-keyarian; el instante de inicio no se mueve.
+
+    Determinista y no aleatorio porque el rescore tiene que ser IDEMPOTENTE: volver a
+    scorear la misma interaccion tiene que pisar su fila, no agregar otra.
+
+    `conversation_id` es el camino LEGACY: `scripts/run_scoring.py` scorea por
+    conversacion y no tiene session_id. Ahi la interaccion es la conversacion entera y su
+    propio id sirve de clave, que es exactamente lo que habia antes de este cambio.
+    """
+    if conversation_id is not None:
+        return conversation_id
+    if session_id is None or ini is None:
+        raise ValueError("una interaccion necesita (session_id, ini) o un conversation_id")
+    marca = ini.isoformat() if hasattr(ini, "isoformat") else str(ini)
+    return str(_uuid.uuid5(_NS_INTERACCION, f"{session_id}|{marca}"))
 
 
 def build_score_record(
@@ -936,6 +1023,9 @@ def build_score_record(
     deposit_count: int = 0,
     deposit_gate: bool | None = None,
     session_id=None,
+    interaccion_seq: int | None = None,
+    interaccion_ini=None,
+    interaccion_fin=None,
     scoring_version: str = SCORING_VERSION,
 ) -> dict[str, Any]:
     """Arma el dict de columnas para conversation_scores.
@@ -947,6 +1037,15 @@ def build_score_record(
     c = conversation
     segment = segment_for_queue(c.get("queue_name"))
     record: dict[str, Any] = {
+        # Sin ventana de interaccion (path legacy por conversacion) la clave es el propio
+        # conversation_id: es exactamente lo que habia antes del grano interaccion.
+        "interaccion_id": interaccion_id_de(
+            session_id, interaccion_ini,
+            conversation_id=None if interaccion_ini is not None else c["id"],
+        ),
+        "interaccion_seq": interaccion_seq,
+        "interaccion_ini": interaccion_ini,
+        "interaccion_fin": interaccion_fin,
         "conversation_id": c["id"],
         "account": c.get("account"),
         "ticket_id": c.get("ticket_id"),
@@ -1052,14 +1151,20 @@ _JSONB_COLS = {"dimensions", "stars_breakdown"}
 
 
 def upsert_score(cur, record: dict) -> None:
-    """Inserta o actualiza la fila por conversation_id (idempotente)."""
+    """Inserta o actualiza la fila por interaccion_id (idempotente).
+
+    LA CLAVE ES LA INTERACCION, no la conversacion. Con `ON CONFLICT (conversation_id)`
+    la segunda interaccion de una conversacion PISABA a la primera, y ese es el bug que
+    hacia desaparecer 8.236 atenciones: 2.145 conversaciones con 10.381 atenciones
+    adentro se quedaban con 2.145 notas.
+    """
     cols = list(_COLUMNS)
     placeholders = ", ".join(f"%({col})s" for col in cols)
-    updates = ", ".join(f"{col} = EXCLUDED.{col}" for col in cols if col != "conversation_id")
+    updates = ", ".join(f"{col} = EXCLUDED.{col}" for col in cols if col != "interaccion_id")
     sql = (
         f"INSERT INTO conversation_scores ({', '.join(cols)}, scored_at) "
         f"VALUES ({placeholders}, now()) "
-        f"ON CONFLICT (conversation_id) DO UPDATE SET {updates}, scored_at = now()"
+        f"ON CONFLICT (interaccion_id) DO UPDATE SET {updates}, scored_at = now()"
     )
     params = {
         col: (Jsonb(record[col]) if col in _JSONB_COLS and record[col] is not None else record[col])

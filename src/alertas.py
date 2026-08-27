@@ -222,10 +222,16 @@ def clave_espera(ticket_id: str, ultimo_cliente_at: datetime) -> str:
     return f"{ticket_id}:{ultimo_cliente_at.isoformat()}"
 
 
-def clave_resumen(session_id: str) -> str:
-    """La SESION. Un re-scoreo masivo --como el de v22-- no puede volver a avisar de una
-    charla de hace un mes."""
-    return str(session_id)
+def clave_resumen(interaccion_id: str) -> str:
+    """La INTERACCION. Un re-scoreo masivo --como el de v22-- no puede volver a avisar de
+    una charla de hace un mes.
+
+    ERA LA SESION hasta el grano interaccion (2026-08-27). Con una nota por interaccion,
+    dedupear por sesion dejaria mudas a N-1 atenciones: el jefe de ATC veria una de cinco
+    y no tendria como saber que faltan cuatro. Cada una es un operador distinto con su
+    propia nota, asi que cada una es una alerta.
+    """
+    return str(interaccion_id)
 
 
 def desmarcar(cur, account: str, tipo: str, clave: str) -> None:
@@ -375,7 +381,8 @@ WHERE u.from_me = false
 # Y la ventana de un dia es la red por si el ledger se vacia -- sin ella, conectar el bot
 # despues de un rescore masivo dispararia miles de mensajes de charlas viejas.
 _RESUMEN_SQL = """
-SELECT cs.conversation_id::text AS session_id,
+SELECT cs.interaccion_id::text AS interaccion_id,
+       cs.conversation_id::text AS session_id,
        v.username, v.ranking, v.agencia,
        v.motivo         AS motivo_vip,
        cs.user_name     AS operador,
@@ -391,7 +398,9 @@ LEFT JOIN contacts ct ON ct.id = t.contact_id
 JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = cs.account
 LEFT JOIN alertas_enviadas a
        ON a.account = cs.account AND a.tipo = 'resumen'
-      AND a.clave = cs.conversation_id::text
+      -- POR INTERACCION, no por conversacion: con N notas en una charla, dedupear por
+      -- conversacion hace que la primera alerta tape a todas las demas.
+      AND a.clave = cs.interaccion_id::text
 WHERE v.es_vip
   AND cs.account = %(account)s
   AND a.clave IS NULL
@@ -643,7 +652,8 @@ def barrer(conn, account: str, canal: Canal,
                 pendientes = resumenes_pendientes(cur, account)
             for r in pendientes:
                 with conn.cursor() as cur:
-                    nueva = marcar_enviada(cur, account, "resumen", clave_resumen(r["session_id"]))
+                    nueva = marcar_enviada(cur, account, "resumen",
+                                           clave_resumen(r["interaccion_id"]))
                 conn.commit()
                 if not nueva:
                     continue
@@ -655,10 +665,10 @@ def barrer(conn, account: str, canal: Canal,
                     hecho["resumen"] += 1
                 else:
                     hecho["fallos"] += 1
-                    decir(f"[alertas] {account} resumen {r['session_id']}: {estado}")
+                    decir(f"[alertas] {account} resumen {r['interaccion_id']}: {estado}")
                 if estado == REINTENTAR:
                     with conn.cursor() as cur:
-                        desmarcar(cur, account, "resumen", clave_resumen(r["session_id"]))
+                        desmarcar(cur, account, "resumen", clave_resumen(r["interaccion_id"]))
                     conn.commit()
                 time.sleep(THROTTLE_SEGUNDOS)
         if primera and hecho["sembrados"]:

@@ -27,7 +27,10 @@ from src import alertas
 TZ = timezone(timedelta(hours=-5))       # Ecuador, sin horario de verano
 
 
-_COLS_RESUMEN = ("session_id", "username", "ranking", "agencia", "motivo_vip",
+# `interaccion_id` va PRIMERO porque asi lo devuelve `_RESUMEN_SQL` desde el grano
+# interaccion (2026-08-27): es la clave del ledger, y sin ella el barrido revienta con
+# KeyError -- que es exactamente como se detecto que faltaba en estos fixtures.
+_COLS_RESUMEN = ("interaccion_id", "session_id", "username", "ranking", "agencia", "motivo_vip",
                  "operador", "motivo", "stars", "first_response_seconds",
                  "resolution_seconds")
 
@@ -129,11 +132,26 @@ def test_la_clave_de_ESPERA_lleva_el_instante_del_mensaje():
     assert alertas.clave_espera("tkt-1", t1) == alertas.clave_espera("tkt-1", t1)
 
 
-def test_la_clave_de_RESUMEN_es_la_sesion():
-    """Una sesion se scorea una vez; si se re-scorea (un rescore masivo, como el de v22) no
-    puede volver a avisar de una charla de hace un mes."""
-    assert alertas.clave_resumen("sess-9") == alertas.clave_resumen("sess-9")
-    assert alertas.clave_resumen("sess-9") != alertas.clave_resumen("sess-8")
+def test_la_clave_de_RESUMEN_es_la_INTERACCION():
+    """La intencion original se conserva ENTERA: si se re-scorea (un rescore masivo, como el
+    de v22) no puede volver a avisar de una charla de hace un mes. Lo que cambia es el GRANO.
+
+    Con el grano interaccion (2026-08-27) una sesion tiene N notas, cada una de un operador
+    distinto. Con la clave por SESION solo la primera avisaria y las otras N-1 quedarian
+    mudas: el jefe de ATC veria una atencion de cinco y no sabria que faltan cuatro."""
+    assert alertas.clave_resumen("int-9") == alertas.clave_resumen("int-9")
+    assert alertas.clave_resumen("int-9") != alertas.clave_resumen("int-8")
+
+
+def test_el_resumen_avisa_UNA_VEZ_POR_INTERACCION_y_no_por_sesion():
+    """Dos atenciones de la misma sesion son dos alertas: son dos operadores y dos notas."""
+    assert "cs.interaccion_id" in alertas._RESUMEN_SQL, (
+        "el resumen sigue trayendo la clave por sesion: N-1 atenciones VIP no avisarian"
+    )
+    ledger = alertas._RESUMEN_SQL.split("LEFT JOIN alertas_enviadas", 1)[-1]
+    assert "cs.interaccion_id::text" in ledger, (
+        "el ledger dedupea por conversacion: la primera alerta tapa a todas las de esa charla"
+    )
 
 
 # --- ESPERA: el horario manda -----------------------------------------------
@@ -516,7 +534,7 @@ def test_barrer_reporta_los_FALLOS_no_solo_los_envios(monkeypatch):
     monkeypatch.setattr(alertas.httpx, "post",
                         lambda *a, **k: type("R", (), {"status_code": 500, "text": "boom"})())
     monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
-    cur = _FakeCursor(rows=[("s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
+    cur = _FakeCursor(rows=[("i1", "s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
     cur.rowcount = 1
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
@@ -531,7 +549,7 @@ def test_barrer_acepta_un_log_para_hablar_por_el_mismo_canal_que_el_worker(monke
     monkeypatch.setattr(alertas.httpx, "post",
                         lambda *a, **k: type("R", (), {"status_code": 400, "text": "mal"})())
     monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
-    cur = _FakeCursor(rows=[("s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
+    cur = _FakeCursor(rows=[("i1", "s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
     cur.rowcount = 1
     alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                    ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ), log=dichos.append)
@@ -554,7 +572,7 @@ def test_el_PRIMER_barrido_siembra_el_ledger_y_NO_manda(monkeypatch):
     monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: (
         enviados.append(1), type("R", (), {"status_code": 200, "text": ""})())[1])
     monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
-    cur = _FakeCursor(rows=[("s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
+    cur = _FakeCursor(rows=[("i1", "s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20)])
     cur.rowcount = 1
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ), ledger_vacio_=True)

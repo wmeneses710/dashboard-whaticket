@@ -401,3 +401,29 @@ def test_el_log_del_arranque_cuenta_los_apagados_de_VERDAD(monkeypatch, caplog):
     assert "sistemas" in texto and "datos" in texto, (
         f"el log no nombra las cuentas del archivo — sigue leyendo la clave del v1: {texto}"
     )
+
+
+# --- EL MODAL NO PUEDE DEVOLVER 500 (2026-08-27) -----------------------------
+# VISTO EN EL FRONT durante el rescore: `GET /api/conversation/undefined` -> 500, con
+# `psycopg.errors.InvalidTextRepresentation: invalid input syntax for type uuid`.
+#
+# Dos causas encadenadas, las dos mias:
+#  1. Con el grano interaccion cambie `openModal(cv.interaccion_id)` en la lista pero NO
+#     `openFromDrill(p.first_conversation_id)`, que sigue pasando un conversation_id.
+#  2. El endpoint no validaba: cualquier texto que no sea uuid llega crudo a Postgres.
+#
+# Un 500 es lo peor de los dos mundos: el front no puede distinguir "no existe" de "se
+# rompio el servidor", y el error aparece en los logs como si el servicio estuviera caido.
+
+def test_el_modal_con_un_id_que_no_es_uuid_devuelve_404_y_no_500():
+    r = client.get("/api/conversation/undefined")
+    assert r.status_code == 404, (
+        f"devolvio {r.status_code}: un id invalido tiene que ser 'no encontrado', no un "
+        f"error del servidor"
+    )
+
+
+def test_el_modal_con_un_id_vacio_o_basura_tampoco_revienta():
+    for basura in ("null", "NaN", "0", "abc-def"):
+        r = client.get(f"/api/conversation/{basura}")
+        assert r.status_code == 404, f"{basura!r} devolvio {r.status_code}"

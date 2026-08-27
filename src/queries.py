@@ -24,7 +24,7 @@ from src.rubrics import MOTIVOS
 # ese modal (metaGrid: *_seconds, *_message_count, was_unassigned, rubric) y los no
 # usados (queue_name, resolved_at) se omiten aca: peso muerto en la lista.
 _SCORES_SQL = """
-SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
+SELECT cs.interaccion_id, cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
        cs.user_id, """ + OPERADOR_O_NADA + """ AS user_name,
        cs.conversation_created_at,
        cs.eval_status, cs.skip_reason, cs.rating_label, cs.stars,
@@ -40,7 +40,8 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment,
 """
 
 _DETAIL_SQL = """
-SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
+SELECT cs.interaccion_id, cs.interaccion_seq, cs.interaccion_ini, cs.interaccion_fin,
+       cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.user_id, """ + OPERADOR_O_NADA + """ AS user_name,
        cs.conversation_created_at, cs.resolved_at,
        cs.rubric, cs.eval_status, cs.skip_reason, cs.rating_label, cs.stars,
@@ -80,7 +81,17 @@ SELECT cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
   -- duración de la sesión (end_at - start_at, ambos = tiempos de mensaje reales tras el
   -- fix de freshness) para el flag de CIERRE RÁPIDO en el chat.
   LEFT JOIN conversation_sessions ses ON ses.session_id = cs.session_id
- WHERE cs.conversation_id = %(cid)s
+ -- POR INTERACCION, con la CONVERSACION como respaldo. `conversation_id` dejo de ser
+ -- unica con el grano interaccion (2026-08-27), asi que buscar solo por ahi abre una
+ -- cualquiera de las N notas. Pero el drill de cohorte apunta a una conversacion DE VERDAD
+ -- (`player_conversions.first_conversation_id`) y los links viejos tambien, asi que los dos
+ -- tienen que funcionar.
+ -- El ORDER BY resuelve el empate: si el id ES una interaccion, gana esa; si es una
+ -- conversacion, se abre su PRIMERA atencion. Sin el LIMIT, un conversation_id con N
+ -- atenciones devolveria N filas y `fetchone` tomaria una al azar.
+ WHERE cs.interaccion_id = %(cid)s OR cs.conversation_id = %(cid)s
+ ORDER BY (cs.interaccion_id = %(cid)s) DESC, cs.interaccion_seq NULLS LAST
+ LIMIT 1
 """
 
 
@@ -931,6 +942,11 @@ SELECT card_key,
 
 _TICKETS_CONVS_SQL = """
 SELECT """ + _CARD_KEY + """ AS card_key,
+       -- LA CLAVE DEL MODAL. Esta es la lista que el tablero CLICKEA (las tarjetas por
+       -- cliente); `_SCORES_SQL` alimenta otra vista. Con el grano interaccion se agrego
+       -- `interaccion_id` alla y NO aca, asi que el front hacia `openModal(undefined)` y no
+       -- se abria ningun modal. Las dos listas tienen que traerla.
+       cs.interaccion_id, cs.interaccion_seq,
        cs.conversation_id, cs.ticket_id, cs.conversation_created_at, cs.eval_status,
        cs.skip_reason, cs.rating_label, cs.stars,
        left(cs.rating_rationale, 160) AS rating_rationale,
@@ -1750,6 +1766,25 @@ def conversion_cohort(cur, account: str, **filters) -> list[dict]:
     return _rows_as_dicts(cur)
 
 
+def recortar_a_la_interaccion(mensajes: list[dict], ini, fin) -> list[dict]:
+    """Los mensajes de UNA interaccion, entre su inicio y su cierre (ambos inclusive).
+
+    LA EVIDENCIA MOSTRADA TIENE QUE SER LA QUE SE JUZGO, y esta es la tercera vuelta de esa
+    misma herida. El 2026-08-24 el modal mostraba el primer episodio al lado de una nota que
+    describia otro tramo -- "TRES mensajes donde el operador contesta en 2 minutos, al lado
+    de 16 mensajes y un rationale que acusa de tardar 5,8 minutos" -- y se arreglo mostrando
+    la SESION mergeada. Con el grano interaccion la nota describe UNA atencion, asi que
+    mostrar la sesion entera vuelve a poner la nota al lado de la evidencia equivocada:
+    hasta 14 personas y semanas de charla detras de una nota de tres minutos.
+
+    SIN VENTANA se devuelve TODO. Las filas del path por conversacion (`run_scoring.py`) no
+    declaran interaccion, y recortar por un dato que no existe seria inventar un tramo.
+    """
+    if ini is None or fin is None:
+        return mensajes
+    return [m for m in mensajes if ini <= m["created_at"] <= fin]
+
+
 def conversation_detail(cur, conversation_id: str) -> dict | None:
     """Una conversacion con su analisis completo + transcript reconstruido.
 
@@ -1782,7 +1817,10 @@ def conversation_detail(cur, conversation_id: str) -> dict | None:
         # hay: se cae al fallback, porque pedir por sesion devolveria vacio.
         sid = d.get("session_id")
         mensajes = (fetch_session_messages(cur, sid) if sid
-                    else fetch_messages(cur, conversation_id))
+                    else fetch_messages(cur, d.get("conversation_id") or conversation_id))
+        # Y de esa sesion, SOLO la interaccion que esta fila califica.
+        mensajes = recortar_a_la_interaccion(
+            mensajes, d.get("interaccion_ini"), d.get("interaccion_fin"))
         d["transcript"] = _transcript(mensajes,
                                       juzgada_desde=_juzgada_desde(d.get("dimensions")))
         return d

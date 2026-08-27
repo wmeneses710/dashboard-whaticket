@@ -792,7 +792,9 @@ def test_conversation_detail_filtra_por_id_y_agrega_transcript():
     cur = _FakeCursor(rows=[], description=["conversation_id"], one=("c1",))
     d = conversation_detail(cur, "c1")
     query, params = cur.executed[0]
-    assert "conversation_id = %(cid)s" in query
+    # Por INTERACCION desde el grano interaccion (2026-08-27): `conversation_id` dejo de
+    # ser unica. La intencion del test -- que filtre por el id que se le pasa -- no cambia.
+    assert "cs.interaccion_id = %(cid)s" in query
     assert params["cid"] == "c1"
     assert d["conversation_id"] == "c1"
     assert d["transcript"] == []
@@ -1872,3 +1874,94 @@ def test_una_fila_sin_telefono_no_revienta():
     out = _rows_as_dicts(_CurFalso(["customer_number", "num"], [(None, "")]))
     assert out[0]["customer_number"] is None
     assert out[0]["num"] == ""
+
+
+# =============================================================================
+# EL MODAL, A GRANO INTERACCION (2026-08-27)
+#
+# `_DETAIL_SQL` buscaba `WHERE cs.conversation_id = %(cid)s`. Con una nota por interaccion
+# esa columna deja de ser unica: N filas la comparten y el modal abriria una CUALQUIERA de
+# las N notas de esa charla.
+#
+# Y ES LA MISMA HERIDA QUE YA SE CURO UNA VEZ. El 2026-08-24 el modal mostraba el primer
+# episodio al lado de una nota que describia otro tramo: "un modal con TRES mensajes donde
+# el operador contesta en 2 minutos, al lado de 16 mensajes y un rationale que acusa de
+# tardar 5,8 minutos". Se arreglo mostrando la SESION mergeada. Con el grano interaccion la
+# nota describe UNA atencion, asi que el chat tiene que mostrar ESA y no la sesion entera.
+
+def test_el_detalle_se_pide_por_INTERACCION():
+    from src.queries import _DETAIL_SQL
+    assert "cs.interaccion_id = %(cid)s" in _DETAIL_SQL, (
+        "el modal sigue buscando por conversacion: con N notas por charla abre una cualquiera"
+    )
+
+
+def test_la_lista_devuelve_la_clave_que_el_modal_necesita():
+    """Si la lista no trae `interaccion_id`, el front no tiene con que abrir la fila."""
+    from src.queries import _SCORES_SQL
+    assert "cs.interaccion_id" in _SCORES_SQL
+
+
+def test_el_detalle_trae_la_ventana_para_poder_recortar_el_chat():
+    from src.queries import _DETAIL_SQL
+    for col in ("cs.interaccion_ini", "cs.interaccion_fin"):
+        assert col in _DETAIL_SQL, f"falta {col}: sin la ventana no se puede recortar"
+
+
+def test_el_chat_del_modal_se_recorta_a_SU_interaccion():
+    """La evidencia mostrada tiene que ser la que se juzgo. Con la sesion entera, una nota
+    de 3 minutos aparece al lado de semanas de charla de otras seis personas."""
+    from datetime import datetime, timezone
+
+    import src.queries as q
+    T = datetime(2026, 8, 26, 12, 0, tzinfo=timezone.utc)
+    msgs = [
+        {"created_at": T, "from_me": False, "is_note": False, "body": "antes",
+         "sent_from": None, "user_id": None, "media_type": None},
+        {"created_at": T.replace(hour=14), "from_me": False, "is_note": False,
+         "body": "ADENTRO", "sent_from": None, "user_id": None, "media_type": None},
+        {"created_at": T.replace(hour=18), "from_me": False, "is_note": False,
+         "body": "despues", "sent_from": None, "user_id": None, "media_type": None},
+    ]
+    recorte = q.recortar_a_la_interaccion(msgs, T.replace(hour=13), T.replace(hour=15))
+    assert [m["body"] for m in recorte] == ["ADENTRO"]
+    # Sin ventana (filas viejas del path por conversacion) se devuelve todo: no se
+    # inventa un recorte para una fila que no declara su interaccion.
+    assert q.recortar_a_la_interaccion(msgs, None, None) == msgs
+
+
+def test_el_detalle_acepta_TAMBIEN_un_conversation_id():
+    """El drill de cohorte apunta a una CONVERSACION de verdad
+    (`player_conversions.first_conversation_id`), no a una atencion. Y los links viejos
+    tambien traen conversation_id. El endpoint prueba los dos y prefiere la interaccion
+    exacta; si le dan una conversacion, abre su PRIMERA atencion."""
+    from src.queries import _DETAIL_SQL
+    assert "cs.conversation_id = %(cid)s" in _DETAIL_SQL, (
+        "solo busca por interaccion: el drill y los links viejos quedan rotos"
+    )
+    assert "LIMIT 1" in _DETAIL_SQL, (
+        "sin LIMIT, un conversation_id con N atenciones devuelve N filas"
+    )
+
+
+def test_la_lista_DEL_TABLERO_trae_la_clave_del_modal():
+    """LA LISTA QUE SE CLICKEA NO ES `/api/scores`, ES `/api/tickets`.
+
+    Con el grano interaccion agregue `interaccion_id` a `_SCORES_SQL` y verifique el modal
+    por API con un id que saque de AHI -- o sea, probe el camino que yo mismo habia armado.
+    Las tarjetas del tablero salen de `_TICKETS_CONVS_SQL`, que no lo traia: el front hacia
+    `openModal(undefined)` y NO SE ABRIA NINGUN MODAL. Lo vio el negocio abriendo el
+    tablero, no la suite.
+    """
+    from src.queries import _TICKETS_CONVS_SQL
+    assert "cs.interaccion_id" in _TICKETS_CONVS_SQL, (
+        "las tarjetas no traen interaccion_id: el modal no abre desde la lista"
+    )
+
+
+def test_las_DOS_listas_traen_la_misma_clave():
+    """El guard: hay dos consultas que alimentan clicks y las dos tienen que poder abrir."""
+    from src.queries import _SCORES_SQL, _TICKETS_CONVS_SQL
+    for nombre, sql in (("_SCORES_SQL", _SCORES_SQL),
+                        ("_TICKETS_CONVS_SQL", _TICKETS_CONVS_SQL)):
+        assert "cs.interaccion_id" in sql, f"{nombre} no trae la clave del modal"

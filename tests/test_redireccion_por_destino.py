@@ -119,7 +119,9 @@ def test_el_worker_le_pasa_el_mapa_y_la_linea_a_la_deteccion():
     import inspect
 
     import src.worker as worker
-    fuente = inspect.getsource(worker.score_session_and_store)
+    # El cuerpo se movio a `_score_interaccion_y_persiste` con el grano interaccion
+    # (2026-08-27): `score_session_and_store` ahora solo parte la sesion y itera.
+    fuente = inspect.getsource(worker._score_interaccion_y_persiste)
     m = [ln for ln in fuente.splitlines() if "respuesta_fue_solo_traspaso" in ln]
     assert m, "cambio la llamada, revisar este test"
     assert "lineas" in m[0], f"la deteccion corre sin el mapa de lineas: {m[0].strip()!r}"

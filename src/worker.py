@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import time
 import traceback
+from datetime import timedelta
 
 from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
@@ -16,7 +17,7 @@ from src.deposito import es_transaccion as es_transaccion_deposito
 from src.deposito import score_deposito
 from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
 from src.deposits import deposit_candidate_count
-from src.interacciones import tiempos_de
+from src.interacciones import SILENCIO_MAX, partir_en_interacciones, tiempos_de
 from src.registro import interaccion_juzgada as interaccion_juzgada_registro
 from src.info import score_info
 from src.motivo_de_agente import motivo_de_agente
@@ -45,6 +46,7 @@ from src.sessions import evaluate_session
 from src.store import (
     build_score_record,
     ensure_scores_columns,
+    ensure_interaccion_scoring_migration,
     ensure_session_scoring_migration,
     upsert_score,
 )
@@ -152,13 +154,20 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
 
 # --- Scoring por SESION -----------------------------------------------------------
 # Espeja el path por-conversacion (PENDING_SQL/fetch_pending/score_and_store/
-# score_batch) pero a grano SESION. DECISION A: una sesion se scorea solo cuando
-# CERRO = su ultimo episodio quedo atras hace mas de 6h (end_at < now() - 6h). La
+# score_batch) pero a grano SESION. CUANDO se scorea: cuando su ultima atencion CERRO, y
+# eso ahora se decide distinto segun COMO cerro -- ver el WHERE de PENDING_SESSIONS_SQL.
+# (Era un hold fijo de 6h para todas; el 2026-08-27 paso a ser condicional.) La
 # fila resultante queda keyeada por conversation_id = session_id (la conversacion de
 # ENTRADA, el primer episodio de la sesion) con la columna session_id seteada.
 # run_worker_loop YA usa este path (el flip se hizo). El path por-conversacion
 # (PENDING_SQL/fetch_pending/score_and_store/score_batch) queda como API para el batch
 # manual (scripts/), pero el loop del contenedor scorea por sesion.
+# Cuanto se espera despues del cierre antes de calificar. Ver el comentario del WHERE.
+# El corto tiene que cubrir el p99 del ETL (36 s) con margen y NO volver a empujar la
+# alerta fuera de horario; el largo es el mismo silencio con el que se corta la interaccion.
+HOLD_CERRADA = timedelta(minutes=5)
+HOLD_SIN_CIERRE = SILENCIO_MAX
+
 PENDING_SESSIONS_SQL = f"""
 SELECT {_CONV_FIELDS}, cs.session_id AS session_id
   FROM conversation_sessions cs
@@ -175,7 +184,44 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
   -- va LEFT por lo mismo que el anterior: 13.052 sesiones pendientes no tienen contacto.
   LEFT JOIN contacts ct      ON ct.id   = tk.contact_id
  WHERE cs.account = %(account)s
-   AND cs.end_at < now() - interval '6 hours'
+   AND (
+     -- EL HOLD ES CONDICIONAL (2026-08-27). Antes eran 6 HORAS FIJAS para todas, para
+     -- reconciliar un posible REGRESO del cliente: si volvia, la sesion crecia y la nota
+     -- quedaba vieja. Con el grano INTERACCION eso dejo de aplicar: si el cliente vuelve,
+     -- eso es una atencion NUEVA con su propia nota, y la anterior ya no cambia.
+     --
+     -- Y el hold TAMPOCO hacia falta para el ETL, que era la otra sospecha. MEDIDO sobre
+     -- 9.366 atenciones, desde la nota de cierre hasta que el ETL termino de capturarla:
+     --     p50 = 18 s  ·  p90 = 30 s  ·  p99 = 36 s  ·  max = 64 min
+     -- Ya esta todo en menos de un minuto. Los 9 min que conociamos son de conversaciones
+     -- VIVAS (nadie toco el ticket); cerrar es justamente tocarlo.
+     --
+     -- LO QUE COSTABA: las 7 alertas VIP del 26-ago cerraron entre las 18:30 y las 21:06 y
+     -- se avisaron entre las 00:38 y las 03:18. Ninguna la leyo nadie.
+     --
+     -- EL OPERADOR YA LA CERRO -> el fin es un HECHO DECLARADO, no una inferencia.
+     (cs.end_at < now() - make_interval(secs => %(hold_cerrada)s)
+      AND EXISTS (
+        SELECT 1 FROM conversation_session_map map
+          JOIN messages n ON n.conversation_id = map.conversation_id
+         -- `account` PRIMERO y no por gusto: el indice es (account, session_id), y
+         -- filtrando solo por session_id no se usa. MEDIDO con EXPLAIN ANALYZE sobre la
+         -- copia: sin el, Seq Scan sobre conversation_session_map 120.843 veces
+         -- descartando 74.897 filas cada una -> 162 SEGUNDOS para traer 5 filas.
+         WHERE map.account = cs.account AND map.session_id = cs.session_id
+           AND n.is_note AND n.body LIKE '%%*resuelto*%%'
+           -- Cerca del fin de la sesion: una nota de cierre vieja es de OTRA atencion.
+           -- El margen cubre `GRACIA_CIERRE_SEG` (el operador cierra y adjunta despues,
+           -- asi que la nota puede quedar ANTES del ultimo mensaje real).
+           AND n.created_at >= cs.end_at - interval '3 minutes'))
+     -- NADIE LA CERRO -> lo unico que dice que termino es el silencio, y ese umbral es
+     -- `SILENCIO_MAX` (src/interacciones.py), el MISMO con el que se corta la interaccion.
+     -- Es 3 de cada 100 casos. (SIN el signo de porcentaje: psycopg parsea el SQL
+     -- entero buscando placeholders y uno suelto revienta con 'incomplete
+     -- placeholder'. Los tests de string pasaban con la consulta ROTA; se detecto
+     -- ejecutandola contra la copia.)
+     OR cs.end_at < now() - make_interval(secs => %(hold_sin_cierre)s)
+   )
    -- Pendiente = sin score, O con un score MAS VIEJO que el ultimo episodio de la
    -- sesion (la sesion crecio despues de scorearse, p. ej. una continuacion diferida
    -- que se mergeo hasta 48h despues) -> re-scorear para no quedar con nota vieja.
@@ -208,18 +254,62 @@ def fetch_pending_sessions(cur, account: str, limit: int) -> list[dict]:
     session_id. La fila resultante alimenta score_session_and_store, que la keyea por
     conversation_id = session_id.
     """
-    cur.execute(PENDING_SESSIONS_SQL, {"account": account, "limit": limit})
+    cur.execute(PENDING_SESSIONS_SQL, {
+        "account": account, "limit": limit,
+        "hold_cerrada": HOLD_CERRADA.total_seconds(),
+        "hold_sin_cierre": HOLD_SIN_CIERRE.total_seconds(),
+    })
     cols = [d.name for d in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 def score_session_and_store(conn, sess: dict, llm, op_map: dict,
                             recommender=None, lineas: dict | None = None):
-    """Scorea UNA sesion (transcript mergeado) y la persiste. Devuelve (eval_status,
-    skip_reason, score). Espeja score_and_store pero a grano SESION.
-    recommender: sub-evaluador angosto opcional (ver src/subeval.py)."""
+    """Scorea la sesion INTERACCION POR INTERACCION y persiste UNA FILA POR CADA UNA.
+
+    EL CAMBIO DE GRANO (2026-08-27). `partir_en_interacciones` existe desde el 2026-08-11
+    y ya lo usan deposito, retiro, registro, agilidad y el front, pero este worker lo usaba
+    solo para ELEGIR cual calificar (el ancla-ultima) y descartaba el resto.
+
+    MEDIDO sobre la copia: **2.145 conversaciones contienen 10.381 atenciones de operadores
+    distintos** -- hasta 14 personas en una sola fila -- y se repartian 2.145 notas.
+    **8.236 atenciones no recibian ninguna** y el trabajo de quien las hizo no entraba en
+    ningun denominador.
+
+    EL RETORNO NO CAMBIA: sigue siendo el de la ULTIMA interaccion, que es exactamente la
+    que el ancla-ultima calificaba. Asi el contrato de `score_sessions_batch` se conserva y
+    lo que se agrega son las filas que faltaban, no un cambio de forma.
+
+    Y EL LLM PASA A VER UNA SOLA ATENCION. Ademas de ser lo correcto es mas barato: hasta
+    hoy el modelo leia semanas de charla para calificar una atencion de tres minutos.
+    """
     with conn.cursor() as cur:
         msgs = fetch_session_messages(cur, sess["session_id"])
+    partes = partir_en_interacciones(msgs) or [msgs]
+    resultado = (None, None, None)
+    for seq, interaccion in enumerate(partes, 1):
+        resultado = _score_interaccion_y_persiste(
+            conn, sess, interaccion, msgs, seq, llm, op_map, recommender, lineas)
+    return resultado
+
+
+def _score_interaccion_y_persiste(conn, sess: dict, msgs: list[dict],
+                                  msgs_sesion: list[dict], seq: int,
+                                  llm, op_map: dict, recommender, lineas: dict | None):
+    """Scorea UNA interaccion y persiste su fila. Devuelve (eval_status, skip_reason, score).
+
+    Es el cuerpo que antes corria una vez por sesion: `ventana_juzgada`, los tiempos y la
+    re-atribucion ya trabajaban sobre una ventana, asi que lo unico que cambio es QUE
+    transcript recibe. El ancla sigue acotando ADENTRO de la interaccion (el comprobante
+    dentro de la atencion), que es una pregunta distinta y sigue valiendo.
+    """
+    # `if msgs` y no a secas: `fetch_session_messages` puede devolver [] (una sesion sin
+    # mensajes mapeados) y `min()` sobre vacio lanza ValueError. El lote lo atrapa y sigue,
+    # pero la sesion se perderia EN SILENCIO y volveria como pendiente en cada pasada.
+    # Sin ventana, `build_score_record` cae a la clave legacy (el conversation_id), asi que
+    # la fila igual se persiste y la sesion deja de estar pendiente.
+    interaccion_ini = min(m["created_at"] for m in msgs) if msgs else None
+    interaccion_fin = max(m["created_at"] for m in msgs) if msgs else None
     stats, rubric, eval_status, skip_reason = evaluate_session(
         msgs, lineas=lineas,
         es_grupo=es_grupo_de_whatsapp(sess.get("is_group"), sess.get("contact_number")))
@@ -389,14 +479,34 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     # nota de la sesion -- que sigue abierto.
     # Si NO hubo score (skipped) se dejan los campos del CRM: no hay nada juzgado que
     # describir, y no se inventa un tiempo para una fila sin nota.
+    # LOS TIEMPOS SALEN DE LA VENTANA SIEMPRE, TAMBIEN EN LAS `skipped`.
+    # Hasta el grano interaccion las filas sin nota conservaban los campos del CRM, con el
+    # argumento de que "no hay nada juzgado que describir" y no se inventa un tiempo para
+    # una fila sin nota. Ese argumento se cayo: la ventana de la interaccion NO es una
+    # inferencia, es un hecho medido -- sabemos cuando empezo y cuando cerro esa atencion,
+    # la hayamos calificado o no.
+    # VISTO EN EL RESCORE LOCAL del 2026-08-27: una fila `skipped` con ventana de 91
+    # segundos declaraba `resolution_seconds = 253.699` (2,9 DIAS), y otra con `ini == fin`
+    # declaraba 444 s. La fila no quedaba incompleta: MENTIA.
     sess_medido, stats_medido = sess, stats
+    ventana = (ventana_juzgada if score is not None else None) or msgs
+    inicio, primera_op, cierre = tiempos_de(ventana)
+    if inicio is None:
+        # PURAS NOTAS INTERNAS (`internal_notes_only`, message_count = 0). `tiempos_de`
+        # mide sobre mensajes REALES y ahi no hay ninguno, asi que devuelve None -- y sin
+        # esta rama la fila volvia a heredar el envase, que es justo lo que el ventaneo
+        # viene a impedir. VISTO en el rescore del 2026-08-27: dos filas de 0 mensajes
+        # declarando 32 s y 253 s de un envase de dias.
+        # Se llega aca por el fallback `partir_en_interacciones(msgs) or [msgs]`: si la
+        # sesion entera es notas, el corte devuelve vacio y se scorea el bloque completo.
+        # La VENTANA si se conoce -- interaccion_ini/fin salen de TODOS los mensajes,
+        # notas incluidas -- asi que se usa esa. No se inventa nada.
+        inicio, cierre = interaccion_ini, interaccion_fin
+    if inicio is not None:
+        sess_medido = {**sess, "created_at": inicio,
+                       "first_sent_message_at": primera_op, "resolved_at": cierre}
+        stats_medido = message_stats(ventana)
     if score is not None:
-        ventana = ventana_juzgada or msgs
-        inicio, primera_op, cierre = tiempos_de(ventana)
-        if inicio is not None:
-            sess_medido = {**sess, "created_at": inicio,
-                           "first_sent_message_at": primera_op, "resolved_at": cierre}
-            stats_medido = message_stats(ventana)
         # El operador se re-atribuye SOLO cuando hay ancla: acotar a la interaccion es lo que
         # da derecho a cambiarlo. Y solo si esa interaccion tiene uno identificable -- dejar
         # 'Operador sin identificar' seria cambiar una atribucion equivocada por ninguna.
@@ -417,6 +527,8 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
         eval_status=eval_status, skip_reason=skip_reason, score=score,
         operator_id=operator_id, operator_name=op_name, deposit_count=deposit_count,
         deposit_gate=deposit_gate, session_id=sess["session_id"],
+        interaccion_seq=seq, interaccion_ini=interaccion_ini,
+        interaccion_fin=interaccion_fin,
     )
     # EL HECHO DEL ABANDONO VA EN TODAS LAS FILAS, no solo en las del camino LLM.
     # `score_by_motivo` lo mete en sus `dimensions`, pero las rubricas deterministas
@@ -454,7 +566,12 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
         # vez de mentir en silencio. Sacarlas del promedio moveria como maximo +0,045
         # estrellas, asi que el agregado NO es el problema -- lo es la fila que abre el
         # supervisor y lee "Anggie Belén, 4 estrellas" sobre una charla de seis personas.
-        interacciones, operadores = reparto_por_interaccion(msgs)
+        # SOBRE LA SESION ENTERA, no sobre esta interaccion: el dato responde "¿de cuantas
+        # atenciones forma parte esta?" y con el grano interaccion sirve para lo contrario
+        # que antes. Antes marcaba un LIMITE de la fila (una nota sobre el trabajo de
+        # varios); ahora es contexto — cada uno ya tiene su nota, y esto ubica la fila
+        # dentro del hilo del cliente. Con `msgs` daria 1 siempre y no diria nada.
+        interacciones, operadores = reparto_por_interaccion(msgs_sesion)
         record["dimensions"].setdefault("interacciones_en_la_sesion", interacciones)
         record["dimensions"].setdefault("operadores_en_la_sesion", operadores)
     with conn.cursor() as cur:
@@ -612,8 +729,15 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
         with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
             with conn.cursor() as cur:
                 r = ensure_session_scoring_migration(cur)
+                # Y despues al grano INTERACCION (2026-08-27). En ESTE orden: la de sesion
+                # es la que libera los nombres de indice, y la de interaccion respalda lo
+                # que aquella dejo. Las dos son idempotentes y tienen su propio backup, asi
+                # que una base ya migrada pasa por las dos sin tocar nada.
+                # SIN ESTO el deploy arranca, no falla, y sigue pisando una interaccion con
+                # la siguiente en silencio: `CREATE TABLE IF NOT EXISTS` no cambia una PK.
+                ri = ensure_interaccion_scoring_migration(cur)
             conn.commit()
-        emit(f"[worker] migración: {r}")
+        emit(f"[worker] migración: sesión={r} interacción={ri}")
     except Exception as e:  # noqa: BLE001 - no aborta el arranque del loop
         emit(f"[worker] migración error: {type(e).__name__}: {e}")
     # Self-healing de columnas del pase LLM unificado (una vez, aditivo). La tabla de

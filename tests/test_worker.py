@@ -4,6 +4,8 @@ from src.worker import (
     fetch_pending,
     fetch_pending_sessions,
     score_and_store,
+    HOLD_CERRADA,
+    HOLD_SIN_CIERRE,
     score_session_and_store,
     score_sessions_batch,
 )
@@ -86,9 +88,11 @@ def test_fetch_pending_sessions_arma_el_sql_del_gate_join_y_scoping():
     cur = _FakeCursor([], description=[])
     fetch_pending_sessions(cur, "datos", 30)
     query, params = cur.executed[0]
-    # DECISION A: solo sesiones CERRADAS (end_at con margen de 6h).
-    assert "interval '6 hours'" in query
+    # Solo sesiones CERRADAS. El margen dejó de ser fijo el 2026-08-27: ahora depende de
+    # CÓMO cerró (nota del operador -> minutos; sin nota -> el silencio de 6 h). Los dos
+    # umbrales viajan como parámetros, así que se afirman ahí y no como literal en el SQL.
     assert "end_at" in query
+    assert params["hold_cerrada"] < params["hold_sin_cierre"]
     # no re-scorea una sesion ya guardada (NOT EXISTS por session_id)...
     assert "NOT EXISTS" in query
     assert "s.session_id" in query
@@ -99,7 +103,9 @@ def test_fetch_pending_sessions_arma_el_sql_del_gate_join_y_scoping():
     assert "c.id" in query and "session_id" in query
     # scopeado por cuenta + LIMIT parametrizado.
     assert "%(account)s" in query
-    assert params == {"account": "datos", "limit": 30}
+    assert params == {"account": "datos", "limit": 30,
+                      "hold_cerrada": HOLD_CERRADA.total_seconds(),
+                      "hold_sin_cierre": HOLD_SIN_CIERRE.total_seconds()}
 
 
 def test_fetch_pending_sessions_devuelve_dicts_con_session_id():
@@ -148,11 +154,20 @@ def _session_row(session_id="sess1"):
 
 
 def _params_of_upsert(conn):
+    """La fila de la interaccion JUZGADA por el ancla-ultima, o sea la ULTIMA.
+
+    Devolvia la PRIMERA, y hasta el grano interaccion (2026-08-27) daba lo mismo porque
+    habia una sola fila por sesion. Ahora hay una por interaccion, y la que estos tests
+    describen -- "la interaccion juzgada", que el ancla-ultima elige -- es la ultima.
+    Para las sesiones de una sola interaccion (el 96,3%) primera y ultima son la misma.
+    Los tests que miran TODAS las filas usan `_all_upserts`.
+    """
+    ultimo = None
     for c in conn.cursors:
         for query, params in c.executed:
             if "INSERT INTO conversation_scores" in query:
-                return params
-    return None
+                ultimo = params
+    return ultimo
 
 
 def test_score_session_and_store_evaluated_persiste_con_session_id(monkeypatch):
@@ -565,8 +580,17 @@ def test_sin_ancla_NO_se_persiste_ninguna_interaccion(monkeypatch):
     assert dims.get("interaccion_juzgada_desde") is None
 
 
-def test_sin_ancla_determinista_los_tiempos_siguen_siendo_los_del_crm(monkeypatch):
-    # Un motivo que pasa por LLM no tiene ancla: se degrada al comportamiento anterior.
+def test_sin_ancla_los_tiempos_igual_son_de_SU_interaccion(monkeypatch):
+    """CAMBIO DE CONTRATO (2026-08-27, grano interaccion).
+
+    Este test afirmaba que sin ancla determinista los tiempos describian la SESION ENTERA
+    (180.095 s), porque el LLM leia todo y elegir una interaccion "seria decidir por el
+    negocio cual representa la nota" -- el pendiente que el propio worker documentaba.
+
+    El negocio lo cerro: cada interaccion tiene su nota. Ya no hay que elegir una, hay N, y
+    cada fila describe la suya. La intencion de fondo se conserva y de hecho se refuerza:
+    los tiempos NUNCA son los del envase del CRM.
+    """
     from src.scorer import ScoreResult
     monkeypatch.setattr(worker, "fetch_session_messages",
                         lambda cur, sid: _dos_interacciones_de_deposito())
@@ -579,8 +603,12 @@ def test_sin_ancla_determinista_los_tiempos_siguen_siendo_los_del_crm(monkeypatc
     sess["first_sent_message_at"] = _T0 + timedelta(seconds=180030)
     sess["resolved_at"] = _T0 + timedelta(seconds=180095)
     score_session_and_store(conn, sess, llm=None, op_map={})
-    params = _params_of_upsert(conn)
-    assert params["resolution_seconds"] == 180095.0
+    filas = _all_upserts(conn)
+    assert len(filas) == 2, "la primera interaccion tambien tiene que tener su nota"
+    # La segunda va de 180.000 a 180.095: 95 s, no las 50 h del envase.
+    assert filas[-1]["resolution_seconds"] == 95.0
+    # Y la primera es la que ANTES desaparecia: comprobante a los 0, cierre a los 22.
+    assert filas[0]["resolution_seconds"] == 22.0
 
 
 # --- LOS TIEMPOS SALEN DEL TRANSCRIPT, NUNCA DEL ENVASE DEL CRM ---------------------
@@ -619,11 +647,14 @@ def test_sin_ancla_los_tiempos_salen_del_transcript_no_del_crm(monkeypatch):
     sess["first_sent_message_at"] = _T0 + timedelta(seconds=90030)
     sess["resolved_at"] = _T0 + timedelta(seconds=90060)
     score_session_and_store(conn, sess, llm=None, op_map={})
-    params = _params_of_upsert(conn)
-    # La sesion entera: del primer mensaje real (0) al ULTIMO cierre (90060).
-    assert params["resolution_seconds"] == 90060.0
-    # Y la primera respuesta es la REAL (30 s), no la del campo del CRM (90.030 s).
-    assert params["first_response_seconds"] == 30.0
+    filas = _all_upserts(conn)
+    # GRANO INTERACCION: cada fila describe SU atencion, no el envase ni la sesion entera.
+    # Antes esto afirmaba 90.060 s (del primer mensaje real al ULTIMO cierre); esa unidad
+    # ya no existe. Las dos atenciones duran 60 s cada una.
+    assert [f["resolution_seconds"] for f in filas] == [60.0, 60.0]
+    # Y la primera respuesta sigue siendo la REAL (30 s), nunca el campo del CRM (90.030 s):
+    # es la intencion original de este test y se conserva entera.
+    assert [f["first_response_seconds"] for f in filas] == [30.0, 30.0]
 
 
 def test_el_cierre_de_una_sesion_completa_es_el_ULTIMO_no_el_primero():
@@ -1066,3 +1097,267 @@ def test_registro_con_datos_completos_sigue_llevando_nota(monkeypatch):
 
     assert eval_status == "evaluated" and skip_reason is None
     assert score is not None and score.stars == 2
+
+
+# =============================================================================
+# GRANO INTERACCION (2026-08-27): UNA NOTA POR INTERACCION, no una por sesion.
+#
+# `partir_en_interacciones` existe desde el 2026-08-11 y ya lo usan deposito, retiro,
+# registro, agilidad y el front. Pero el worker lo usaba solo para ELEGIR cual calificar
+# (el ancla-ultima) y descartaba el resto.
+#
+# MEDIDO sobre la copia el 2026-08-27: 2.145 conversaciones contienen 10.381 atenciones de
+# operadores distintos, hasta 14 personas en una fila, y se reparten 2.145 notas.
+# **8.236 atenciones no reciben ninguna.** El trabajo de quien las hizo no entra en ningun
+# denominador: es la Gabriela que en su primer dia toco 14 conversaciones y cobro 2.
+#
+# EL RETORNO NO CAMBIA a proposito: sigue siendo el de la ULTIMA interaccion, que es
+# exactamente la que el ancla-ultima calificaba. Asi el contrato de score_sessions_batch y
+# de los 8 tests de arriba se conserva, y lo que se agrega son las filas que faltaban.
+
+def _tres_interacciones():
+    """Tres atenciones de TRES operadores distintos en una sola sesion, cortadas por la
+    nota de cierre del CRM. Es la forma exacta de las 2.145 filas pegoteadas."""
+    msgs = []
+    for n, (op, quien) in enumerate([("op1", "Ana"), ("op2", "Beto"), ("op3", "Cira")]):
+        base = _T0 + timedelta(days=n)     # separadas por dias: interacciones distintas
+        msgs += [
+            {"created_at": base, "from_me": False, "is_note": False,
+             "body": "me ayudas con una recarga?", "sent_from": None,
+             "user_id": None, "media_type": None},
+            {"created_at": base + timedelta(seconds=40), "from_me": True, "is_note": False,
+             "body": f"*{quien}:*\nbuenas, te ayudo", "sent_from": "OP",
+             "user_id": op, "media_type": None},
+            {"created_at": base + timedelta(seconds=90), "from_me": True, "is_note": True,
+             "body": f"{quien} *resuelto* la conversación", "sent_from": None,
+             "user_id": op, "media_type": None},
+        ]
+    return msgs
+
+
+def _all_upserts(conn):
+    """TODOS los upserts, no solo el primero: es el punto del cambio de grano."""
+    out = []
+    for c in conn.cursors:
+        for query, params in c.executed:
+            if "INSERT INTO conversation_scores" in query:
+                out.append(params)
+    return out
+
+
+def test_una_sesion_de_TRES_interacciones_persiste_TRES_filas(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _tres_interacciones())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    filas = _all_upserts(conn)
+    assert len(filas) == 3, (
+        f"emitio {len(filas)} nota(s) para 3 atenciones: las otras desaparecen del "
+        f"denominador (8.236 medidas sobre la copia)"
+    )
+
+
+def test_cada_interaccion_lleva_su_propia_clave_y_su_numero(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _tres_interacciones())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    filas = _all_upserts(conn)
+    ids = [f["interaccion_id"] for f in filas]
+    assert len(set(ids)) == 3, f"las interacciones comparten clave y se pisan: {ids}"
+    assert [f["interaccion_seq"] for f in filas] == [1, 2, 3]
+    assert all(f["session_id"] == "sess1" for f in filas), "todas son de la misma sesion"
+    assert all(f["interaccion_ini"] is not None and f["interaccion_fin"] is not None
+               for f in filas), "sin la ventana la nota no se puede verificar en el chat"
+
+
+def test_cada_nota_se_le_atribuye_a_SU_operador(monkeypatch):
+    """El bug que esto cierra: hoy la sesion entera se le carga a uno y el resto trabaja
+    gratis. Medido: 66,7% de las interacciones son de alguien que NO recibio la nota."""
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _tres_interacciones())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    ops = [f["user_id"] for f in _all_upserts(conn)]
+    assert ops == ["op1", "op2", "op3"], f"la atribucion no sigue a la interaccion: {ops}"
+
+
+def test_los_tiempos_describen_SU_interaccion_y_no_la_sesion(monkeypatch):
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _tres_interacciones())
+    monkeypatch.setattr(worker, "score_by_motivo", lambda **kw: _fake_score())
+    conn = _CtxConn()
+    score_session_and_store(conn, _session_row("sess1"), llm=None, op_map={})
+    filas = _all_upserts(conn)
+    inicios = [f["conversation_created_at"] for f in filas]
+    assert len(set(inicios)) == 3, (
+        f"las tres filas dicen que arrancaron en el mismo momento: {inicios}"
+    )
+    # cada una dura ~90 s, no los dos dias del envase
+    for f in filas:
+        assert f["resolution_seconds"] is not None and f["resolution_seconds"] < 600, \
+            f"la duracion es la del envase, no la de la atencion: {f['resolution_seconds']}"
+
+
+def test_el_LLM_ve_UNA_interaccion_y_no_el_transcript_entero(monkeypatch):
+    """Ademas de ser correcto es mas barato: hoy el modelo lee semanas de charla para
+    calificar una atencion de tres minutos."""
+    vistos = []
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: _tres_interacciones())
+    monkeypatch.setattr(worker, "score_by_motivo",
+                        lambda **kw: vistos.append(len(kw["target_messages"])) or _fake_score())
+    score_session_and_store(_CtxConn(), _session_row("sess1"), llm=None, op_map={})
+    assert vistos == [3, 3, 3], f"el LLM sigue recibiendo la sesion completa: {vistos}"
+
+
+def test_una_fila_SKIPPED_igual_declara_los_tiempos_de_SU_interaccion(monkeypatch):
+    """VISTO EN EL RESCORE LOCAL (2026-08-27): una fila `skipped` con ventana de 91 segundos
+    reportaba `resolution_seconds = 253.699` -- 2,9 DIAS. Y otra con `ini == fin` reportaba
+    444 s.
+
+    Venia de una decision razonable del grano sesion: sin score no hay nada juzgado que
+    describir, asi que se dejaban los campos del CRM y "no se inventa un tiempo para una
+    fila sin nota". Con el grano interaccion eso dejo de aplicar: la ventana NO es una
+    inferencia, es un hecho medido -- sabemos exactamente cuando empezo y termino esa
+    atencion, la hayamos calificado o no. Dejar el envase hace que la fila MIENTA.
+    """
+    msgs = [
+        {"created_at": _T0, "from_me": False, "is_note": False, "body": "",
+         "sent_from": None, "user_id": None, "media_type": "image"},
+        {"created_at": _T0 + timedelta(seconds=90), "from_me": True, "is_note": True,
+         "body": "Ana *resuelto* la conversación", "sent_from": None,
+         "user_id": "op1", "media_type": None},
+    ]
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: msgs)
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    # El envase del CRM dice tres dias; la atencion duro 90 segundos.
+    sess["created_at"] = _T0 - timedelta(days=1)
+    sess["first_sent_message_at"] = _T0 + timedelta(days=1)
+    sess["resolved_at"] = _T0 + timedelta(days=2)
+    eval_status, _, _ = score_session_and_store(conn, sess, llm=None, op_map={})
+    assert eval_status == "skipped", "el fixture tiene que caer en un skip"
+    f = _params_of_upsert(conn)
+    assert f["resolution_seconds"] == 90.0, (
+        f"la fila skipped declara la duracion del envase ({f['resolution_seconds']}) "
+        f"en vez de la de su atencion (90 s)"
+    )
+    assert f["conversation_created_at"] == _T0, "el inicio tambien es el del envase"
+
+
+# =============================================================================
+# EL HOLD CONDICIONAL (2026-08-27)
+#
+# El worker esperaba 6 HORAS FIJAS despues del cierre para calificar. El motivo original
+# era reconciliar un posible REGRESO del cliente: si volvia, la sesion crecia y la nota
+# vieja quedaba mal.
+#
+# CON EL GRANO INTERACCION ESO DEJO DE APLICAR: si el cliente vuelve, eso es una atencion
+# NUEVA con su propia nota. La anterior quedo cerrada por el operador y no cambia.
+#
+# Y EL OTRO MOTIVO TAMPOCO SE SOSTIENE. Se podia pensar que el hold cubria el retraso del
+# ETL. MEDIDO sobre 9.366 atenciones reales, contando desde la nota de cierre hasta que el
+# ETL termino de capturar la atencion:
+#     p50 = 18 s · p90 = 30 s · p99 = 36 s · max = 64 min
+# El ETL ya tiene todo en menos de un minuto. Los 9 minutos que conociamos son para
+# conversaciones VIVAS -- cuando nadie toco el ticket --, y cerrar es justamente tocarlo.
+#
+# LO QUE SI SOBREVIVE: una atencion que el operador NUNCA cerro. Ahi no hay nota y solo
+# `SILENCIO_MAX` (6 h) la cierra. Es el 3,1% de los casos.
+#
+# CONSECUENCIA MEDIDA: las 7 alertas VIP del 26-ago cerraron entre las 18:30 y las 21:06 y
+# se avisaron entre las 00:38 y las 03:18. Nadie las leyo. Con el hold condicional salen
+# todas el mismo dia y en horario.
+
+def test_el_hold_ya_no_es_de_seis_horas_para_TODAS():
+    from src.worker import PENDING_SESSIONS_SQL as sql
+    assert "interval '6 hours'" not in sql, "quedo el hold fijo viejo"
+    # Las DOS ramas, y unidas por OR: con AND una atencion cerrada seguiria esperando.
+    assert "hold_cerrada" in sql and "hold_sin_cierre" in sql, "falta una de las dos ramas"
+    rama = sql.split("hold_cerrada", 1)[1].split("hold_sin_cierre", 1)[0]
+    assert "OR" in rama, (
+        "las dos condiciones no estan en OR: una atencion que el operador ya cerro "
+        "seguiria esperando el silencio completo"
+    )
+
+
+def test_una_atencion_CERRADA_por_el_operador_se_califica_en_minutos():
+    import src.worker as w
+    assert w.HOLD_CERRADA < w.HOLD_SIN_CIERRE, "el hold corto no es mas corto que el largo"
+    assert 60 <= w.HOLD_CERRADA.total_seconds() <= 900, (
+        "el hold corto tiene que cubrir el p99 del ETL (36 s) con margen, sin volver a "
+        "empujar la alerta fuera de horario"
+    )
+    assert "*resuelto*" in w.PENDING_SESSIONS_SQL, (
+        "la consulta no mira la nota de cierre, asi que no puede distinguir los dos casos"
+    )
+
+
+def test_una_atencion_SIN_cerrar_sigue_esperando_el_silencio():
+    """Sin nota no hay hecho declarado: lo unico que dice que termino es el silencio, y ese
+    umbral es `SILENCIO_MAX` en src/interacciones.py. Los dos tienen que ser el MISMO
+    numero o la cola y el corte discrepan."""
+    from src.interacciones import SILENCIO_MAX
+    import src.worker as w
+    assert w.HOLD_SIN_CIERRE == SILENCIO_MAX, (
+        f"el hold largo ({w.HOLD_SIN_CIERRE}) y el corte por silencio ({SILENCIO_MAX}) "
+        f"no coinciden: una sesion podria entrar a la cola antes de estar cerrada"
+    )
+
+
+def test_una_interaccion_de_PURAS_NOTAS_no_hereda_los_tiempos_del_envase(monkeypatch):
+    """EL HUECO DEL FIX ANTERIOR, visto en el rescore final del 2026-08-27.
+
+    El arreglo de los tiempos usaba `tiempos_de(ventana)`, que mide sobre mensajes REALES.
+    Cuando la interaccion es SOLO notas internas del CRM (`internal_notes_only`,
+    message_count = 0) devuelve None, la guarda `if inicio is not None` no entra y la fila
+    vuelve a heredar el envase -- justo lo que el fix venia a impedir.
+
+    Se llega ahi por el fallback `partir_en_interacciones(msgs) or [msgs]`: si la sesion
+    entera es notas, el corte devuelve vacio y se scorea el bloque completo.
+
+    LA VENTANA SI SE CONOCE (interaccion_ini/fin salen de TODOS los mensajes, notas
+    incluidas), asi que se usa esa. No se inventa nada: es cuando empezo y termino.
+    """
+    T = _T0
+    msgs = [
+        {"created_at": T, "from_me": True, "is_note": True,
+         "body": "*Asignado automáticamente* a Ana", "sent_from": None,
+         "user_id": None, "media_type": None},
+        {"created_at": T + timedelta(seconds=151), "from_me": True, "is_note": True,
+         "body": "Ana *resuelto* la conversación", "sent_from": None,
+         "user_id": "op1", "media_type": None},
+    ]
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: msgs)
+    conn = _CtxConn()
+    sess = _session_row("sess1")
+    sess["created_at"] = T - timedelta(days=2)      # el envase miente por dos dias
+    sess["resolved_at"] = T + timedelta(days=1)
+    eval_status, skip_reason, _ = score_session_and_store(conn, sess, llm=None, op_map={})
+    assert eval_status == "skipped"
+    f = _params_of_upsert(conn)
+    assert f["resolution_seconds"] == 151.0, (
+        f"la fila de puras notas declara {f['resolution_seconds']} s (el envase) en vez de "
+        f"los 151 s de su ventana"
+    )
+    assert f["conversation_created_at"] == T, "el inicio tambien viene del envase"
+
+
+def test_una_sesion_SIN_MENSAJES_no_tumba_el_lote(monkeypatch):
+    """BUG LATENTE que introdujo el grano interaccion: `min(m["created_at"] for m in msgs)`
+    revienta con ValueError sobre una lista vacia.
+
+    `fetch_session_messages` puede devolver [] (una sesion sin mensajes mapeados). Antes no
+    importaba porque esos valores no se calculaban; ahora se calculan SIEMPRE, antes de
+    cualquier guarda. El lote no se cae -- `score_sessions_batch` atrapa y sigue -- pero la
+    sesion se pierde en silencio y vuelve a aparecer como pendiente en cada pasada.
+    """
+    monkeypatch.setattr(worker, "fetch_session_messages", lambda cur, sid: [])
+    conn = _CtxConn()
+    eval_status, skip_reason, score = score_session_and_store(
+        conn, _session_row("vacia"), llm=None, op_map={})
+    assert eval_status == "skipped", "una sesion sin mensajes no se puede evaluar"
+    assert score is None
+    f = _params_of_upsert(conn)
+    assert f is not None, "no persistio nada: la sesion vuelve como pendiente para siempre"
+    assert f["interaccion_ini"] is None and f["interaccion_fin"] is None, \
+        "sin mensajes no hay ventana que declarar"

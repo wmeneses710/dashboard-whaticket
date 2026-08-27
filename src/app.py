@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import uuid
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -397,7 +398,22 @@ def ambientes(account: str = Query(..., description="datos | sistemas")) -> dict
 
 @app.get("/api/conversation/{cid}")
 def conversation(cid: str) -> dict:
-    """Detalle completo de una conversacion + transcript (on-demand)."""
+    """Detalle de UNA interaccion (o de una conversacion) + transcript, on-demand.
+
+    `cid` puede ser un `interaccion_id` (lo que manda la lista) o un `conversation_id` (lo
+    que manda el drill de cohorte, que apunta a la conversacion de ENTRADA de un cliente).
+    `queries.conversation_detail` prueba los dos, en ese orden.
+
+    VALIDA QUE SEA UUID ANTES DE CONSULTAR. Sin esto, cualquier texto llegaba crudo a
+    Postgres y volvia un **500** con `InvalidTextRepresentation`. Un 500 es lo peor de los
+    dos mundos: el front no puede distinguir "no existe" de "el servidor se rompio", y el
+    log muestra un servicio caido cuando solo le pidieron un id que no existe.
+    VISTO EN EL FRONT el 2026-08-27: `GET /api/conversation/undefined` -> 500, repetido.
+    """
+    try:
+        uuid.UUID(cid)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=404, detail="conversacion no encontrada") from None
     with _conn() as c, c.cursor() as cur:
         detail = queries.conversation_detail(cur, cid)
     if detail is None:

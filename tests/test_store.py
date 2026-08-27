@@ -444,3 +444,130 @@ def test_sin_observacion_no_hay_mismatch_que_reportar():
     # no ensucia el KPI con filas donde no habia nada que reconciliar.
     r = _record(score=_score(deposit_observed=None), deposit_count=0, deposit_gate=True)
     assert r["deposit_mismatch"] is None
+
+
+# =============================================================================
+# GRANO INTERACCION (2026-08-27). La nota pasa de UNA por sesion a UNA por
+# INTERACCION del CRM.
+#
+# POR QUE. `src/interacciones.py` ya corta la sesion en interacciones desde el
+# 2026-08-11 ("cada interaccion tiene un operador a calificar", decision del negocio
+# del 24-ago), y ese corte ya lo usan deposito, retiro, registro, agilidad y el front.
+# Pero el worker lo usaba solo para ELEGIR cual calificar y descartaba el resto.
+#
+# MEDIDO sobre la copia el 2026-08-27: **2.145 conversaciones contienen 10.381
+# atenciones de operadores distintos, con hasta 14 personas en una sola fila.** Se
+# reparten 2.145 notas: **8.236 atenciones no reciben ninguna** y el trabajo de quien
+# las hizo no entra en ningun denominador.
+#
+# LA CLAVE ES DE UNA SOLA COLUMNA a proposito. Una PK compuesta obligaria a cambiar
+# `upsert_score`, `/api/conversation/{cid}`, `alertas_enviadas.clave` y el front, que
+# hoy pasan UN id. Y `conversation_id` NO se puede reciclar: queries.py la usa como
+# conversacion de verdad para traer los mensajes (`m.conversation_id = cs.conversation_id`)
+# y para el join con `player_conversions.first_conversation_id`.
+
+def test_la_clave_de_la_tabla_es_la_INTERACCION():
+    assert "interaccion_id" in _CREATE_SCORES_TABLE, "falta la columna de la interaccion"
+    assert re.search(r"interaccion_id\s+uuid\s+PRIMARY KEY", _CREATE_SCORES_TABLE), (
+        "interaccion_id tiene que ser la PK"
+    )
+    assert not re.search(r"conversation_id\s+uuid\s+PRIMARY KEY", _CREATE_SCORES_TABLE), (
+        "conversation_id sigue siendo la PK: con eso no cabe mas de una nota por conversacion"
+    )
+
+
+def test_la_tabla_guarda_la_ventana_de_la_interaccion():
+    """Sin la ventana persistida, la nota no se puede verificar mirando el chat — que es
+    exactamente el problema que documenta src/interacciones.py."""
+    for col in ("interaccion_seq", "interaccion_ini", "interaccion_fin"):
+        assert col in _CREATE_SCORES_TABLE, f"falta {col}"
+
+
+def test_ensure_scores_columns_agrega_las_columnas_de_la_interaccion():
+    """Produccion ya tiene la tabla creada; CREATE ... IF NOT EXISTS no agrega columnas."""
+    cur = _FakeCursor()
+    ensure_scores_columns(cur)
+    qs = [q for q, _ in cur.executed]
+    for col in ("interaccion_id", "interaccion_seq", "interaccion_ini", "interaccion_fin"):
+        assert any("ADD COLUMN IF NOT EXISTS" in q and col in q for q in qs), \
+            f"falta el ALTER para {col}"
+
+
+def test_COLUMNS_escribe_la_interaccion():
+    for col in ("interaccion_id", "interaccion_seq", "interaccion_ini", "interaccion_fin"):
+        assert col in store._COLUMNS, f"{col} no se persiste"
+
+
+def test_upsert_conflictua_por_INTERACCION_y_no_por_conversacion():
+    """Con `ON CONFLICT (conversation_id)` la segunda interaccion de una conversacion
+    PISA a la primera: es el bug que hace desaparecer 8.236 atenciones."""
+    cur = _FakeCursor()
+    rec = {c: None for c in store._COLUMNS}
+    store.upsert_score(cur, rec)
+    sql = cur.executed[-1][0]
+    assert "ON CONFLICT (interaccion_id)" in sql, f"la clave del upsert sigue vieja: {sql[:200]}"
+    assert "interaccion_id = EXCLUDED.interaccion_id" not in sql, \
+        "la PK no se actualiza a si misma"
+
+
+def test_la_identidad_de_la_interaccion_es_DETERMINISTA():
+    """Idempotencia del rescore: la misma interaccion tiene que dar el mismo id siempre.
+    Se deriva del INICIO y no del numero de orden: si el ETL trae una interaccion mas
+    vieja, el orden se corre y la fila se re-keyaria, el instante no se mueve."""
+    ini = datetime(2026, 8, 26, 23, 27, 35, tzinfo=timezone.utc)
+    sid = "9cdf4a80-b148-4221-81e6-78aa80598e3d"
+    a = store.interaccion_id_de(sid, ini)
+    b = store.interaccion_id_de(sid, ini)
+    assert a == b, "el id no es estable entre corridas"
+    assert a != store.interaccion_id_de(sid, ini + timedelta(seconds=1)), \
+        "dos interacciones distintas comparten id"
+    assert a != store.interaccion_id_de("otra-sesion", ini), \
+        "dos sesiones distintas comparten id"
+
+
+def test_el_path_legacy_por_conversacion_sigue_teniendo_clave():
+    """`scripts/run_scoring.py` scorea por CONVERSACION y no tiene session_id. Ahi la
+    interaccion es la conversacion entera y el id es el propio conversation_id."""
+    cid = "44e6648d-1c20-4e8b-acea-1eb7901de0dd"
+    assert store.interaccion_id_de(None, None, conversation_id=cid) == cid
+
+
+# --- Migración al grano INTERACCION (2026-08-27) -----------------------------
+#
+# `CREATE TABLE IF NOT EXISTS` no cambia una PRIMARY KEY, y produccion ya tiene la tabla con
+# `conversation_id PRIMARY KEY`. Sin migracion el deploy arranca, no falla, y sigue pisando
+# una interaccion con la otra en silencio -- que es el peor de los desenlaces.
+#
+# MISMO PATRON que la migracion a grano sesion: renombrar a backup y crear fresca, con el
+# gate en la EXISTENCIA del backup. El negocio pidio explicitamente truncar y rescorear
+# ("se debe truncar y reescorear"), y el momento es el correcto: la tabla esta al 3,6% de un
+# rescore en curso (5.186 filas de 144.959 sesiones), asi que no hay nada que preservar.
+
+def test_la_migracion_a_interaccion_respalda_y_crea_fresca():
+    cur = _MigrationCursor({"conversation_scores": "conversation_scores",
+                            store._SCORES_BACKUP_INTERACCION: None})
+    r = store.ensure_interaccion_scoring_migration(cur)
+    assert r["migrated"] is True
+    assert _has(cur, f"RENAME TO {store._SCORES_BACKUP_INTERACCION}"), \
+        "no respaldo la tabla vieja"
+    assert _has(cur, "interaccion_id          uuid PRIMARY KEY"), "no creo la tabla fresca"
+
+
+def test_la_migracion_a_interaccion_es_IDEMPOTENTE():
+    """Con el backup ya presente NO se re-renombra: eso destruiria la tabla nueva."""
+    cur = _MigrationCursor({"conversation_scores": "conversation_scores",
+                            store._SCORES_BACKUP_INTERACCION: store._SCORES_BACKUP_INTERACCION})
+    r = store.ensure_interaccion_scoring_migration(cur)
+    assert r["migrated"] is False
+    assert not _has(cur, "RENAME TO"), "re-renombro con el backup ya hecho"
+
+
+def test_una_instalacion_NUEVA_no_declara_haber_migrado():
+    cur = _MigrationCursor({"conversation_scores": None,
+                            store._SCORES_BACKUP_INTERACCION: None})
+    assert store.ensure_interaccion_scoring_migration(cur)["migrated"] is False
+
+
+def test_el_backup_de_interaccion_no_pisa_al_de_sesion():
+    """Son dos migraciones distintas y las dos tienen que poder convivir en la misma base."""
+    assert store._SCORES_BACKUP_INTERACCION != store._SCORES_BACKUP_TABLE
