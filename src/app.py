@@ -82,9 +82,12 @@ def seed_operator_status() -> None:
             with c.cursor() as cur:
                 operators_status.ensure_table(cur)
                 n = operators_status.seed_from_config(cur, operadores)
+                # `apagados` y no `cuentas`: `cuentas` es la forma del config v1 y el archivo
+                # es v2 desde que lista solo excepciones, así que el dict salía SIEMPRE vacío.
+                # Es la única línea del arranque que dice si el apagado quedó aplicado.
                 apagados = {
                     cuenta: len(operators_status.inactive_names(cur, cuenta))
-                    for cuenta in operadores.get("cuentas", {})
+                    for cuenta in operadores.get("apagados", {})
                 }
             c.commit()
         log.info("operator_status: %s filas sembradas · apagados por cuenta: %s", n, apagados)

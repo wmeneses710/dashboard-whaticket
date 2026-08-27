@@ -372,3 +372,32 @@ def test_el_default_de_api_docs_es_false(monkeypatch):
 
     monkeypatch.delenv("API_DOCS", raising=False)
     assert load_config().api_docs is False
+
+
+# --- EL NUMERO CON EL QUE SE AUDITA UN DEPLOY (2026-08-27) -------------------------
+# `seed_operator_status` loguea "operator_status: N filas sembradas · apagados por cuenta: X".
+# X salia SIEMPRE vacio porque iteraba `operadores.get("cuentas", {})`, que es la forma del
+# config v1; el v2 usa `apagados`. Es la unica linea del arranque que dice si el apagado
+# quedo aplicado, y no decia nada. Se descubrio levantando la API local contra la copia.
+
+def test_el_log_del_arranque_cuenta_los_apagados_de_VERDAD(monkeypatch, caplog):
+    import logging
+
+    import src.operators_status as ops
+    cfg_v2 = {"version": 2, "apagados": {"sistemas": [{"operador": "RAMIREZ", "comentario": ""}],
+                                         "datos": [{"operador": "Kathya", "comentario": ""}]}}
+    monkeypatch.setattr(ops, "load_config", lambda *a, **k: cfg_v2)
+    monkeypatch.setattr(ops, "ensure_table", lambda cur: None)
+    monkeypatch.setattr(ops, "seed_from_config", lambda cur, c: 2)
+    monkeypatch.setattr(ops, "inactive_names",
+                        lambda cur, cuenta: {"RAMIREZ"} if cuenta == "sistemas" else {"Kathya"})
+    monkeypatch.setattr(appmod.psycopg, "connect", lambda *a, **k: _DummyCtx())
+
+    with caplog.at_level(logging.INFO, logger="uvicorn.error"):
+        appmod.seed_operator_status()
+
+    texto = " ".join(r.getMessage() for r in caplog.records)
+    assert "apagados por cuenta" in texto, "no logueo la linea del arranque"
+    assert "sistemas" in texto and "datos" in texto, (
+        f"el log no nombra las cuentas del archivo — sigue leyendo la clave del v1: {texto}"
+    )
