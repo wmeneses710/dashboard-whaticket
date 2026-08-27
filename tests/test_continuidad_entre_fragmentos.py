@@ -149,3 +149,91 @@ def test_la_regla_de_respuesta_del_negocio_es_LA_MISMA_que_la_de_sin_respuesta()
     ]
     for c in casos:
         assert _hubo_negocio(c) == hubo_respuesta_del_negocio(c), c
+
+
+# --- LA COLA DE CORTESIA: el "gracias" despues del cierre ------------------------------
+#
+# EL CASO REAL que lo destapo (sesion 66e68dcc, 15-ago, revisando el rescore por interaccion):
+#     21:36:10  OPERADOR  "tu saldo ya esta disponible"   <- Michelle acredito bien
+#     21:36:12  NOTA      Michelle *resuelto*
+#     21:36:33  CLIENTE   "Ok listo bendiciones"          <- 21 SEGUNDOS despues
+#     21:36:34  NOTA      *Asignado automaticamente* a Michelle   <- el CRM reabre SOLO
+#     21:37:46  NOTA      Michelle *resuelto*             <- cierra sin escribir
+# Se cortaba como atencion nueva, sin respuesta del operador -> **1 estrella a Michelle**
+# por "nadie le respondio", 21 segundos despues de atender perfecto.
+#
+# `_pegar_continuaciones` NO lo agarra: pega hacia ADELANTE (fragmento sin negocio ->
+# siguiente que arranca con el negocio). Aca la evidencia va al reves: el "gracias" es la
+# COLA de la anterior, no la cabeza de la siguiente.
+#
+# Y NO ES SOLO EVITAR UN 1 ESTRELLA FALSO. `store.py` dice que
+# `signals.cliente_confirmo_resuelto` -- el cliente diciendo "ya pude, gracias" -- es
+# **ground truth del unico que sabe si su problema se resolvio**. Cortarlo afuera le ROBA a
+# la atencion anterior su mejor evidencia.
+#
+# EL UMBRAL SALE DEL DATO, sobre 717 "gracias" tras un cierre en 30 dias:
+#     <= 1 min   270 casos   88,1 por ciento mismo operador
+#     1-5 min    151 casos   88,1 por ciento
+#     5-15 min   125 casos   80,8 por ciento
+#     > 15 min   171 casos   55,0 por ciento   <- moneda al aire: ya es otra visita
+# A los 5 minutos la continuidad todavia se sostiene; pasados los 15 se cae a la mitad.
+
+def test_el_gracias_del_cliente_se_pega_a_la_atencion_QUE_LO_GANO():
+    """El caso de Michelle, tal cual paso."""
+    msgs = [
+        _m(0, False, "les mando el comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* Estamos verificando tu comprobante"),
+        _m(3, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(3, "Michelle"),
+        _m(3.5, False, "Ok listo bendiciones"),      # 30 s despues del cierre
+        _nota_cierre(5, "Michelle"),
+    ]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 1, (
+        f"el 'gracias' quedo como atencion aparte ({len(partes)} fragmentos): eso le pone "
+        f"1 estrella a quien acaba de acreditar bien"
+    )
+    textos = " ".join(m["body"] for m in partes[0])
+    assert "Ok listo bendiciones" in textos, "se pego pero se perdio el mensaje del cliente"
+
+
+def test_el_gracias_TARDIO_sigue_siendo_una_visita_nueva():
+    """Pasados los 15 minutos el mismo operador es moneda al aire (55 por ciento): el
+    cliente volvio de verdad y la regla del negocio manda -- visita nueva."""
+    msgs = [
+        _m(0, False, "les mando el comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(1, "Michelle"),
+        _m(40, False, "gracias"),                    # 39 minutos despues
+    ]
+    assert len(partir_en_interacciones(msgs)) == 2, (
+        "pego un 'gracias' de 39 minutos despues: a esa distancia ya es otra visita"
+    )
+
+
+def test_un_RECLAMO_despues_del_cierre_NO_se_pega():
+    """Los 102 casos de contenido real. Ahi el cliente dijo algo, nadie le contesto, y ese
+    1 estrella esta BIEN puesto: es justo lo que la regla vino a hacer visible."""
+    msgs = [
+        _m(0, False, "les mando el comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(1, "Michelle"),
+        _m(2, False, "no me llego nada, sigo sin ver el saldo en mi cuenta"),
+    ]
+    assert len(partir_en_interacciones(msgs)) == 2, (
+        "pego un RECLAMO como si fuera cortesia: eso esconde una atencion que nadie dio"
+    )
+
+
+def test_no_se_pega_si_el_operador_SI_contesto_el_gracias():
+    """Si el operador respondio, el fragmento es una atencion propia con su trabajo."""
+    msgs = [
+        _m(0, False, "comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(1, "Michelle"),
+        _m(2, False, "gracias"),
+        _m(2.5, True, "*Michelle:* un placer, cualquier cosa avisame"),
+        _nota_cierre(3, "Michelle"),
+    ]
+    partes = partir_en_interacciones(msgs)
+    assert len(partes) == 2, "se comio una atencion en la que el operador si trabajo"

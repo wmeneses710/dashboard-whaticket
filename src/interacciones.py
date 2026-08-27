@@ -67,6 +67,36 @@ _REAPERTURA_RE = re.compile(r"\*reabierto\*", re.IGNORECASE)
 # interaccion nueva por definicion del negocio.
 GRACIA_CIERRE_SEG = 120
 
+# LA COLA DE CORTESIA: el "gracias" que el cliente manda DESPUES del cierre.
+#
+# `GRACIA_CIERRE_SEG` es solo para el operador ("si el que vuelve a hablar es el CLIENTE,
+# eso es una interaccion nueva"). Esa regla es correcta para un cliente que VUELVE con algo,
+# y falsa para el que agradece: MEDIDO sobre el rescore por interaccion (2026-08-27), el
+# corte le ponia **1 estrella por "nadie le respondio"** a quien acababa de acreditar bien,
+# 21 segundos antes. Son ~157 casos por mes.
+#
+# Y NO ES SOLO EL FALSO 1 ESTRELLA. `store.py` declara que `signals.cliente_confirmo_resuelto`
+# -- el cliente diciendo "ya pude, gracias" -- es **ground truth del unico que sabe si su
+# problema se resolvio**. Cortarlo afuera le ROBA a la atencion anterior su mejor evidencia.
+#
+# EL UMBRAL SALE DEL DATO, sobre 717 "gracias" tras un cierre en 30 dias, mirando en cuantos
+# el que vuelve a cerrar es el MISMO operador (la senal de que es la misma atencion):
+#     <= 1 min   270 casos   88,1 por ciento
+#     1-5 min    151 casos   88,1 por ciento
+#     5-15 min   125 casos   80,8 por ciento
+#     > 15 min   171 casos   55,0 por ciento   <- moneda al aire: ahi si volvio de verdad
+# A los 5 minutos la continuidad se sostiene; pasados los 15 se cae a la mitad.
+GRACIA_CORTESIA_SEG = 300
+
+# Lo que el cliente dice cuando NO esta planteando nada. Se escribe aca y no se importa de
+# `signals` por el mismo motivo que `_hubo_negocio` esta duplicado: este modulo es de base y
+# lo importan deposito, retiro, agilidad, registro, metrics, worker y queries.
+_CORTESIA_RE = re.compile(
+    r"^\s*(muchas\s+|mil\s+)?"
+    r"(gracias|grax|ok+|oka|listo|dale|bueno|perfecto|excelente|genial|"
+    r"bendicion(es)?|saludos|de\s+nada|amen)\b",
+    re.IGNORECASE)
+
 
 def es_cierre(m: dict) -> bool:
     """El mensaje es la nota interna de cierre del operador."""
@@ -157,6 +187,60 @@ def _pegar_continuaciones(partes: list[list[dict]]) -> list[list[dict]]:
     return out
 
 
+def _solo_cortesia_del_cliente(frag: list[dict]) -> bool:
+    """TODOS los mensajes reales del fragmento son del cliente y son cortesia.
+
+    Exige al menos uno: un fragmento sin mensajes reales no es una cola, es ruido de notas.
+    Un media suelto NO es cortesia -- un comprobante despues del cierre es un planteo.
+    """
+    reales = [m for m in frag if not m.get("is_note")]
+    if not reales:
+        return False
+    for m in reales:
+        if m.get("from_me"):
+            return False
+        if (m.get("media_type") or "chat") != "chat":
+            return False
+        if not _CORTESIA_RE.match(m.get("body") or ""):
+            return False
+    return True
+
+
+def _es_cola_de_cortesia(frag: list[dict], previa: list[dict]) -> bool:
+    """El fragmento es el "gracias" con el que el cliente cierra la atencion `previa`."""
+    if _hubo_negocio(frag) or not _solo_cortesia_del_cliente(frag):
+        return False
+    # La previa tiene que haber CERRADO: sin cierre no hay cola que pegar, es la misma
+    # conversacion siguiendo y de eso ya se ocupa el corte por silencio.
+    if not any(es_cierre(m) for m in previa):
+        return False
+    ultimo_previo = max((m["created_at"] for m in previa if not m.get("is_note")), default=None)
+    primero = min((m["created_at"] for m in frag if not m.get("is_note")), default=None)
+    if ultimo_previo is None or primero is None:
+        return False
+    return (primero - ultimo_previo).total_seconds() <= GRACIA_CORTESIA_SEG
+
+
+def _pegar_colas_de_cortesia(partes: list[list[dict]]) -> list[list[dict]]:
+    """Pega hacia ATRAS el "gracias" que quedo del otro lado del cierre.
+
+    Es la regla espejo de `_pegar_continuaciones`: alla la evidencia esta ADELANTE (el
+    operador responde en el fragmento siguiente), aca esta ATRAS (el cliente confirma lo que
+    el operador ya hizo). Hacia adelante no se puede pegar: el fragmento siguiente arranca
+    con el CLIENTE, y ahi la regla del negocio dice visita nueva.
+
+    NO se exige el mismo operador. Si el CRM reasigna el "gracias" a otra persona, sigue
+    siendo la cola de la atencion que lo gano -- y era el 12 por ciento de los casos.
+    """
+    out: list[list[dict]] = []
+    for frag in partes:
+        if out and _es_cola_de_cortesia(frag, out[-1]):
+            out[-1] = out[-1] + frag
+        else:
+            out.append(frag)
+    return out
+
+
 def partir_en_interacciones(messages: list[dict]) -> list[list[dict]]:
     """Parte el transcript en INTERACCIONES, cortando despues de cada nota de cierre.
 
@@ -204,7 +288,10 @@ def partir_en_interacciones(messages: list[dict]) -> list[list[dict]]:
     reales = [i for i in out if any(not m.get("is_note") for m in i)]
     # El pegado va DESPUES del filtro: un fragmento de puras notas no es una atencion y no
     # puede quedar en el medio decidiendo si dos mitades se juntan.
-    return _pegar_continuaciones(reales)
+    # Y las colas de cortesia van AL FINAL: primero se arma cada atencion con su respuesta
+    # (pegado hacia adelante) y recien despues se le engancha el "gracias" que la cierra.
+    # Al reves, el "gracias" podria pegarse a una mitad que todavia no tiene su operador.
+    return _pegar_colas_de_cortesia(_pegar_continuaciones(reales))
 
 
 def tiempos_de(interaccion: list[dict]) -> tuple:
