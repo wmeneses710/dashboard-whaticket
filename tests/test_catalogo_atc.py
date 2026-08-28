@@ -99,10 +99,32 @@ def test_el_bloque_del_prompt_lleva_los_doce_con_su_frase():
 
 
 def test_las_respuestas_rapidas_son_las_que_el_manual_nombra():
-    """Sirven para escribir el coaching en su jerga: "usa /R5PLACER" dice más que "mandá un
+    """Sirven para escribir el coaching en su jerga: "usa R5PLACER" dice más que "mandá un
     mensaje de seguimiento"."""
-    for rr in ("/Bienvenida", "/FIN", "/R5Placer", "/Visto", "/VerificarCuenta"):
+    for rr in ("BIENVENIDA", "FIN", "R5PLACER", "VISTO", "VERIFICARCUENTA"):
         assert rr in RESPUESTAS_RAPIDAS, rr
     for nombre, para_que in RESPUESTAS_RAPIDAS.items():
-        assert nombre.startswith("/"), nombre
         assert para_que, f"{nombre} sin explicación de para qué sirve"
+
+
+def test_los_nombres_se_copian_VERBATIM_del_crm_sin_inventar_una_barra():
+    """Hasta el 2026-08-28 todas llevaban una barra delante y ninguna coincidía con la
+    grafía real: el operador la buscaba en Whaticket y no la encontraba. Y la barra NO es un
+    prefijo uniforme — en el catálogo real hay shortcuts con ella (`/000`, `/888ALE`) y sin
+    ella (`FIN`, `R3RECARGA`), así que ponerla "para que se lea mejor" es inventar un nombre.
+    El chequeo contra el CRM de verdad vive en tests/test_catalogo_atc_contra_el_crm.py."""
+    inventadas = [n for n in RESPUESTAS_RAPIDAS if n.startswith("/")]
+    assert not inventadas, (
+        f"estas llevan una barra que hay que verificar contra `fast_responses` antes de "
+        f"mostrarla: {inventadas}"
+    )
+
+
+def test_R3RECARGA_no_se_describe_como_la_carga_en_curso():
+    """Su texto real dice "Tu saldo ya está disponible": es la acreditación CONSUMADA.
+    Describirla como "en curso" empujaba al operador a mandarla antes de acreditar — le
+    miente al cliente Y hace que `operator_acreditacion` marque acredito=True sin plata
+    entrada. El momento "en curso" lo cubren R1SOLICITUDDECARGA y R2VERIFICACIONDEBOLETA."""
+    assert "en curso" not in RESPUESTAS_RAPIDAS["R3RECARGA"].lower()
+    assert "en curso" in RESPUESTAS_RAPIDAS["R1SOLICITUDDECARGA"].lower() or \
+           "proceso" in RESPUESTAS_RAPIDAS["R1SOLICITUDDECARGA"].lower()

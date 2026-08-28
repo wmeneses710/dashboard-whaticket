@@ -134,22 +134,58 @@ PRACTICAS: tuple[Practica, ...] = (
 )
 
 # --- LAS RESPUESTAS RAPIDAS -------------------------------------------------------
-# El catalogo que el manual nombra. Sirve para DOS cosas: escribir el coaching en su jerga
-# ("usa /R5PLACER" dice mas que "manda un mensaje de seguimiento"), y para auditar el error
-# E10 el dia que el negocio nos pase el TEXTO CANONICO de cada una -- que el manual NO
-# incluye, y sin el "no alterar la plantilla" no se puede medir.
+# El catalogo que el manual nombra. Sirve para escribir el coaching en su jerga: "usa
+# R5PLACER" dice mas que "manda un mensaje de seguimiento", porque el operador la tiene en
+# Whaticket y sabe cual es.
+#
+# LAS GRAFIAS SALEN DEL CRM, NO DEL MANUAL (corregido el 2026-08-28). Hasta hoy estaban
+# transcritas a mano desde el manual, con una barra delante y en minusculas, y NINGUNA
+# coincidia con la que el operador ve en su lista:
+#
+#     lo que mostrabamos            lo que el operador tiene en Whaticket
+#     /R2verificaciondeboleta       R2VERIFICACIONDEBOLETA
+#     /R3Recarga                    R3RECARGA
+#     /Bienvenida                   BIENVENIDA
+#     /contacto no registrado       CONTACTO NO REGISTRADO
+#     /VerificarCuenta              VERIFICARCUENTA
+#     /R1solicituddecarga           R1SOLICITUDDECARGA
+#     /FIN                          FIN
+#     /R5Placer                     R5PLACER
+#     /Visto                        VISTO
+#     /Link afiliado nuevo jugador  NO EXISTE
+#
+# El sentido de nombrarlas era "no dejar nada que interpretar"; con la grafia mal dejaba
+# TODO que interpretar -- el operador la busca y no la encuentra, y encima eso es el propio
+# error critico E10 ("alterar respuestas rapidas... o informacion oficial").
+#
+# LA BARRA NO ES UN PREFIJO UNIFORME. En el catalogo real hay shortcuts CON barra (`/000`,
+# `/888ALE`, `/agenteverificacion`, `/tuverificacion`) y sin ella (`FIN`, `BIENVENIDA`,
+# `R3RECARGA`). Ponerla o quitarla "para que se lea mejor" es inventar un nombre.
+# Se copian VERBATIM, y el contrato lo ata tests/test_catalogo_atc_contra_el_crm.py contra
+# `fast_responses` -- el unico chequeo que no es circular.
 RESPUESTAS_RAPIDAS: dict[str, str] = {
-    "/Bienvenida": "saludo inicial, para no pasarse del minuto mientras se arma la respuesta",
-    "/contacto no registrado": "pedir los datos del cliente de forma estructurada",
-    "/VerificarCuenta": "guiar la verificación de la cuenta",
-    "/Link afiliado nuevo jugador": "enviar el enlace oficial de registro",
-    "/R1solicituddecarga": "acusar la solicitud de carga",
-    "/R2verificaciondeboleta": "avisar que se está verificando el comprobante",
-    "/R3Recarga": "confirmar que la recarga está en curso",
-    "/FIN": "despedida, una vez resuelta la solicitud",
-    "/R5Placer": "cierre tras la espera, o seguimiento del cliente que no responde",
-    "/Visto": "cerrar el chat después de los 5 minutos de espera",
+    "BIENVENIDA": "saludo inicial, para no pasarse del minuto mientras se arma la respuesta",
+    "CONTACTO NO REGISTRADO": "pedir los datos del cliente de forma estructurada",
+    "VERIFICARCUENTA": "guiar la verificación de la cuenta",
+    "R1SOLICITUDDECARGA": "acusar la solicitud de carga, que queda en proceso",
+    "R2VERIFICACIONDEBOLETA": "avisar que se está verificando el comprobante",
+    # NO es "en curso", y la diferencia importa: su texto real dice "Tu saldo ya está
+    # disponible", o sea la acreditacion CONSUMADA. Aconsejar mandarla mientras la carga
+    # sigue en curso le miente al cliente Y hace que `signals.operator_acreditacion` marque
+    # acredito=True sin que la plata haya entrado (medido: la senal la lee como ACREDITO).
+    # El momento "en curso" lo cubren R1SOLICITUDDECARGA y R2VERIFICACIONDEBOLETA.
+    "R3RECARGA": "confirmar que el saldo YA quedó acreditado",
+    "FIN": "despedida, una vez resuelta la solicitud",
+    "R5PLACER": "cierre tras la espera, o seguimiento del cliente que no responde",
+    "VISTO": "cerrar el chat después de los 5 minutos de espera",
 }
+# SACADA: "/Link afiliado nuevo jugador" ("enviar el enlace oficial de registro"). El manual
+# la nombra y el CRM NO la tiene con ningun nombre parecido. Los dos candidatos por
+# CONTENIDO son `A1.1JG` ("Regístrate en Sorti365... Link de registro") en `sistemas` y
+# `LINK SORTIGO` (solo la URL) en `datos`, pero ninguno se llama asi, y elegir uno seria
+# inventar un mapeo que el manual no hizo. Se saca en vez de adivinar: mostrar en el tablero
+# un shortcut que no existe es peor que no mostrarlo. PENDIENTE de que el negocio confirme si
+# `A1.1JG` es su sucesora.
 
 # Indices por codigo, para que el tablero y las rubricas no recorran la tupla.
 ERROR_POR_CODIGO: dict[str, Falta] = {f.codigo: f for f in ERRORES}

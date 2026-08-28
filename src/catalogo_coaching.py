@@ -83,12 +83,12 @@ _AGILIDAD: tuple[Consejo, ...] = (
             practica="B10"),
     Consejo("C02", "agilidad", "deficiente", "tardó más de 15 minutos",
             "La respuesta tardó más de 15 minutos. Son operaciones de rutina que no "
-            "necesitan verificación: se puede avisar con /Bienvenida enseguida y "
+            "necesitan verificación: se puede avisar con BIENVENIDA enseguida y "
             "confirmar al acreditar.",
             practica="B10"),
     Consejo("C03", "agilidad", "aceptable", "tardó más de 5 minutos",
             "La respuesta tardó más de 5 minutos. Si no se puede procesar en el momento, "
-            "/Bienvenida alcanza para que el agente no quede esperando sin saber: el "
+            "BIENVENIDA alcanza para que el agente no quede esperando sin saber: el "
             "objetivo del manual es 1 minuto.",
             practica="B10"),
     Consejo("C04", "agilidad", "buena", "cerca del minuto",
@@ -157,12 +157,12 @@ _DEPOSITO: tuple[Consejo, ...] = (
     Consejo("C13", "deposito", "2_sin_acreditar", "no confirmó que la plata entró",
             "Conviene confirmar que la plata entró con una línea al cierre: \"listo, ya "
             "tienes tu saldo\". Un \"en breve\" deja esa pregunta sin responder, y el "
-            "cierre con /FIN recién corresponde cuando la gestión terminó.",
+            "cierre con FIN recién corresponde cuando la gestión terminó.",
             practica="B12"),
     Consejo("C14", "deposito", "2_tarde", "tardó el primer aviso",
             "El primer aviso tardó demasiado. El manual separa los dos momentos y les "
-            "da una respuesta rápida a cada uno: /R2verificaciondeboleta apenas entra "
-            "el comprobante, y /R3Recarga cuando la carga ya está en curso.",
+            "da una respuesta rápida a cada uno: R2VERIFICACIONDEBOLETA apenas entra "
+            "el comprobante, y R3RECARGA cuando el saldo ya quedó acreditado.",
             practica="B07"),
     Consejo("C15", "deposito", "3", "no acusó el comprobante al entrar",
             "Un primer mensaje corto —\"ya lo recibí, lo reviso\"— apenas entra el "
@@ -289,7 +289,7 @@ _SOPORTE: tuple[Consejo, ...] = (
 #   "Toda informacion proporcionada por un agente debe ser verificada antes de proceder
 #    (montos, tickets, datos del jugador). No se deben ejecutar procesos sin confirmar."
 #   "Debido a que muchos no responden despues de recibir la informacion, el operador PUEDE
-#    cerrar el chat cuando el caso haya sido resuelto" -- con /Fin y 5 minutos de espera.
+#    cerrar el chat cuando el caso haya sido resuelto" -- con FIN y 5 minutos de espera.
 # La segunda es la que cambia el consejo del 4: al agente NO se le exige la pregunta de
 # cierre, porque el propio manual lo releva de esperar una respuesta que suele no llegar.
 _INFO_AGENTE: tuple[Consejo, ...] = (
@@ -303,11 +303,11 @@ _INFO_AGENTE: tuple[Consejo, ...] = (
             practica="B10", segmento="agente"),
     Consejo("C38", "info", "3", "pasó del minuto con el agente",
             "El objetivo es 1 minuto para la primera respuesta, aunque sea parcial: "
-            "/Bienvenida alcanza para que el agente sepa que su consulta entró.",
+            "BIENVENIDA alcanza para que el agente sepa que su consulta entró.",
             practica="B10", segmento="agente"),
-    Consejo("C39", "info", "4", "cerró sin /FIN ni la espera",
+    Consejo("C39", "info", "4", "cerró sin FIN ni la espera",
             "Con agentes el manual permite cerrar cuando el caso está resuelto, sin esperar "
-            "respuesta. Lo que sí pide es cerrar con /FIN y dejar 5 minutos antes de "
+            "respuesta. Lo que sí pide es cerrar con FIN y dejar 5 minutos antes de "
             "finalizar el chat.",
             practica="B12", segmento="agente"),
 )

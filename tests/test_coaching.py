@@ -355,12 +355,37 @@ def test_el_coaching_dice_COMO_no_solo_QUE_paso():
 def test_ninguna_respuesta_rapida_del_coaching_esta_inventada():
     """Si un consejo nombra una plantilla que no existe, manda al operador a buscar algo que
     no va a encontrar -- y peor, contradice al propio manual, que prohibe alterar o inventar
-    respuestas rapidas (error critico E10). El catalogo es src/catalogo_atc.py."""
+    respuestas rapidas (error critico E10). El catalogo es src/catalogo_atc.py.
+
+    REESCRITO EL 2026-08-28, y el motivo importa: este chequeo buscaba menciones con el
+    patron `/Nombre`. Cuando las grafias se corrigieron a las REALES del CRM (`FIN`,
+    `R3RECARGA`, sin barra), el patron dejo de encontrar nada y el test habria seguido verde
+    **sin chequear absolutamente nada**. Un test que deja de mirar es peor que no tenerlo.
+    Ahora hay dos mitades: una POSITIVA (lo que se nombra tiene que estar en el catalogo) y
+    una NEGATIVA (no puede aparecer un `/Algo` inventado).
+
+    Y este sigue siendo el chequeo CIRCULAR: compara el coaching contra NUESTRA lista. El que
+    compara contra el CRM de verdad es tests/test_catalogo_atc_contra_el_crm.py, que necesita
+    BD. Los dos valen: este corre siempre, aquel es el que caza una grafia mal.
+    """
     barra = re.compile(r"/[A-Za-z][A-Za-z0-9áéíóúñ]*")
     conocidas = {rr.lower() for rr in RESPUESTAS_RAPIDAS}
+    # Los shortcuts que el catalogo declara, ordenados por largo para que el mas especifico
+    # gane: sin eso, "FIN" matchearia dentro de otro nombre que lo contenga.
+    nombres = sorted(RESPUESTAS_RAPIDAS, key=len, reverse=True)
+    vistos = 0
     for clave, texto in _todos_los_textos():
+        # NEGATIVO: cualquier `/Algo` tiene que estar en el catalogo (por si alguien vuelve a
+        # escribir una plantilla con barra inventada).
         for m in barra.findall(texto):
             assert m.lower() in conocidas, f"{clave} nombra {m!r}, que no está en el catálogo"
+        # POSITIVO: contar las menciones reales, para que el test no pueda volverse vacuo.
+        vistos += sum(1 for n in nombres if n in texto)
+    assert vistos >= 4, (
+        f"el coaching solo nombra {vistos} respuestas rápidas: o se dejaron de nombrar, o "
+        f"las grafías del catálogo ya no coinciden con los textos y este chequeo se quedó "
+        f"mirando la nada"
+    )
 
 
 def _ngramas(texto: str, n: int = 5) -> set[str]:
