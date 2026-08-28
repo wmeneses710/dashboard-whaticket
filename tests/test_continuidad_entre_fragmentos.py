@@ -290,3 +290,69 @@ def test_pasados_los_diez_minutos_el_gracias_NO_se_pega():
     assert len(partir_en_interacciones(msgs)) == 2, (
         "pego un 'gracias' de 11 minutos: la ventana se abrio a 10, no se elimino"
     )
+
+
+# --- CAPA 1: el predicado de la cola pasa a `signals.client_sin_motivo` ---------------
+#
+# `_CORTESIA_RE` es un lexico fijo y tenia los dos errores posibles a la vez.
+#
+# SE LE ESCAPABAN COLAS REALES. Caso de produccion (2026-08-28, interaccion `319e88cc`):
+# Ramirez acredito bien, el cliente escribio "Mut amable" **once segundos** despues del
+# cierre, el CRM reasigno a Mario y **Mario cobro 1 estrella sin escribir una palabra**. No
+# fallo la ventana (11 s contra 600): fallo el lexico. Y no era solo el typo -- "Muy amable",
+# bien escrito, TAMPOCO estaba.
+#
+# Y PEGABA RECLAMOS REALES. El patron no tiene ancla de cierre, asi que
+# `^\s*(ok+)\b` matchea "Ok no me acreditaron": pegar eso a la atencion anterior ESCONDE un
+# 1 estrella bien puesto, que es el error caro.
+#
+# `client_sin_motivo` acierta en los dos lados y ya esta verificada contra el modelo
+# (gemma4:12b, 40/40 sobre muestra mixta con control, ver scripts/bench_sin_motivo.py).
+# Medido sobre los fragmentos reales de 30 dias: reconoce 'Graciad', 'Graciass', 'Tks',
+# 'Muy  amable' (doble espacio), 'Ya', 'Si 👍🏼' y los emoji sueltos, y rechaza los reclamos.
+
+def test_la_cola_con_TYPO_se_pega():
+    """El caso de Mario, tal cual paso: 11 segundos despues del cierre."""
+    msgs = [
+        _m(0, False, "comprobante", media_type="image"),
+        _m(2, True, "*Ramirez:* ¡Gracias por tu recarga! Tu saldo ya está disponible"),
+        _nota_cierre(2, "Ramirez"),
+        _m(2.2, False, "Muy amable"),
+    ]
+    assert len(partir_en_interacciones(msgs)) == 1, (
+        "no pego 'Muy amable': el lexico fijo no lo tiene, y por eso un operador que no "
+        "escribio nada cobra el 1 estrella de otro"
+    )
+
+
+def test_la_cola_MAL_ESCRITA_se_pega():
+    """'Graciad', 'Graciass', 'Tks': un lexico fijo no absorbe typos ni otro idioma."""
+    for texto in ("Graciad", "Graciass", "Tks", "Ya esta gracias"):
+        msgs = [
+            _m(0, False, "comprobante", media_type="image"),
+            _m(2, True, "*Ana:* tu saldo ya esta disponible"),
+            _nota_cierre(2, "Ana"),
+            _m(2.5, False, texto),
+        ]
+        assert len(partir_en_interacciones(msgs)) == 1, f"no pego {texto!r}"
+
+
+def test_el_RECLAMO_que_arranca_con_cortesia_NO_se_pega():
+    """EL ERROR CARO que `_CORTESIA_RE` cometia: no tiene ancla de cierre, asi que
+    'Ok no me acreditaron' le daba True y el reclamo se pegaba a la atencion anterior,
+    escondiendo un 1 estrella bien puesto."""
+    for texto in ("Ok no me acreditaron",
+                  "Ok pero aun no me llega",
+                  "listo pero no me llego nada",
+                  "Bueno y cuando me acreditan?",
+                  "Perfecto pero me falta el bono",
+                  "dale pero sigo sin poder entrar"):
+        msgs = [
+            _m(0, False, "comprobante", media_type="image"),
+            _m(2, True, "*Ana:* tu saldo ya esta disponible"),
+            _nota_cierre(2, "Ana"),
+            _m(2.5, False, texto),
+        ]
+        assert len(partir_en_interacciones(msgs)) == 2, (
+            f"pego {texto!r} como si fuera cortesia: eso esconde una atencion que nadie dio"
+        )

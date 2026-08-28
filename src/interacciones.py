@@ -203,11 +203,33 @@ def _pegar_continuaciones(partes: list[list[dict]]) -> list[list[dict]]:
 
 
 def _solo_cortesia_del_cliente(frag: list[dict]) -> bool:
-    """TODOS los mensajes reales del fragmento son del cliente y son cortesia.
+    """TODOS los mensajes reales del fragmento son del cliente y NO plantean nada.
 
     Exige al menos uno: un fragmento sin mensajes reales no es una cola, es ruido de notas.
     Un media suelto NO es cortesia -- un comprobante despues del cierre es un planteo.
+
+    LO DECIDE `signals.client_sin_motivo`, NO UN LEXICO PROPIO (cambiado el 2026-08-28).
+    `_CORTESIA_RE` tenia los DOS errores posibles a la vez:
+
+      * SE LE ESCAPABAN COLAS REALES. Caso de produccion (interaccion `319e88cc`): Ramirez
+        acredito bien, el cliente escribio "Mut amable" **once segundos** despues del cierre,
+        el CRM reasigno a Mario y Mario cobro 1 estrella sin escribir una palabra. No fallo la
+        ventana (11 s contra 600): fallo el lexico -- y no era solo el typo, "Muy amable" bien
+        escrito TAMPOCO estaba. Igual con 'Graciad', 'Graciass', 'Tks', 'Ya', los emoji.
+      * Y PEGABA RECLAMOS. El patron no tiene ancla de cierre, asi que `^\\s*(ok+)\\b` matchea
+        "Ok no me acreditaron": pegar eso a la atencion anterior ESCONDE un 1 estrella bien
+        puesto, que es el error CARO.
+
+    `client_sin_motivo` acierta en los dos lados y ya esta verificada contra el modelo
+    (gemma4:12b, 40/40 sobre muestra mixta con control, ver scripts/bench_sin_motivo.py).
+
+    IMPORT LAZY a proposito, mismo patron que `metrics.operadores_por_interaccion` con este
+    modulo: `interacciones` es de base y lo importan deposito, retiro, agilidad, registro,
+    metrics, worker y queries. No hay ciclo real (`signals` no importa `interacciones`), pero
+    colgar el modulo de base de `signals` a nivel de import invierte el layering para nada.
     """
+    from src.signals import client_sin_motivo
+
     reales = [m for m in frag if not m.get("is_note")]
     if not reales:
         return False
@@ -216,9 +238,7 @@ def _solo_cortesia_del_cliente(frag: list[dict]) -> bool:
             return False
         if (m.get("media_type") or "chat") != "chat":
             return False
-        if not _CORTESIA_RE.match(m.get("body") or ""):
-            return False
-    return True
+    return client_sin_motivo(reales)
 
 
 def _es_cola_de_cortesia(frag: list[dict], previa: list[dict]) -> bool:

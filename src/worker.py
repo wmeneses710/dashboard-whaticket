@@ -14,6 +14,7 @@ from datetime import timedelta
 from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
 from src import errores
+from src.cola_de_cortesia import decidir_con_el_modelo, necesita_el_modelo
 from src.deposito import es_transaccion as es_transaccion_deposito
 from src.deposito import score_deposito
 from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
@@ -127,6 +128,69 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
         upsert_score(cur, record)
     conn.commit()
     return eval_status, skip_reason, score
+
+
+def _ultimo_del_negocio(msgs_sesion: list[dict], desde) -> str:
+    """Lo ultimo que el negocio le dijo al cliente ANTES de este fragmento.
+
+    Es el contexto sin el cual el modelo no puede decidir: "ya esta" contesta a "tu saldo ya
+    esta disponible", y plantea algo si viene solo.
+    """
+    previos = [m for m in msgs_sesion
+               if m.get("from_me") and not m.get("is_note")
+               and m.get("created_at") is not None
+               and (desde is None or m["created_at"] < desde)]
+    return (previos[-1].get("body") or "") if previos else ""
+
+
+def _disposicion_de_la_cola(msgs: list[dict], ultimo_del_negocio: str, llm):
+    """(eval_status, skip_reason, score) si el fragmento es una cola de cortesia; None si no.
+
+    LA COMPUERTA DE LA CAPA 2. `score_sin_respuesta` corre PRIMERO y esa prioridad es del
+    negocio ("si no hubo respuesta, ese caso manda"): NO se invierte. Lo que se le pone
+    adelante es esta compuerta, que solo se abre para el RESIDUO -- el fragmento que ya
+    parece cola pero que la capa determinista no reconoce (24 en 30 dias) -- y solo si el
+    modelo afirma que no habia nada que contestar.
+
+    DEVUELVE None ANTE CUALQUIER DUDA, y ese es el punto: sin LLM, con el modelo caido, con
+    una respuesta fuera del enum o con una excepcion, la nota es la de siempre. Una
+    inferencia que no llego no puede borrar una falla real. Ver src/cola_de_cortesia.py.
+
+    SKIP y no nota: `solo_cortesia` daria 3 estrellas aca (el cliente SIEMPRE se queda con la
+    ultima palabra en este caso) y su `rubric="human"` declara que el negocio escribio, que
+    es falso. El skip lleva causa propia y `SKIP_LABEL` la desglosa, asi que la fila se sigue
+    contando en la tarjeta de sin evaluar -- que es lo que el negocio pidio cuando saco
+    `redireccion` de ser un skip mudo el 2026-08-20.
+
+    LA DISTANCIA NO DECIDE EL CASTIGO (decision del negocio, 2026-08-28). Textual: *"merece
+    el skip porque para el usuario es la misma conversacion, no quiere nada mas, no se debe
+    castigar a ATC por algo que no requiere atencion"*. Eso separa dos cosas que estaban
+    pegadas: `GRACIA_CORTESIA_SEG` (10 min) gobierna la ATRIBUCION -- si la cola se pega, el
+    operador anterior se lleva la evidencia de que el cliente quedo conforme -- y NO gobierna
+    el castigo. Cerraba el hueco mas grande: de los 65 fragmentos que cobraban 1 estrella en
+    30 dias, **35 eran cortesia pura fuera de la ventana**, y ni la capa 1 los pegaba ni la
+    compuerta les preguntaba.
+    """
+    reales = [m for m in msgs if not m.get("is_note")]
+    if not reales or any(m.get("from_me") for m in reales):
+        # El negocio escribio (o no hay nada real): la atencion existio.
+        return None
+    # CAPA 1, y GRATIS: si el determinista ya sabe que es cortesia, no se paga inferencia.
+    # `client_sin_motivo` esta verificada 40/40 contra el modelo (scripts/bench_sin_motivo.py),
+    # asi que preguntarle seria pagar para que confirme.
+    from src.signals import client_sin_motivo
+    if client_sin_motivo(reales):
+        return "skipped", "cola_de_cortesia", None
+    # CAPA 2: el residuo -- lo que parece cola pero el patron no reconoce (typos, 'Liato').
+    if llm is None or not necesita_el_modelo(msgs):
+        return None
+    try:
+        es_cola = decidir_con_el_modelo(msgs, ultimo_del_negocio, llm)
+    except Exception:  # noqa: BLE001 - un fallo del modelo no puede tumbar el scoring
+        return None
+    if es_cola is not True:
+        return None
+    return "skipped", "cola_de_cortesia", None
 
 
 def _registrar_fallo(component: str, exc: BaseException, account: str | None,
@@ -366,7 +430,19 @@ def _score_interaccion_y_persiste(conn, sess: dict, msgs: list[dict],
         # escribio nada es gasto puro. Hasta el 2026-08-21 esto era el skip `no_agent_reply`
         # y escondia 1.167 sesiones. Ver src/sin_respuesta.py.
         score = score_sin_respuesta(msgs)
+        # LA COMPUERTA DE LA CAPA 2, y va DESPUES de calcular `score_sin_respuesta` a
+        # proposito: solo se consulta al modelo por un fragmento que EFECTIVAMENTE iba a
+        # cobrar el 1 estrella. Si `sin_respuesta` no dispara, no hay nada que evitar y no se
+        # paga inferencia. Ver `_disposicion_de_la_cola` y src/cola_de_cortesia.py.
         if score is not None:
+            _cola = _disposicion_de_la_cola(
+                msgs, _ultimo_del_negocio(msgs_sesion, interaccion_ini), llm)
+            if _cola is not None:
+                eval_status, skip_reason, score = _cola
+        if score is not None:
+            pass
+        elif eval_status != "evaluated":
+            # La compuerta lo saco de `evaluated`: no se le busca rubrica.
             pass
         elif client_sin_motivo(msgs):
             # EL CLIENTE NO PLANTEO NADA: se juzga el estandar de cierre y nada mas. VA

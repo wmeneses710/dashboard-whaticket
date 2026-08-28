@@ -783,7 +783,76 @@ from src.segments import segment_for_queue
 #     construccion -- lo que pega es cortesia pura, y esa señal exige que el cliente diga que
 #     FUNCIONO ("ya pude"), que no arranca con token de cortesia y por lo tanto no pega.
 #     Disparo 0 de 719 fragmentos reales (control negativo: da True en el caso sintetico).
-SCORING_VERSION = "2026.08-rubricas-v23"
+# 2026.08-rubricas-v24 (2026-08-28). NO SE CASTIGA POR NO CONTESTAR ALGO QUE NO PEDIA
+# ATENCION. Decision del negocio, textual: *"merece el skip porque para el usuario es la
+# misma conversacion, no quiere nada mas, no se debe castigar a ATC por algo que no requiere
+# atencion"*.
+#
+# EL CASO QUE LO ORIGINO (interaccion `319e88cc`, visto por el negocio en el tablero):
+#     17:51:25  RAMIREZ   "¡Gracias por tu recarga, Edgar! Tu saldo ya está disponible"
+#     17:51:26  NOTA      Ramirez *resuelto*
+#     17:51:38  CLIENTE   "Mut amable"                       <- 11 SEGUNDOS despues
+#     17:51:38  NOTA      *Asignado automáticamente* a MARIO
+#     17:52:53  NOTA      Mario *resuelto*
+# Ramirez atendio perfecto y **Mario cobro 1 estrella sin escribir una palabra**. No fallo la
+# ventana de 10 min: fallo el LEXICO -- `_CORTESIA_RE` no tenia "Mut amable", ni "Muy amable"
+# bien escrito, ni 'Graciad', 'Graciass', 'Tks', 'Ya', ni los emoji.
+#
+# DOS CAPAS, y la segunda casi no se usa.
+#   * CAPA 1 (determinista, gratis): `interacciones._solo_cortesia_del_cliente` pasa de
+#     `_CORTESIA_RE` a `signals.client_sin_motivo`. Arregla los DOS errores del lexico a la
+#     vez -- ahora reconoce las colas mal escritas Y **deja de pegar reclamos**: el patron no
+#     tenia ancla de cierre, asi que `^\\s*(ok+)\\b` matcheaba "Ok no me acreditaron" y pegar
+#     eso a la atencion anterior ESCONDIA un 1 estrella bien puesto (el error CARO).
+#     `client_sin_motivo` ya estaba verificada 40/40 contra el modelo.
+#   * CAPA 2 (el modelo, solo el residuo): `worker._disposicion_de_la_cola` +
+#     `src/cola_de_cortesia.py`, para lo que el patron no absorbe (typos, 'Liato').
+#
+# LA DISTANCIA DEJA DE DECIDIR EL CASTIGO, y eso separa dos cosas que estaban pegadas:
+# `GRACIA_CORTESIA_SEG` (10 min) gobierna la ATRIBUCION -- si la cola se pega, el operador
+# anterior se lleva la evidencia de que el cliente quedo conforme -- y ya NO gobierna si se
+# castiga. Cerraba el bucket mas grande: de 65 filas con 1 estrella, **35 eran cortesia pura
+# fuera de la ventana** y ni la capa 1 las pegaba ni la compuerta les preguntaba.
+#
+# MEDIDO con codigo de produccion sobre 4.000 sesiones de 30 dias:
+#     antes:  65 fragmentos cobran 1 estrella por "nadie le respondio"
+#     ahora:  50 pasan a skip `cola_de_cortesia` · 15 conservan el 1 estrella
+#     costo:  25 inferencias en 30 dias = **0,8 por dia** (las 38 deterministas no cuestan)
+# Los 15 que quedan piden atencion de verdad: 'Mi bono', un formulario de retiro con cedula y
+# cuenta, '¿Como accedo a sortiGo...?', y -- el adversarial en datos reales -- 'Muchas
+# gracias, una pregunta hoy se hara efectivo el tema de...', que arranca agradeciendo y
+# esconde una pregunta.
+#
+# EL MODELO SE BENCHEO ANTES DE CABLEARLO, con las dos trampas de scripts/bench_sin_motivo.py
+# (la opcion de IGNORAR existe en el enum; la muestra es MIXTA, asi que "ignorar a todo" saca
+# 42,9% y no 100%). gemma4:12b sobre 77 casos reales + 12 adversariales:
+#     acierto global ............... 88/89
+#     planteos que dejaria pasar ....  0 de 52   <- el error CARO, que es el que importa
+#     gracias que castigaria ........  1 de 33   <- un '💸' que la capa 1 resuelve antes
+#
+# LA POLARIDAD DEL RIESGO ESTA EN CUATRO LUGARES, no en uno: el prompt dice que ante la duda
+# se PUNTUA; la compuerta va DESPUES de calcular `score_sin_respuesta`, asi que solo se
+# consulta por un fragmento que efectivamente iba a cobrar el 1 estrella; `necesita_el_modelo`
+# no pregunta por lo que no parece cola (con media suelto, con mensaje del negocio); y
+# CUALQUIER fallo -- sin LLM, timeout, JSON roto, respuesta fuera del enum -- devuelve None,
+# que se trata como "puntua". Nunca se pierde un reclamo por una inferencia que no llego.
+#
+# INTEGRIDAD DEL RESCORE, verificada antes de subir:
+#   - LA PK SOBREVIVE: el corte cambia, pero `_pegar_colas_de_cortesia` mete la cola DENTRO
+#     del fragmento anterior, asi que el inicio del anterior no se mueve. De las 193 filas
+#     scoreadas, **192 conservan su `interaccion_id` y 1 queda huerfana**. No hace falta
+#     borrar el rescore: el upsert pisa bien.
+#   - `skip_reason` NO tiene CHECK enumerado, asi que `cola_de_cortesia` entra sin migracion;
+#     `chk_eval_coherence` se cumple (skipped -> stars NULL + skip_reason NOT NULL) y el
+#     `rubric` sigue siendo 'human', como los otros skips.
+#   - Ninguna query enumera `skip_reason` a mano. La etiqueta se agrego a `SKIP_LABEL` del
+#     front, para que la fila se siga CONTANDO en la tarjeta de sin evaluar y no desaparezca
+#     -- que es lo que el negocio pidio cuando `redireccion` dejo de ser un skip mudo.
+#   - IDEMPOTENCIA PARCIAL, y hay que saberlo: el corte y las claves son deterministas, pero
+#     la capa 2 no. Los ~25 fragmentos que llegan al modelo pueden decidirse distinto entre
+#     dos corridas (piso de ruido del modelo en este repo: 2,1%, o sea menos de una fila por
+#     mes). No mueve claves ni deja huerfanas; solo la disposicion de esas filas.
+SCORING_VERSION = "2026.08-rubricas-v24"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
