@@ -237,3 +237,56 @@ def test_no_se_pega_si_el_operador_SI_contesto_el_gracias():
     ]
     partes = partir_en_interacciones(msgs)
     assert len(partes) == 2, "se comio una atencion en la que el operador si trabajo"
+
+
+# --- LA VENTANA SE ABRE A 10 MINUTOS (decision del negocio, 2026-08-28) ----------------
+#
+# El umbral arranco en 5 minutos (`GRACIA_CORTESIA_SEG = 300`) tomando el corte conservador
+# de la tabla de arriba. MEDIDO despues, con codigo de produccion sobre `messages` crudo
+# (`partir_en_interacciones` en vivo, NO sobre notas guardadas): de los fragmentos sin
+# respuesta del negocio que cobran 1 estrella, **68 de 92 (73,9 por ciento) son cortesia** --
+# 'Muchas gracias', '🫡', 'Gracias bro' -- y NO fallan por la palabra: la palabra matchea.
+# Fallan por el TIEMPO, del otro lado de los 5 minutos.
+#
+# La banda 5-15 min conserva 80,8 por ciento de continuidad (125 casos), asi que el dato ya
+# respaldaba abrirla. Se abre a 10 y no a 15: el negocio elige quedarse en la mitad de la
+# banda medida, dejando el margen del 55 por ciento (>15 min) bien afuera.
+
+
+def test_el_gracias_a_los_OCHO_minutos_se_pega():
+    """La banda 5-15 conserva 80,8 por ciento de continuidad: a esa distancia sigue siendo
+    la cola de la atencion que la gano, no una visita nueva."""
+    msgs = [
+        _m(0, False, "les mando el comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(1, "Michelle"),
+        _m(9, False, "Muchas gracias"),               # 8 minutos despues del cierre
+    ]
+    assert len(partir_en_interacciones(msgs)) == 1, (
+        "no pego un 'gracias' de 8 minutos: le pone 1 estrella por 'nadie le respondio' a "
+        "quien acaba de acreditar bien, y ese es el 73,9 por ciento de los falsos 1 estrella"
+    )
+
+
+def test_el_gracias_JUSTO_en_el_limite_de_diez_minutos_se_pega():
+    """El borde exacto de la ventana, que es `<=`."""
+    msgs = [
+        _m(0, False, "comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(1, "Michelle"),
+        _m(11, False, "gracias"),                     # exactamente 10 minutos
+    ]
+    assert len(partir_en_interacciones(msgs)) == 1, "el limite es <=: a los 10 min pega"
+
+
+def test_pasados_los_diez_minutos_el_gracias_NO_se_pega():
+    """El control negativo del cambio: la ventana se abrio, no se elimino."""
+    msgs = [
+        _m(0, False, "comprobante", media_type="image"),
+        _m(1, True, "*Michelle:* tu saldo ya esta disponible"),
+        _nota_cierre(1, "Michelle"),
+        _m(12, False, "gracias"),                     # 11 minutos: afuera
+    ]
+    assert len(partir_en_interacciones(msgs)) == 2, (
+        "pego un 'gracias' de 11 minutos: la ventana se abrio a 10, no se elimino"
+    )

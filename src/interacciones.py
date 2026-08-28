@@ -86,7 +86,22 @@ GRACIA_CIERRE_SEG = 120
 #     5-15 min   125 casos   80,8 por ciento
 #     > 15 min   171 casos   55,0 por ciento   <- moneda al aire: ahi si volvio de verdad
 # A los 5 minutos la continuidad se sostiene; pasados los 15 se cae a la mitad.
-GRACIA_CORTESIA_SEG = 300
+#
+# LA VENTANA SE ABRE A 10 MINUTOS (decision del negocio, 2026-08-28). Arranco en 300 s
+# tomando el corte conservador de esa tabla, y la banda 5-15 quedo afuera aunque conserva
+# 80,8 por ciento de continuidad.
+# MEDIDO con codigo de produccion sobre `messages` CRUDO -- `fetch_session_messages` +
+# `partir_en_interacciones` en vivo, no sobre notas guardadas, que estan calculadas con el
+# corte viejo: de los fragmentos sin respuesta del negocio que cobran 1 estrella,
+# **68 de 92 (73,9 por ciento) son cortesia** ('Muchas gracias', '🫡', 'Gracias bro').
+# Y NO fallan por la palabra -- la palabra matchea. Fallan por el TIEMPO, del otro lado de
+# los 5 minutos. Los otros 20 de 92 (21,7 por ciento) traen contenido real y su 1 estrella
+# esta bien puesto: por eso se mueve la VENTANA y no el predicado.
+# Se abre a 10 y no a 15 porque el negocio elige quedarse en la mitad de la banda medida,
+# dejando la franja del 55 por ciento (>15 min) bien afuera.
+# CONTROL DE MUESTRA: 4.000 sesiones de 30 dias con `LIMIT` sin `ORDER BY` -- no es aleatoria,
+# asi que 92 es el conteo de la muestra y no el total del mes.
+GRACIA_CORTESIA_SEG = 600
 
 # Lo que el cliente dice cuando NO esta planteando nada. Se escribe aca y no se importa de
 # `signals` por el mismo motivo que `_hubo_negocio` esta duplicado: este modulo es de base y

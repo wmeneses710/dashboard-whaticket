@@ -747,7 +747,43 @@ from src.segments import segment_for_queue
 # roto (reintento que nombra la clave que falto) y el nivel 2 va con `think=False`. Con
 # `think=None` era inalcanzable detras del timeout de 180 s -- 600 s y ReadTimeout contra 22-78 s
 # medidos contra el host real. Sesiones que antes fallaban en bucle ahora se scorean.
-SCORING_VERSION = "2026.08-rubricas-v22"
+# 2026.08-rubricas-v23 (2026-08-28). LA VENTANA DE LA COLA DE CORTESIA PASA DE 5 A 10 MINUTOS
+# (`interacciones.GRACIA_CORTESIA_SEG`, 300 -> 600). Decision del negocio.
+#
+# ESTA ENTRADA TAMBIEN ETIQUETA LO DE AYER, que salio sin bump: el grano INTERACCION
+# (`c87e952`) y el pegado del "gracias" (`880a874`) movieron notas etiquetadas como v22. El
+# guard de `tests/test_scoring_version.py` no lo vio porque solo exige que la constante sea la
+# ULTIMA entrada del changelog, y sin entrada nueva no hay nada que comparar. Es el mismo
+# agujero que dejo a v21 mintiendo cuatro dias, un nivel mas arriba.
+#
+# POR QUE 10 Y NO 15. `partir_en_interacciones` pegaba la cola de cortesia solo dentro de los
+# 5 min, tomando el corte conservador de la tabla de 717 "gracias" (ver interacciones.py). La
+# banda 5-15 conserva 80,8 por ciento de continuidad y quedaba afuera.
+# MEDIDO con codigo de produccion sobre `messages` CRUDO -- `fetch_session_messages` +
+# `partir_en_interacciones` en vivo, NO sobre `conversation_scores`, que esta calculada con el
+# corte viejo: de los fragmentos sin respuesta del negocio que cobran 1 estrella,
+# **68 de 92 (73,9 por ciento) son cortesia** y NO fallan por la palabra sino por el TIEMPO.
+# Los otros 20 (21,7 por ciento) traen contenido real y su 1 estrella esta bien puesto -- por
+# eso se movio la VENTANA y no el predicado, que es lo que habria borrado esos 20 (y con
+# ellos la decision del 2026-08-21 de sacar el skip `no_agent_reply`, que escondia 1.167).
+# Se elige 10 para quedarse en la mitad de la banda medida y dejar la franja del 55 por
+# ciento (>15 min) bien afuera. Muestra: 4.000 sesiones de 30 dias con `LIMIT` sin
+# `ORDER BY` -- no aleatoria, asi que 92 es el conteo de la muestra, no el total del mes.
+#
+# LO QUE ESTE CAMBIO **NO** ARREGLA, medido en la misma corrida y anotado para que nadie lo
+# suponga resuelto:
+#   - `_CORTESIA_RE` NO matchea `'Gracia'` (el lexico tiene `gracias` CON s), asi que ese caso
+#     sigue cobrando 1 estrella a cualquier distancia. La ventana no lo toca.
+#   - `_CORTESIA_RE` no tiene ancla de CIERRE: `'Ok no me acreditaron'`, `'listo pero no me
+#     llego nada'` y otras cuatro formas de reclamo dan True. Eso PEGA un reclamo genuino a la
+#     atencion anterior y esconde un 1 estrella bien puesto. `signals.client_sin_motivo` los
+#     rechaza correctamente y ademas acierta `'Gracia'`, `'🙏'` y `'vale'`.
+#   - El pegado NUNCA puede entregar `signals.cliente_confirmo_resuelto`, que es la segunda
+#     justificacion que invoco `880a874`: las dos condiciones son mutuamente excluyentes por
+#     construccion -- lo que pega es cortesia pura, y esa señal exige que el cliente diga que
+#     FUNCIONO ("ya pude"), que no arranca con token de cortesia y por lo tanto no pega.
+#     Disparo 0 de 719 fragmentos reales (control negativo: da True en el caso sintetico).
+SCORING_VERSION = "2026.08-rubricas-v23"
 
 # =============================================================================
 # Forma CANÓNICA de conversation_scores (grano SESIÓN, todas las columnas
