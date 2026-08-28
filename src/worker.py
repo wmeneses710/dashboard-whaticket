@@ -13,6 +13,7 @@ from datetime import timedelta
 
 from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
+from src import errores
 from src.deposito import es_transaccion as es_transaccion_deposito
 from src.deposito import score_deposito
 from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
@@ -128,6 +129,25 @@ def score_and_store(conn, conv: dict, llm, op_map: dict):
     return eval_status, skip_reason, score
 
 
+def _registrar_fallo(component: str, exc: BaseException, account: str | None,
+                     context: dict) -> None:
+    """Persiste el fallo en la tabla `errors` sin que eso pueda tumbar el lote.
+
+    `account` va en la COLUMNA y no solo en el contexto: el indice del ETL es
+    `(account, component, occurred_at DESC)` y el loop atiende varias cuentas (regla 6 del
+    equipo del ETL, 2026-08-28).
+
+    `errores.registrar` ya promete no levantar, pero el lote NO puede depender de esa
+    promesa: si algun dia rompe, se lleva puesto el manejo del error original y con el las
+    sesiones que faltaban. Es la misma cautela que la regla 1 de src/errores.py, del lado
+    del llamador. Ver tests/test_worker.py::test_si_el_registrador_falla_el_lote_SIGUE.
+    """
+    try:
+        errores.registrar(component, exc, account=account, context=context)
+    except Exception:  # noqa: BLE001 - un registrador roto no puede abortar el lote
+        pass
+
+
 def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None) -> dict:
     """Scorea un lote de pendientes de una cuenta. Devuelve conteos."""
     if op_map is None:
@@ -145,10 +165,16 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
             # al resto del lote (InFailedSqlTransaction) sin este reset.
             conn.rollback()
             counts["error"] += 1
+            cid = conv.get("conversation_id") or conv.get("id")
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [worker] error conv "
-                  f"{conv.get('conversation_id') or conv.get('id')} ({account}): "
+                  f"{cid} ({account}): "
                   f"{type(e).__name__}: {str(e)[:300]}", flush=True)
             print(traceback.format_exc()[-1500:], flush=True)
+            # El `print` se queda: es lo que se ve en `docker logs` MIENTRAS pasa. La fila
+            # es para despues, cuando el log ya se roto.
+            _registrar_fallo("scoring", e, account,
+                            {"conversation_id": str(cid) if cid else None,
+                             "grano": "conversacion"})
     return counts
 
 
@@ -605,10 +631,17 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
             # al resto del lote (InFailedSqlTransaction) sin este reset.
             conn.rollback()
             counts["error"] += 1
+            sid = sess.get("session_id") or sess.get("id")
             print(f"{time.strftime('%Y-%m-%d %H:%M:%S')} [worker] error sesion "
-                  f"{sess.get('session_id') or sess.get('id')} ({account}): "
+                  f"{sid} ({account}): "
                   f"{type(e).__name__}: {str(e)[:300]}", flush=True)
             print(traceback.format_exc()[-1500:], flush=True)
+            # El `print` se queda: es lo que se ve en `docker logs` MIENTRAS pasa. La fila es
+            # para despues, cuando el log ya se roto -- el caso de src/llm.py:207, donde una
+            # misma sesion fallo ~15 veces en tres horas y se diagnostico contra el log vivo.
+            _registrar_fallo("scoring", e, account,
+                            {"session_id": str(sid) if sid else None,
+                             "grano": "interaccion"})
     return counts
 
 
@@ -660,6 +693,15 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     # alertas puestas y el grupo todavia sin crear.
     canal_vip = canal_desde_env(os.environ)
     emit(f"[worker] alertas VIP: {'on' if canal_vip.configurado else 'off'}")
+    # Bitacora de fallos que SOBREVIVE al redeploy (tabla `errors`, compartida con el ETL).
+    # Se configura una sola vez, como el logging: despues `_registrar_fallo` escribe desde
+    # donde haga falta. Sin esto es un no-op, que es lo que permite correr los tests y el
+    # local sin BD. NO se pasa cuenta: el loop atiende VARIAS y cada fila lleva la suya en
+    # el contexto (ver los dos handlers de lote).
+    errores.configurar(cfg.database_url)
+    # La linea que distingue "el deploy entro" de "el deploy no entro". Si dice que falta la
+    # columna `source`, el dashboard subio ANTES que el ETL y no va a registrar nada.
+    emit(f"[worker] bitacora de errores: {errores.estado()}")
     llm = OllamaClient(cfg.ollama_url, cfg.ollama_model, token=cfg.ollama_token, timeout=180.0,
                        num_ctx=cfg.ollama_num_ctx, num_predict=cfg.ollama_num_predict,
                        fast_attempts=cfg.llm_fast_attempts)

@@ -300,7 +300,11 @@ def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
     worker.run_worker_loop(cfg, should_stop=lambda: next(vueltas, True))
 
     assert called["batch"] == 0        # no scoreó: el lock lo tiene otro
-    assert len(connects) == 1          # solo la conexión del lock, no llegó a migración/refresh
+    # DOS conexiones y no una desde el 2026-08-28: la sonda de `errores.estado()` abre una
+    # corta en el arranque para poder decir en el log si la tabla `errors` está lista (ver
+    # src/errores.ErrorLog.estado). Lo que este assert protege sigue igual — que NO llegó a
+    # migración ni a refresh, que abrirían varias más.
+    assert len(connects) == 2
 
 
 # --- segmento AGENTE: rating DETERMINISTA, sin LLM --------------------------------
@@ -1361,3 +1365,92 @@ def test_una_sesion_SIN_MENSAJES_no_tumba_el_lote(monkeypatch):
     assert f is not None, "no persistio nada: la sesion vuelve como pendiente para siempre"
     assert f["interaccion_ini"] is None and f["interaccion_fin"] is None, \
         "sin mensajes no hay ventana que declarar"
+
+
+# --- LOS FALLOS DEL LOTE SOBREVIVEN AL REDEPLOY ---------------------------------------
+#
+# Hasta el 2026-08-28 cada sesion fallada hacia `print()` a stdout y ahi moria: los logs del
+# contenedor se rotan, asi que un incidente de anteayer no se podia diagnosticar. El caso que
+# lo prueba esta escrito en `src/llm.py:207` -- el 2026-08-25 una MISMA sesion fallo ~15 veces
+# en tres horas y eso se reconstruyo mirando el log en vivo. Ahora la fila queda en la tabla
+# `errors`, que es la del ETL y se comparte (columna `source` = 'dashboard').
+#
+# El `print` NO se saca: sigue siendo lo que se ve en `docker logs` mientras pasa.
+
+def _registros(monkeypatch):
+    """Captura las llamadas a errores.registrar sin tocar la BD."""
+    from src import errores
+    vistos = []
+    monkeypatch.setattr(errores, "registrar",
+                        lambda component, exc=None, *, account=None, message=None,
+                        context=None:
+                        vistos.append((component, type(exc).__name__ if exc else None,
+                                       account, context)) or True)
+    return vistos
+
+
+def test_una_sesion_fallada_queda_registrada_con_su_session_id(monkeypatch):
+    """Sin el `session_id` en el contexto la fila no sirve para reproducir."""
+    vistos = _registros(monkeypatch)
+    sessions = [_session_row("s1"), _session_row("s2")]
+    monkeypatch.setattr(worker, "fetch_pending_sessions",
+                        lambda cur, account, limit: sessions)
+
+    def fake_score(conn, sess, llm, op_map, recommender=None, lineas=None):
+        if sess["session_id"] == "s2":
+            raise RuntimeError("boom")
+        return ("evaluated", None, None)
+
+    monkeypatch.setattr(worker, "score_session_and_store", fake_score)
+    counts = score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
+
+    assert counts["error"] == 1
+    assert len(vistos) == 1, f"no registro el fallo (o registro de mas): {vistos}"
+    component, kind, account, context = vistos[0]
+    assert component == "scoring"
+    assert kind == "RuntimeError"
+    assert context.get("session_id") == "s2", f"contexto sin session_id: {context}"
+    # La cuenta va EN LA COLUMNA, no en el contexto: el indice del ETL es
+    # (account, component, occurred_at DESC). Regla 6 de su equipo.
+    assert account == "datos"
+
+
+def test_una_conversacion_fallada_queda_registrada_con_su_conversation_id(monkeypatch):
+    vistos = _registros(monkeypatch)
+    pendientes = [{"conversation_id": "c1"}, {"conversation_id": "c2"}]
+    monkeypatch.setattr(worker, "fetch_pending", lambda cur, account, limit: pendientes)
+
+    def fake_score(conn, conv, llm, op_map):
+        if conv["conversation_id"] == "c2":
+            raise RuntimeError("boom")
+        return ("evaluated", None, None)
+
+    monkeypatch.setattr(worker, "score_and_store", fake_score)
+    counts = worker.score_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
+
+    assert counts["error"] == 1
+    component, kind, account, context = vistos[0]
+    assert component == "scoring"
+    assert context.get("conversation_id") == "c2"
+    assert account == "datos"
+
+
+def test_si_el_registrador_falla_el_lote_SIGUE(monkeypatch):
+    """LA REGLA 1 EN EL PUNTO DE LLAMADA. `errores.registrar` promete no levantar, pero el
+    lote no puede depender de esa promesa: si algun dia rompe, se lleva puesto el manejo del
+    error original y el lote entero."""
+    from src import errores
+    monkeypatch.setattr(errores, "registrar",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("el registrador")))
+    sessions = [_session_row("s1"), _session_row("s2"), _session_row("s3")]
+    monkeypatch.setattr(worker, "fetch_pending_sessions",
+                        lambda cur, account, limit: sessions)
+
+    def fake_score(conn, sess, llm, op_map, recommender=None, lineas=None):
+        if sess["session_id"] == "s2":
+            raise RuntimeError("boom")
+        return ("evaluated", None, None)
+
+    monkeypatch.setattr(worker, "score_session_and_store", fake_score)
+    counts = score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
+    assert counts == {"evaluated": 2, "skipped": 0, "error": 1, "seen": 3}
