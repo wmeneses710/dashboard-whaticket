@@ -41,6 +41,15 @@ SELECT cs.interaccion_id, cs.conversation_id, cs.ticket_id, cs.account, cs.segme
 
 _DETAIL_SQL = """
 SELECT cs.interaccion_id, cs.interaccion_seq, cs.interaccion_ini, cs.interaccion_fin,
+       -- `cs.session_id` NO ES DECORATIVO: `conversation_detail` carga el transcript con
+       -- `fetch_session_messages(session_id)` -- todos los episodios de la sesion mergeados,
+       -- que es lo que el scoring juzgo -- y cae a `fetch_messages(conversation_id)`, que ve
+       -- SOLO el episodio de entrada, cuando no lo tiene. Estaba en el JOIN con
+       -- `conversation_sessions` pero NO en esta lista, asi que el fallback corria SIEMPRE y
+       -- el arreglo del 2026-08-24 quedo desactivado en silencio: 8 modales "Sin mensajes" y
+       -- 11 con el transcript incompleto sobre 193 filas. Ver el test
+       -- test_detail_sql_TRAE_session_id_o_el_modal_muestra_el_episodio_equivocado.
+       cs.session_id,
        cs.conversation_id, cs.ticket_id, cs.account, cs.segment, cs.queue_name,
        cs.user_id, """ + OPERADOR_O_NADA + """ AS user_name,
        cs.conversation_created_at, cs.resolved_at,

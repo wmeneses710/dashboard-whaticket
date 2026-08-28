@@ -1965,3 +1965,37 @@ def test_las_DOS_listas_traen_la_misma_clave():
     for nombre, sql in (("_SCORES_SQL", _SCORES_SQL),
                         ("_TICKETS_CONVS_SQL", _TICKETS_CONVS_SQL)):
         assert "cs.interaccion_id" in sql, f"{nombre} no trae la clave del modal"
+
+
+def test_detail_sql_TRAE_session_id_o_el_modal_muestra_el_episodio_equivocado():
+    """EL BUG DEL 2026-08-28, y es la TERCERA vuelta de la misma herida.
+
+    `conversation_detail` hace `sid = d.get("session_id")` y, si lo tiene, carga
+    `fetch_session_messages(sid)` -- todos los episodios de la sesion mergeados, que es lo que
+    el scoring juzgo. `_DETAIL_SQL` usaba `cs.session_id` en el JOIN con
+    `conversation_sessions` pero NO lo devolvia en el SELECT, asi que `sid` era SIEMPRE None y
+    el codigo caia al fallback por `conversation_id`, que trae SOLO el episodio de entrada.
+
+    MEDIDO sobre las 193 filas del rescore por interaccion: **8 modales salian "Sin mensajes"
+    y 11 mostraban el transcript INCOMPLETO**. Las incompletas son peores que las vacias: se
+    leen como completas. Caso real (interaccion `319e88cc`, operador Mario, 1 estrella): la
+    sesion tiene 3 episodios, el `conversation_id` de la fila tiene 6 mensajes, y el mensaje
+    de la interaccion vive en OTRO episodio -- el supervisor veia "Sin mensajes" al lado de
+    una nota que acusa "el cliente escribio y nadie le respondio".
+
+    El arreglo del 2026-08-24 (mostrar la sesion mergeada) estaba escrito y quedo DESACTIVADO
+    EN SILENCIO por una columna que faltaba en el SELECT.
+
+    OJO CON EL CHEQUEO: `"cs.session_id" in _DETAIL_SQL` NO sirve, y lo probe -- pasa igual
+    sin arreglar nada, porque la cadena ya aparece en el JOIN
+    (`ses.session_id = cs.session_id`). Hay que mirar la LISTA DEL SELECT.
+    """
+    from src.queries import _DETAIL_SQL
+
+    cabeza, _, _ = _DETAIL_SQL.partition("\n  FROM conversation_scores cs")
+    assert cabeza, "cambio la forma de _DETAIL_SQL: este test ya no sabe donde mirar"
+    assert "cs.session_id" in cabeza, (
+        "`cs.session_id` no esta en la LISTA DEL SELECT (solo en el JOIN, si acaso): "
+        "`conversation_detail` va a caer al episodio de entrada y el modal va a mostrar "
+        "evidencia que no es la que se juzgo"
+    )
