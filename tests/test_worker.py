@@ -1779,3 +1779,105 @@ def test_el_indice_del_rescore_nombra_una_columna_que_ya_se_aseguro():
     idx = next(i for i, s in enumerate(ejecutado)
                if "idx_scores_rescore_pedido" in s)
     assert alter < idx
+
+
+# --- EL CIERRE DEL OPERADOR ES EL DISPARADOR (2026-08-31) -------------------
+#
+# PEDIDO DEL NEGOCIO, textual: "no, si el operador cierra ese es nuestro trigger".
+#
+# COMO ESTABA. La unidad de ELEGIBILIDAD era la SESION: una interaccion que cerro anoche
+# esperaba a que la sesion ENTERA quedara en silencio. Y cuando eso pasaba, se calificaban
+# las 56 de una y salian juntas todas las que entraban en la ventana de 24 h.
+#
+# CASO REAL (sesion `141e233f`: 56 interacciones, 26,3 dias, 13 operadores). Cada una tenia
+# su PROPIO `*resuelto*`, en el mismo instante que su cierre -- la señal siempre estuvo:
+#     seq 52  cerro 29-ago 20:27  ->  calificada 46,8 h despues
+#     seq 54  cerro 30-ago 21:44  ->  calificada 21,6 h despues
+#     seq 56  cerro 31-ago 18:38  ->  calificada  0,7 h despues
+# Las tres ultimas salieron juntas en un segundo.
+#
+# COMO QUEDA. Se califica una interaccion cuando SU operador la cerro, y solo esa. La
+# sesion sigue siendo la unidad de LECTURA (hay que cortar el transcript entero para saber
+# donde empieza cada una), pero deja de ser la unidad de TRABAJO.
+
+def test_solo_se_califican_las_interacciones_que_FALTAN():
+    """Una sesion de 56 no puede recalificar 56 porque cerro la numero 57."""
+    from datetime import datetime, timezone
+    t = lambda h: datetime(2026, 8, 30, h, 0, tzinfo=timezone.utc)
+    partes = [
+        [{"created_at": t(1), "from_me": False, "body": "una recarga", "is_note": False}],
+        [{"created_at": t(5), "from_me": False, "body": "otra recarga", "is_note": False}],
+    ]
+    # la primera ya tiene nota fresca; la segunda no
+    ya = {worker.interaccion_id_de("sess", t(1)): t(2)}
+    faltan = worker.interacciones_pendientes(partes, "sess", ya)
+    assert len(faltan) == 1
+    assert faltan[0][1][0]["created_at"] == t(5)
+
+
+def test_una_interaccion_que_CRECIO_se_vuelve_a_calificar():
+    """La cola de cortesia se adjunta despues, y mueve el fin. Si la nota es anterior al
+    nuevo fin, esta vieja y hay que rehacerla."""
+    from datetime import datetime, timezone
+    t = lambda h: datetime(2026, 8, 30, h, 0, tzinfo=timezone.utc)
+    partes = [[{"created_at": t(1), "from_me": False, "body": "hola", "is_note": False},
+               {"created_at": t(9), "from_me": False, "body": "gracias", "is_note": False}]]
+    ya = {worker.interaccion_id_de("sess", t(1)): t(3)}  # nota vieja
+    assert len(worker.interacciones_pendientes(partes, "sess", ya)) == 1
+
+
+def test_una_interaccion_ya_calificada_NO_se_repite():
+    from datetime import datetime, timezone
+    t = lambda h: datetime(2026, 8, 30, h, 0, tzinfo=timezone.utc)
+    partes = [[{"created_at": t(1), "from_me": False, "body": "hola", "is_note": False}]]
+    ya = {worker.interaccion_id_de("sess", t(1)): t(4)}
+    assert worker.interacciones_pendientes(partes, "sess", ya) == []
+
+
+def test_el_SEQ_se_conserva_aunque_se_saltee_lo_ya_calificado():
+    """`interaccion_seq` es la posicion en la sesion y se muestra en el tablero. Si se
+    renumerara sobre lo pendiente, la numero 56 pasaria a ser la 1."""
+    from datetime import datetime, timezone
+    t = lambda h: datetime(2026, 8, 30, h, 0, tzinfo=timezone.utc)
+    partes = [[{"created_at": t(h), "from_me": False, "body": "x", "is_note": False}]
+              for h in (1, 5, 9)]
+    ya = {worker.interaccion_id_de("sess", t(1)): t(2),
+          worker.interaccion_id_de("sess", t(5)): t(6)}
+    faltan = worker.interacciones_pendientes(partes, "sess", ya)
+    assert [seq for seq, _ in faltan] == [3], "la tercera sigue siendo la tercera"
+
+
+def test_la_consulta_de_pendientes_dispara_con_el_CIERRE_del_operador():
+    sql = " ".join(worker.PENDING_SESSIONS_SQL.split())
+    assert "*resuelto*" in sql
+    assert "max(s.scored_at)" in sql, \
+        "el cierre se compara contra el ULTIMO scored_at de la sesion: 'cerro algo DESPUES "\
+        "de la ultima vez que calificamos'"
+    assert "n.created_at < now() - make_interval(secs => %(hold_cerrada)s)" in sql, \
+        "y tiene que ser un cierre ya asentado, no el de recien"
+
+
+def test_las_TRES_ramas_de_elegibilidad_son_independientes():
+    """Cada rama lleva su PROPIA guarda. El filtro viejo `NOT EXISTS(scored_at >= end_at)`
+    era global y podia excluir una sesion que el disparador nuevo si selecciona: en una
+    mega-sesion viva, el operador cierra la interaccion 57 mientras la 56 acaba de
+    calificarse. Con la guarda global compartida, esa sesion quedaba afuera."""
+    sql = " ".join(worker.PENDING_SESSIONS_SQL.split())
+    cuerpo = sql[sql.index("WHERE cs.account"):sql.index("ORDER BY")]
+    # las tres razones por las que una sesion entra
+    assert "max(s.scored_at)" in cuerpo, "1: el operador cerro despues de la ultima nota"
+    assert "%(hold_sin_cierre)s" in cuerpo, "2: nadie cerro y quedo en silencio"
+    assert "s.rescore_pedido_at > s.scored_at" in cuerpo, "3: rescore pedido"
+    # la guarda del silencio va DENTRO de su rama, no suelta al final
+    silencio = cuerpo.index("%(hold_sin_cierre)s")
+    guarda = cuerpo.index("s.scored_at >= cs.end_at")
+    assert guarda > silencio, (
+        "la guarda `scored_at >= end_at` tiene que estar DENTRO de la rama del silencio; "
+        "suelta al final excluye lo que el disparador del cierre acaba de seleccionar")
+
+
+def test_una_sesion_VACIA_igual_pasa_para_dejar_su_fila_de_omision():
+    """Regresion real: al filtrar por "lo que falta", el fragmento vacío se salteaba y la
+    sesión quedaba SIN NINGUNA fila -- ni siquiera la de `internal_notes_only`, que es la
+    que explica la cobertura en el tablero."""
+    assert worker.interacciones_pendientes([[]], "sess", {}) == [(1, [])]

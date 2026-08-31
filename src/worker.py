@@ -47,6 +47,7 @@ from src.scorer import score_by_motivo
 from src.segments import segment_for_queue
 from src.sessions import evaluate_session
 from src.store import (
+    interaccion_id_de,
     build_score_record,
     ensure_scores_columns,
     ensure_interaccion_scoring_migration,
@@ -312,8 +313,21 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
      -- se avisaron entre las 00:38 y las 03:18. Ninguna la leyo nadie.
      --
      -- EL OPERADOR YA LA CERRO -> el fin es un HECHO DECLARADO, no una inferencia.
-     (cs.end_at < now() - make_interval(secs => %(hold_cerrada)s)
-      AND EXISTS (
+     -- EL CIERRE DEL OPERADOR ES EL DISPARADOR (2026-08-31). Pedido del negocio:
+     -- "no, si el operador cierra ese es nuestro trigger".
+     --
+     -- ANTES SE COMPARABA CONTRA `cs.end_at`, o sea contra el fin de la SESION. Una
+     -- interaccion que el operador cerro anoche, dentro de una sesion que sigue viva, no
+     -- calificaba: su nota de cierre quedaba lejos del fin de la sesion. Habia que esperar
+     -- a que la sesion ENTERA se aquietara, y entonces salian todas juntas.
+     -- CASO REAL `141e233f` (56 interacciones, 26,3 dias, 13 operadores): la seq 52 cerro
+     -- el 29-ago 20:27 y se califico 46,8 h despues; las tres ultimas salieron juntas en un
+     -- segundo y dos eran de la noche anterior.
+     --
+     -- AHORA SE COMPARA CONTRA EL ULTIMO `scored_at` DE LA SESION, que es literalmente
+     -- "el operador cerro algo DESPUES de la ultima vez que calificamos". El cierre tiene
+     -- que estar asentado (`hold_cerrada`) para no competir con el ETL.
+     EXISTS (
         SELECT 1 FROM conversation_session_map map
           JOIN messages n ON n.conversation_id = map.conversation_id
          -- `account` PRIMERO y no por gusto: el indice es (account, session_id), y
@@ -322,25 +336,25 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
          -- descartando 74.897 filas cada una -> 162 SEGUNDOS para traer 5 filas.
          WHERE map.account = cs.account AND map.session_id = cs.session_id
            AND n.is_note AND n.body LIKE '%%*resuelto*%%'
-           -- Cerca del fin de la sesion: una nota de cierre vieja es de OTRA atencion.
-           -- El margen cubre `GRACIA_CIERRE_SEG` (el operador cierra y adjunta despues,
-           -- asi que la nota puede quedar ANTES del ultimo mensaje real).
-           AND n.created_at >= cs.end_at - interval '3 minutes'))
+           AND n.created_at < now() - make_interval(secs => %(hold_cerrada)s)
+           AND n.created_at > coalesce(
+                 (SELECT max(s.scored_at) FROM conversation_scores s
+                   WHERE s.session_id = cs.session_id), '-infinity'::timestamptz))
      -- NADIE LA CERRO -> lo unico que dice que termino es el silencio, y ese umbral es
      -- `SILENCIO_MAX` (src/interacciones.py), el MISMO con el que se corta la interaccion.
+     -- Esta rama SI mira `cs.end_at`, y corresponde: sin nota de cierre, el fin de la
+     -- sesion es lo unico que dice que la atencion termino.
      -- Es 3 de cada 100 casos. (SIN el signo de porcentaje: psycopg parsea el SQL
      -- entero buscando placeholders y uno suelto revienta con 'incomplete
      -- placeholder'. Los tests de string pasaban con la consulta ROTA; se detecto
      -- ejecutandola contra la copia.)
-     OR cs.end_at < now() - make_interval(secs => %(hold_sin_cierre)s)
-   )
-   -- Pendiente = sin score, O con un score MAS VIEJO que el ultimo episodio de la
-   -- sesion (la sesion crecio despues de scorearse, p. ej. una continuacion diferida
-   -- que se mergeo hasta 48h despues) -> re-scorear para no quedar con nota vieja.
-   AND (
-     NOT EXISTS (
-       SELECT 1 FROM conversation_scores s
-        WHERE s.session_id = cs.session_id AND s.scored_at >= cs.end_at)
+     -- La guarda va DENTRO de la rama, no suelta al final: compartida, excluia lo que el
+     -- disparador del cierre acababa de seleccionar (mega-sesion viva donde el operador
+     -- cierra la 57 mientras la 56 acaba de calificarse).
+     OR (cs.end_at < now() - make_interval(secs => %(hold_sin_cierre)s)
+         AND NOT EXISTS (
+           SELECT 1 FROM conversation_scores s
+            WHERE s.session_id = cs.session_id AND s.scored_at >= cs.end_at))
      -- RESCORE PARCIAL (2026-08-31). RAMA APARTE y no una condicion mas adentro del
      -- NOT EXISTS: metida ahi, encolar un pedido APAGARIA el caso normal de esa sesion.
      -- Suma casos, no los reemplaza.
@@ -348,6 +362,8 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
      -- SERVIDA CUANDO SE LA SCOREO DESPUES DEL PEDIDO. No hay flag que apagar: por eso la
      -- columna es un instante y no un booleano (ver `store._SCORES_COLUMN_TYPES`). Si
      -- fuera `IS NOT NULL`, la fila se encolaria para siempre.
+     -- RESCORE PARCIAL: rama aparte, con su propia guarda (servida cuando se la califico
+     -- DESPUES del pedido). Ver `store._SCORES_COLUMN_TYPES`.
      OR EXISTS (
        SELECT 1 FROM conversation_scores s
         WHERE s.session_id = cs.session_id AND s.rescore_pedido_at > s.scored_at)
@@ -420,12 +436,60 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
     """
     with conn.cursor() as cur:
         msgs = fetch_session_messages(cur, sess["session_id"])
+        ya = _notas_de_la_sesion(cur, sess["session_id"])
     partes = partir_en_interacciones(msgs) or [msgs]
     resultado = (None, None, None)
-    for seq, interaccion in enumerate(partes, 1):
+    # SOLO LAS QUE FALTAN. La sesion sigue siendo la unidad de LECTURA --hay que cortar el
+    # transcript entero para saber donde empieza cada interaccion-- pero deja de ser la
+    # unidad de TRABAJO: una sesion de 56 no se recalifica entera porque cerro la 57.
+    for seq, interaccion in interacciones_pendientes(partes, sess["session_id"], ya):
         resultado = _score_interaccion_y_persiste(
             conn, sess, interaccion, msgs, seq, llm, op_map, recommender, lineas)
     return resultado
+
+
+def _notas_de_la_sesion(cur, session_id) -> dict:
+    """`interaccion_id -> scored_at` de lo que ya tiene nota en esta sesion."""
+    cur.execute("SELECT interaccion_id::text, scored_at FROM conversation_scores "
+                "WHERE session_id = %s", (session_id,))
+    return {f[0]: f[1] for f in cur.fetchall()}
+
+
+def interacciones_pendientes(partes, session_id, ya_calificadas: dict):
+    """`(seq, interaccion)` de las que hay que calificar, con su seq ORIGINAL.
+
+    EL DISPARADOR ES EL CIERRE DEL OPERADOR, no el silencio de la sesion. Pedido del
+    negocio: *"no, si el operador cierra ese es nuestro trigger"*.
+
+    LO QUE COSTABA MIRAR LA SESION. Caso real `141e233f`: 56 interacciones, 26,3 dias, 13
+    operadores. Cada una tenia su PROPIO `*resuelto*` --la señal siempre estuvo-- pero se
+    esperaba a que la sesion entera se aquietara, y entonces se calificaban las 56 de una:
+        seq 52  cerro 29-ago 20:27  ->  calificada 46,8 h despues
+        seq 54  cerro 30-ago 21:44  ->  calificada 21,6 h despues
+        seq 56  cerro 31-ago 18:38  ->  calificada  0,7 h despues
+    Las tres ultimas salieron juntas en un segundo, y dos eran de anoche.
+
+    SE RECALIFICA LA QUE CRECIO. `scored_at < fin` significa que la nota describe una
+    interaccion mas corta que la de ahora -- pasa cuando la cola de cortesia se adjunta
+    despues y mueve el fin. No alcanza con "tiene nota".
+
+    EL SEQ ES EL ORIGINAL, no la posicion en lo pendiente: `interaccion_seq` es la posicion
+    dentro de la sesion y se muestra en el tablero. Renumerando, la 56 pasaria a ser la 1.
+    """
+    out = []
+    for seq, frag in enumerate(partes, 1):
+        if not frag:
+            # UNA SESION SIN MENSAJES TAMBIEN TIENE QUE PASAR: su fila es el skip
+            # `internal_notes_only`, y saltearla acá la dejaba sin ninguna fila. Lo
+            # encontro `test_una_sesion_SIN_MENSAJES_no_tumba_el_lote`.
+            out.append((seq, frag))
+            continue
+        ini = min(m["created_at"] for m in frag)
+        fin = max(m["created_at"] for m in frag)
+        scored = ya_calificadas.get(interaccion_id_de(session_id, ini))
+        if scored is None or scored < fin:
+            out.append((seq, frag))
+    return out
 
 
 def _score_interaccion_y_persiste(conn, sess: dict, msgs: list[dict],
