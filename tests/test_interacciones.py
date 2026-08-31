@@ -8,6 +8,7 @@ Nadie lo veia porque TODAS las rubricas filtran `is_note` en su primera linea.
 from datetime import datetime, timedelta, timezone
 
 from src.interacciones import (
+    es_evento_terminal,
     es_cierre,
     interaccion_de,
     partir_en_interacciones,
@@ -270,3 +271,70 @@ def test_tiempos_de_una_interaccion_vacia_no_revienta():
 def test_un_ancla_desconocida_degrada_al_transcript_completo():
     msgs = [_cli(0, "hola"), _cierre(1)]
     assert interaccion_de(msgs, _cli(999, "no estoy")) is msgs
+
+
+# --- EVENTO TERMINAL: la nota que dice que ESA persona ya no la tiene -------
+#
+# POR QUE HACE FALTA. Sobre 4.773 interacciones evaluadas, 17 no tienen ningun evento
+# terminal en su ventana, y CINCO de esas se llevaron 1 estrella injusta. Al recortarlas
+# hoy, con el transcript completo, CUATRO DE LAS CINCO crecen y aparece su respuesta:
+#     Arturo          ventana de  1 s  ->  hoy 46 s, 3 mensajes, 1 del negocio
+#     Salome Ramirez  ventana de  0 s  ->  hoy 34.474 s, 3 mensajes, 2 del negocio
+#     Genessis        ventana de  1 s  ->  hoy 3.182 s, 5 mensajes, 3 del negocio
+# O sea: la nota se calculo con un transcript INCOMPLETO. "No hay evento terminal" es,
+# exactamente, la señal de "todavia no tengo la conversacion entera".
+#
+# EL VOCABULARIO SALE DE LOS DATOS, no de la intuicion. Medido sobre 20 dias:
+#     *resuelto*                          27.713   TERMINAL
+#     *Asignado automaticamente*          24.537   apertura (96,7% sigue hablando)
+#     *aceptado*                           1.199   apertura (79,7% sigue)
+#     *reabierto*                          1.139   apertura
+#     transferido la conversacion de X       350   TERMINAL (para quien la tenia)
+#     *devuelto* la conversacion              211  TERMINAL (vuelve a la cola)
+#     *comenzo*                               100  apertura
+# `*cerrado*` NO EXISTE en los datos, aunque suene natural: cero apariciones.
+
+def test_resuelto_es_terminal():
+    assert es_evento_terminal(
+        {"is_note": True, "body": "Alejandra *resuelto* la conversación"})
+
+
+def test_la_TRANSFERENCIA_cierra_la_atencion_de_quien_la_tenia():
+    assert es_evento_terminal(
+        {"is_note": True,
+         "body": "Romina transferido la conversación de *Romina* para *Genessis*"})
+
+
+def test_devuelto_a_la_cola_tambien_cierra():
+    """`*devuelto* la conversación para esperar` la saca de las manos del operador.
+    Cubre 3 de las 17 sin terminal."""
+    assert es_evento_terminal(
+        {"is_note": True, "body": "Alejandra *devuelto* la conversación para esperar"})
+
+
+def test_ASIGNADO_y_ACEPTADO_son_APERTURA_no_cierre():
+    """Terminar una ventana ahí es calificar un partido en el minuto 3. Y no es opinión:
+    tras `*Asignado automáticamente*` la conversación sigue en el 96,7% de los casos, y
+    tras `*aceptado*` en el 79,7%."""
+    for cuerpo in ("*Asignado automáticamente* a Alejandra",
+                   "Alejandra *aceptado* la conversación",
+                   "Alejandra *reabierto* la conversación",
+                   "Alejandra *comenzó* la conversación"):
+        assert not es_evento_terminal({"is_note": True, "body": cuerpo}), cuerpo
+
+
+def test_un_mensaje_REAL_nunca_es_evento_terminal():
+    """El evento vive en las NOTAS del CRM. Un cliente que escribe "resuelto" no cierra
+    nada, y un operador que dice "ya está resuelto" tampoco."""
+    assert not es_evento_terminal(
+        {"is_note": False, "body": "listo, *resuelto*"})
+    assert not es_evento_terminal(
+        {"is_note": False, "from_me": True, "body": "ya quedó resuelto amigo"})
+
+
+def test_el_cambio_de_DEPARTAMENTO_no_cuenta():
+    """Cambiar de cola no dice que la atención terminó: la misma persona puede seguir.
+    Se deja afuera por prudencia -- no hay evidencia de que cierre."""
+    assert not es_evento_terminal(
+        {"is_note": True,
+         "body": "Alejandra cambió el departamento de conversación de *Agente* para *Jugadores*"})

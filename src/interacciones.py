@@ -118,6 +118,37 @@ def es_cierre(m: dict) -> bool:
     return bool(m.get("is_note")) and bool(_CIERRE_RE.search(m.get("body") or ""))
 
 
+# EL EVENTO TERMINAL: la nota que dice que ESA persona ya no tiene la atencion.
+#
+# TRES FORMAS, y el vocabulario sale de los DATOS y no de la intuicion. Medido sobre 20
+# dias, con el porcentaje de conversaciones que SIGUEN dentro de los 30 minutos:
+#     *resuelto*                      27.713   52,0% sigue   <- TERMINAL
+#     transferido la conversacion de     350   79,0% sigue   <- TERMINAL: lo que sigue es
+#                                                               la atencion del SIGUIENTE
+#     *devuelto* la conversacion         211   42,3% sigue   <- TERMINAL: vuelve a la cola
+#     *Asignado automaticamente*      24.537   96,7% sigue   <- APERTURA
+#     *aceptado*                       1.199   79,7% sigue   <- APERTURA
+#     *reabierto*                      1.139   61,9% sigue   <- APERTURA
+#     *comenzo*                          100                 <- APERTURA
+#
+# `*cerrado*` NO EXISTE en los datos, aunque suene natural: cero apariciones en 20 dias.
+#
+# EL CAMBIO DE DEPARTAMENTO QUEDA AFUERA. Mueve la conversacion de cola, pero la misma
+# persona puede seguir atendiendola: no hay evidencia de que cierre nada.
+_TERMINAL_RE = re.compile(
+    r"\*resuelto\*|\*devuelto\*|transferido la conversaci", re.IGNORECASE)
+
+
+def es_evento_terminal(m: dict) -> bool:
+    """La nota del CRM que cierra la atencion de quien la tenia.
+
+    SOLO NOTAS. El evento vive en el CRM: un cliente que escribe "resuelto" no cierra nada,
+    y un operador que dice "ya quedo resuelto" tampoco. Es la misma leccion que ya esta en
+    `hubo_respuesta_del_negocio` y en `cliente_tuvo_la_ultima_palabra`.
+    """
+    return bool(m.get("is_note")) and bool(_TERMINAL_RE.search(m.get("body") or ""))
+
+
 def es_reapertura(m: dict) -> bool:
     """El mensaje es la nota interna de reapertura del CRM."""
     return bool(m.get("is_note")) and bool(_REAPERTURA_RE.search(m.get("body") or ""))

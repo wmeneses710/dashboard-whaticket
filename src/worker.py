@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 import traceback
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.agilidad import score_agilidad
 from src.context import fetch_messages, fetch_session_messages, fetch_thread_context
@@ -20,7 +20,8 @@ from src.deposito import es_transaccion as es_transaccion_deposito
 from src.deposito import score_deposito
 from src.deposito import interaccion_juzgada as interaccion_juzgada_deposito
 from src.deposits import deposit_candidate_count
-from src.interacciones import SILENCIO_MAX, partir_en_interacciones, tiempos_de
+from src.interacciones import (SILENCIO_MAX, es_evento_terminal,
+                               partir_en_interacciones, tiempos_de)
 from src.registro import interaccion_juzgada as interaccion_juzgada_registro
 from src.info import score_info
 from src.motivo_de_agente import motivo_de_agente
@@ -455,7 +456,7 @@ def _notas_de_la_sesion(cur, session_id) -> dict:
     return {f[0]: f[1] for f in cur.fetchall()}
 
 
-def interacciones_pendientes(partes, session_id, ya_calificadas: dict):
+def interacciones_pendientes(partes, session_id, ya_calificadas: dict, ahora=None):
     """`(seq, interaccion)` de las que hay que calificar, con su seq ORIGINAL.
 
     EL DISPARADOR ES EL CIERRE DEL OPERADOR, no el silencio de la sesion. Pedido del
@@ -475,7 +476,27 @@ def interacciones_pendientes(partes, session_id, ya_calificadas: dict):
 
     EL SEQ ES EL ORIGINAL, no la posicion en lo pendiente: `interaccion_seq` es la posicion
     dentro de la sesion y se muestra en el tablero. Renumerando, la 56 pasaria a ser la 1.
+
+    SIN EVENTO TERMINAL, LA INTERACCION SIGUE ABIERTA Y NO SE PUNTUA. Cinco interacciones
+    se llevaron 1 estrella con ventanas de 0 o 1 SEGUNDO; al recortarlas con el transcript
+    completo, CUATRO crecen y aparece la respuesta del negocio junto con su `*resuelto*`:
+        Arturo          1 s  ->  46 s, 3 mensajes, 1 del negocio
+        Salome Ramirez  0 s  ->  34.474 s, 3 mensajes, 2 del negocio
+        Genessis        1 s  ->  3.182 s, 5 mensajes, 3 del negocio
+    La nota se habia calculado con la conversacion EN VUELO. "No hay evento terminal" es,
+    exactamente, la señal de "todavia no tengo la conversacion entera".
+
+    Y ESPERAR EL CIERRE ES SEGURO, con el dato: de 14.574 sesiones de 20 dias, **14.570
+    reciben su `*resuelto*`** y solo 4 no lo reciben nunca. Llega en 0,03 min (dos segundos)
+    en la mediana y el 99% dentro de 2,3 h.
+
+    EL TOPE DE `SILENCIO_MAX` ES LA RED, NO LA REGLA, y es lo que evita que la alerta quede
+    colgada: sin el, esas 4 sesiones y los 16 casos que cierran despues de 6 h no se puntuan
+    NUNCA -- ni tablero, ni resumen, porque el resumen exige la fila calificada. Se activa
+    en el 0,19% de los casos. Es `SILENCIO_MAX` importado y no una constante nueva: si el
+    silencio del corte se mueve, este se mueve solo.
     """
+    ahora = ahora or datetime.now(tz=timezone.utc)
     out = []
     for seq, frag in enumerate(partes, 1):
         if not frag:
@@ -487,9 +508,24 @@ def interacciones_pendientes(partes, session_id, ya_calificadas: dict):
         ini = min(m["created_at"] for m in frag)
         fin = max(m["created_at"] for m in frag)
         scored = ya_calificadas.get(interaccion_id_de(session_id, ini))
-        if scored is None or scored < fin:
-            out.append((seq, frag))
+        if scored is not None and scored >= fin:
+            continue
+        if not _cerrada(frag, ahora):
+            continue
+        out.append((seq, frag))
     return out
+
+
+def _cerrada(frag: list[dict], ahora) -> bool:
+    """La interaccion TERMINO: o el CRM la cerro, o hace `SILENCIO_MAX` que nadie habla.
+
+    EL SILENCIO SE MIDE SOBRE MENSAJES REALES. Una nota archivada tarde por el ETL no
+    mantiene viva la atencion; es la misma leccion que ya esta en `partir_en_interacciones`.
+    """
+    if any(es_evento_terminal(m) for m in frag):
+        return True
+    reales = [m["created_at"] for m in frag if not m.get("is_note")]
+    return bool(reales) and (ahora - max(reales)) > SILENCIO_MAX
 
 
 def _score_interaccion_y_persiste(conn, sess: dict, msgs: list[dict],

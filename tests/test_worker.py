@@ -1881,3 +1881,78 @@ def test_una_sesion_VACIA_igual_pasa_para_dejar_su_fila_de_omision():
     sesión quedaba SIN NINGUNA fila -- ni siquiera la de `internal_notes_only`, que es la
     que explica la cobertura en el tablero."""
     assert worker.interacciones_pendientes([[]], "sess", {}) == [(1, [])]
+
+
+# --- SIN EVENTO TERMINAL, LA INTERACCION SIGUE ABIERTA (2026-08-31) ---------
+#
+# EL BUG: 5 interacciones se llevaron 1 estrella con ventanas de 0 o 1 SEGUNDO. Al
+# recortarlas con el transcript completo, CUATRO crecen y aparece la respuesta del negocio
+# junto con su `*resuelto*`. La nota se habia calculado con la conversacion EN VUELO.
+#
+# LA REGLA: se puntua cuando hay evento terminal. Si no lo hay, la interaccion espera.
+#
+# POR QUE ESPERAR EL CIERRE Y NO UN RELOJ, con el dato: de 14.574 sesiones de 20 dias,
+# **14.570 reciben su `*resuelto*`** y solo 4 no lo reciben nunca. Y llega rapido --- p50
+# 0,03 min (dos segundos), p95 47,6 min, p99 137,6 min.
+#
+# PERO EL TOPE HACE FALTA, Y ES LO QUE EVITA QUE LA ALERTA QUEDE COLGADA. Sin el, esas 4
+# sesiones y los 16 casos que cierran despues de 6 h no se puntuan NUNCA: no reciben nota,
+# no salen en el tablero, y su resumen no se manda jamas. Con el tope entran a las 6 h con
+# la charla joven, bien dentro de `VENTANA_CHARLA_HORAS`. El tope NO es la regla: es la red,
+# y se activa en el 0,19% de los casos.
+
+def _frag(minutos, terminal=False, from_me=False):
+    from datetime import datetime, timezone
+    base = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    out = [{"created_at": base, "from_me": from_me, "body": "una recarga",
+            "is_note": False, "media_type": "chat"}]
+    if terminal:
+        out.append({"created_at": base + timedelta(minutes=minutos), "from_me": True,
+                    "is_note": True, "body": "Andree *resuelto* la conversación"})
+    return out
+
+
+def test_CON_evento_terminal_se_puntua():
+    from datetime import datetime, timezone
+    ahora = datetime(2026, 8, 30, 13, 0, tzinfo=timezone.utc)
+    assert len(worker.interacciones_pendientes(
+        [_frag(2, terminal=True)], "s", {}, ahora=ahora)) == 1
+
+
+def test_SIN_evento_terminal_y_todavia_viva_ESPERA():
+    """El caso de los 5 falsos: ventana cortada al aire mientras la conversacion seguia."""
+    from datetime import datetime, timezone
+    ahora = datetime(2026, 8, 30, 13, 0, tzinfo=timezone.utc)   # 1 h despues
+    assert worker.interacciones_pendientes([_frag(0)], "s", {}, ahora=ahora) == []
+
+
+def test_SIN_evento_terminal_pero_con_6_HORAS_de_silencio_SI_se_puntua():
+    """La red. Sin esto, las 4 sesiones que nunca reciben cierre y los 16 que cierran
+    despues de 6 h no reciben nota NUNCA: ni tablero, ni resumen."""
+    from datetime import datetime, timezone
+    ahora = datetime(2026, 8, 30, 19, 0, tzinfo=timezone.utc)   # 7 h despues
+    assert len(worker.interacciones_pendientes([_frag(0)], "s", {}, ahora=ahora)) == 1
+
+
+def test_el_tope_es_SILENCIO_MAX_y_no_una_constante_nueva():
+    """Si alguien mueve el silencio con el que se corta la interaccion, el tope se mueve
+    solo. Dos numeros iguales escritos en dos lados divergen."""
+    from datetime import datetime, timezone
+    from src.interacciones import SILENCIO_MAX
+    base = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    justo_antes = base + SILENCIO_MAX - timedelta(seconds=1)
+    justo_despues = base + SILENCIO_MAX + timedelta(seconds=1)
+    assert worker.interacciones_pendientes([_frag(0)], "s", {}, ahora=justo_antes) == []
+    assert len(worker.interacciones_pendientes([_frag(0)], "s", {}, ahora=justo_despues)) == 1
+
+
+def test_el_silencio_se_mide_sobre_mensajes_REALES_no_sobre_notas():
+    """Una nota del CRM archivada tarde no mantiene viva la atencion. Es la misma leccion
+    que ya esta en `partir_en_interacciones`."""
+    from datetime import datetime, timezone
+    base = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+    frag = [{"created_at": base, "from_me": False, "body": "hola", "is_note": False},
+            {"created_at": base + timedelta(hours=5), "from_me": True, "is_note": True,
+             "body": "*Asignado automáticamente* a Andree"}]
+    ahora = base + timedelta(hours=6, minutes=30)
+    assert len(worker.interacciones_pendientes([frag], "s", {}, ahora=ahora)) == 1
