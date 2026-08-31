@@ -39,14 +39,31 @@ _COLS_RESUMEN = ("interaccion_id", "session_id", "username", "ranking", "agencia
 
 
 class _FakeCursor:
-    def __init__(self, rows=None, cols=_COLS_RESUMEN):
-        self.sql, self.params, self._rows = [], [], rows or []
+    """Un cursor falso que responde a UNA consulta.
+
+    `para` existe porque el barrido corre DOS consultas con formas distintas (la de
+    espera larga trae MENSAJES, la de resumen trae filas ya calificadas) y un cursor que
+    devuelve las mismas filas para las dos hace estallar la que no le corresponde con un
+    KeyError que no tiene nada que ver con lo que el test mide.
+    """
+
+    def __init__(self, rows=None, cols=_COLS_RESUMEN, para="resumen"):
+        self.sql, self.params, self._todas = [], [], rows or []
+        self._rows = self._todas
         self.rowcount = 0
+        self.para = para
         self.description = [type("D", (), {"name": c}) for c in cols]
 
     def execute(self, sql, params=None):
-        self.sql.append(" ".join(str(sql).split()))
+        texto = " ".join(str(sql).split())
+        self.sql.append(texto)
         self.params.append(params)
+        if "FROM conversation_scores cs" in texto:
+            self._rows = self._todas if self.para == "resumen" else []
+        elif "FROM messages m" in texto:
+            self._rows = self._todas if self.para == "espera_larga" else []
+        else:
+            self._rows = self._todas
         self.rowcount = len(self._rows)
 
     def fetchall(self):
@@ -840,13 +857,48 @@ def test_la_clave_del_ledger_es_el_EPISODIO_no_el_ticket():
     assert alertas.clave_espera_larga("tkt-1", a) == alertas.clave_espera_larga("tkt-1", a)
 
 
-def test_la_consulta_de_espera_larga_TRAE_lo_que_el_mensaje_necesita():
+def test_la_consulta_de_espera_larga_TRAE_los_MENSAJES_con_sus_notas():
+    """El corte en interacciones necesita las NOTAS (`*resuelto*`, `*reabierto*`): filtrar
+    `is_note` en la consulta dejaria a `partir_en_interacciones` sin con que cortar."""
     sql = alertas._ESPERA_LARGA_SQL
-    for col in ("AS cliente_at", "AS respuesta_at", "AS operador", "AS cliente",
-                "AS account", "AS ticket_id", "AS body", "AS media_type"):
+    for col in ("AS ticket_id", "m.created_at", "m.from_me", "m.body", "m.media_type",
+                "AS is_note", "AS operador", "AS cliente", "AS account"):
         assert col in sql, col
+    assert "coalesce(m.is_note, false) = false" not in sql, "las notas NO se filtran"
+    assert "ORDER BY t.id, m.created_at" in sql, "agrupar por ticket pide orden estable"
+    assert "make_interval(hours => %(lookback_h)s)" in sql
     assert "make_interval(hours => %(ventana_h)s)" in sql
     assert "es_vip" in sql
+
+
+def test_el_lookback_es_MAS_ANCHO_que_la_ventana_para_que_el_corte_tenga_contexto():
+    """Una interaccion que arranco hace 26 h y sigue viva se partiria mal si el transcript
+    empieza justo en el borde de la ventana."""
+    class _Cur(_FakeCursor):
+        def execute(self, sql, params=None):
+            super().execute(sql, params)
+            self.description = [type("D", (), {"name": c})
+                                for c in ("ticket_id", "created_at", "from_me", "body",
+                                          "media_type", "is_note")]
+    cur = _Cur()
+    alertas.candidatos_espera_larga(cur, "sistemas",
+                                    ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
+    p = cur.params[0]
+    assert p["lookback_h"] > p["ventana_h"]
+
+
+def _mensajes_de_una_espera():
+    """Lo que devuelve `_ESPERA_LARGA_SQL`: MENSAJES del ticket, no pares ya resueltos.
+    El corte en interacciones lo hace Python."""
+    cols = ("ticket_id", "created_at", "from_me", "body", "media_type", "is_note",
+            "username", "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
+    fijos = ("u", 1, "A", "M", "Andree", "Juan", "sistemas")
+    return cols, [
+        ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ), False,
+         "Una recarga por favor", "chat", False) + fijos,
+        ("tkt-1", datetime(2026, 8, 26, 14, 12, tzinfo=TZ), True,
+         "ya se la acredito", "chat", False) + fijos,
+    ]
 
 
 def test_el_barrido_manda_la_espera_larga_y_la_MARCA(monkeypatch):
@@ -854,12 +906,8 @@ def test_el_barrido_manda_la_espera_larga_y_la_MARCA(monkeypatch):
     rastro y el proximo barrido --sesenta segundos mas tarde-- la repetiria."""
     monkeypatch.setattr(alertas.httpx, "post",
                         lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
-    cols = ("ticket_id", "cliente_at", "respuesta_at", "body", "media_type", "username",
-            "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
-    fila = ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ),
-            datetime(2026, 8, 26, 14, 12, tzinfo=TZ), "Una recarga por favor", "chat",
-            "u", 1, "A", "M", "Andree", "Juan", "sistemas")
-    cur = _FakeCursor(rows=[fila], cols=cols)
+    cols, filas = _mensajes_de_una_espera()
+    cur = _FakeCursor(rows=filas, cols=cols, para="espera_larga")
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ), ledger_vacio_=False)
     assert r["espera_larga"] == 1
@@ -872,11 +920,7 @@ def test_el_barrido_NO_repite_una_espera_ya_avisada(monkeypatch):
     SQL. Sin el, el mismo aviso saldria una vez por minuto."""
     monkeypatch.setattr(alertas.httpx, "post",
                         lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
-    cols = ("ticket_id", "cliente_at", "respuesta_at", "body", "media_type", "username",
-            "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
-    fila = ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ),
-            datetime(2026, 8, 26, 14, 12, tzinfo=TZ), "Una recarga por favor", "chat",
-            "u", 1, "A", "M", "Andree", "Juan", "sistemas")
+    cols, filas = _mensajes_de_una_espera()
 
     class _YaEstaba(_FakeCursor):
         def execute(self, sql, params=None):
@@ -884,7 +928,7 @@ def test_el_barrido_NO_repite_una_espera_ya_avisada(monkeypatch):
             if "INSERT INTO alertas_enviadas" in " ".join(str(sql).split()):
                 self.rowcount = 0      # ON CONFLICT DO NOTHING: no inserto
 
-    cur = _YaEstaba(rows=[fila], cols=cols)
+    cur = _YaEstaba(rows=filas, cols=cols, para="espera_larga")
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ), ledger_vacio_=False)
     assert r["espera_larga"] == 0
@@ -895,12 +939,8 @@ def test_el_PRIMER_arranque_tampoco_replica_esperas(monkeypatch):
     del dia entero de un saque. La siembra tapa eso: marca y no manda."""
     llamadas = []
     monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: llamadas.append(a))
-    cols = ("ticket_id", "cliente_at", "respuesta_at", "body", "media_type", "username",
-            "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
-    fila = ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ),
-            datetime(2026, 8, 26, 14, 12, tzinfo=TZ), "Una recarga por favor", "chat",
-            "u", 1, "A", "M", "Andree", "Juan", "sistemas")
-    cur = _FakeCursor(rows=[fila], cols=cols)
+    cols, filas = _mensajes_de_una_espera()
+    cur = _FakeCursor(rows=filas, cols=cols, para="espera_larga")
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ), ledger_vacio_=True)
     assert r["espera_larga"] == 0 and r["sembrados"] >= 1
@@ -912,3 +952,89 @@ def test_el_tope_es_SILENCIO_MAX_y_no_una_copia():
     espera tiene que moverse solo. Dos numeros iguales escritos en dos lados divergen."""
     from src.interacciones import SILENCIO_MAX
     assert alertas.TOPE_ESPERA_SEGUNDOS == SILENCIO_MAX.total_seconds()
+
+
+# --- EL CANDIDATO ES LA INTERACCION, NO EL TURNO (2026-08-31) ---------------
+#
+# CORRECCION DEL NEGOCIO, textual: "si viene y se guarda el primer mensaje y no llega la
+# respuesta se debe enviar la alerta porque es el principio de la respuesta, pero si se
+# guarda un mensaje de una conversacion iniciada no porque no tiene nada que ver, ya es el
+# inicio y la primera respuesta de una interaccion lo que importa".
+#
+# LA PRIMERA VERSION MEDIA CUALQUIER TURNO. Sobre 7 dias reales alertaba por "ID:
+# 5336766639", "Me confirma" y "Qué el juego quedó 68 a 68": mensajes del MEDIO de una
+# charla donde el operador ya estaba adentro. Eso no es una espera por atencion, es el ida
+# y vuelta normal de una conversacion, y castigarlo es castigar a alguien que ya atendio.
+#
+# LO QUE SE MIDE ES EL MISMO RELOJ QUE CALIFICA LA RUBRICA: inicio de la interaccion ->
+# primera respuesta del operador. Se corta con `interacciones.partir_en_interacciones` y se
+# leen los tiempos con `interacciones.tiempos_de`, las MISMAS funciones del scoring. Ese
+# corte sabe cosas que una consulta no: la nota `*resuelto*` cierra, `*reabierto*` delata
+# el cierre que no pego, el silencio de 6 h parte, y el adjunto de los 120 s no arranca una
+# interaccion nueva.
+
+def _m(minuto, from_me=False, body="Una recarga por favor", is_note=False, media="chat"):
+    return {"created_at": datetime(2026, 8, 28, 14, minuto, tzinfo=TZ), "from_me": from_me,
+            "body": body, "is_note": is_note, "media_type": media}
+
+
+def test_solo_el_ARRANQUE_de_la_interaccion_es_candidato():
+    """Una charla: el cliente abre, le contestan a los 12 min, y despues hay ida y vuelta.
+    Sale UN candidato --el arranque-- y no uno por cada turno del cliente."""
+    msgs = [_m(0), _m(12, from_me=True, body="ya le acredito"),
+            _m(20, body="ID: 5336766639"), _m(40, from_me=True, body="listo")]
+    cands = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})
+    assert len(cands) == 1
+    assert cands[0]["cliente_at"] == _m(0)["created_at"]
+    assert cands[0]["respuesta_at"] == _m(12, from_me=True)["created_at"]
+
+
+def test_el_turno_del_MEDIO_no_genera_alerta_aunque_tarden():
+    """El caso que el negocio marco: los 20 minutos entre 'ID: ...' y la respuesta no son
+    una espera por atencion. El operador ya estaba adentro."""
+    msgs = [_m(0), _m(1, from_me=True, body="ya la reviso"),
+            _m(20, body="ID: 5336766639"), _m(50, from_me=True, body="listo")]
+    cands = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})
+    assert len(cands) == 1, "una sola interaccion, un solo candidato"
+    assert cands[0]["respuesta_at"] == _m(1, from_me=True)["created_at"], \
+        "el reloj es el de la PRIMERA respuesta, no el del turno lento"
+    assert alertas.merece_alerta_de_espera(cands[0]) is False
+
+
+def test_una_interaccion_NUEVA_tras_el_cierre_vuelve_a_contar():
+    """Despues del `*resuelto*` la atencion siguiente tiene su propio reloj: si el cliente
+    vuelve y lo hacen esperar, eso SI es una espera por atencion."""
+    msgs = [_m(0), _m(1, from_me=True, body="listo"),
+            {"created_at": datetime(2026, 8, 28, 14, 2, tzinfo=TZ), "from_me": True,
+             "body": "Andree *resuelto* la conversación", "is_note": True},
+            _m(30, body="Otra recarga por favor"),
+            _m(45, from_me=True, body="va")]
+    cands = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})
+    assert len(cands) == 2
+    assert alertas.merece_alerta_de_espera(cands[0]) is False, "1 min"
+    assert alertas.merece_alerta_de_espera(cands[1]) is True, "15 min tras el cierre"
+
+
+def test_la_interaccion_SIN_respuesta_todavia_no_alerta_pero_se_devuelve():
+    """`respuesta_at` en None es "nadie contesto todavia". `merece_alerta_de_espera` no la
+    manda --no se puede medir una espera que no termino, y esa es la alerta EN VIVO que se
+    borro por imposible-- pero el candidato se devuelve para que el dia que el negocio la
+    quiera no haya que rehacer el corte."""
+    cands = alertas.esperas_de_apertura([_m(0), _m(5, body="ahi?")], {"ticket_id": "tkt-1"})
+    assert len(cands) == 1 and cands[0]["respuesta_at"] is None
+    assert alertas.merece_alerta_de_espera(cands[0]) is False
+
+
+def test_la_interaccion_que_ABRE_el_negocio_no_es_una_espera():
+    """Si el primer mensaje real es del operador --una campaña, un seguimiento-- no hubo
+    nadie esperando: el reloj de la primera respuesta no aplica."""
+    msgs = [_m(0, from_me=True, body="Hola, le escribo de Sorti"), _m(30, body="dale")]
+    assert alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"}) == []
+
+
+def test_el_candidato_arrastra_los_datos_del_ticket_para_el_mensaje():
+    fila = {"ticket_id": "tkt-9", "username": "u", "ranking": 3, "agencia": "A",
+            "motivo_vip": "M", "operador": "Andree", "cliente": "Juan", "account": "datos"}
+    c = alertas.esperas_de_apertura([_m(0), _m(12, from_me=True, body="va")], fila)[0]
+    for k, v in fila.items():
+        assert c[k] == v

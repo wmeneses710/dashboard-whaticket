@@ -74,8 +74,8 @@ import httpx
 
 from src.cola_de_cortesia import decidir_con_el_modelo, necesita_el_modelo
 from src.horario import TZ as TZ_EC
-from src.interacciones import SILENCIO_MAX
 from src.horario import espera_efectiva
+from src.interacciones import SILENCIO_MAX, partir_en_interacciones, tiempos_de
 from src.signals import client_sin_motivo
 
 logger = logging.getLogger(__name__)
@@ -312,49 +312,29 @@ def ahora_de_la_base(cur) -> datetime:
 # LAS NOTAS QUEDAN AFUERA (`is_note`). Una nota es interna: contarla como respuesta al
 # cliente es el bug que `sin_respuesta.hubo_respuesta_del_negocio` ya documenta.
 _ESPERA_LARGA_SQL = """
-WITH vip AS (
-    SELECT m.ticket_id, m.created_at, m.from_me, m.body, m.media_type,
-           lead(m.created_at) OVER w AS sig_at,
-           lead(m.from_me)    OVER w AS sig_from_me
-      FROM messages m
-      JOIN tickets t     ON t.id = m.ticket_id
-      JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
-     WHERE v.es_vip
-       AND t.account = %(account)s
-       AND NOT coalesce(t.is_group, false)
-       AND coalesce(m.is_note, false) = false
-       AND m.created_at > now() - make_interval(hours => %(ventana_h)s)
-    WINDOW w AS (PARTITION BY m.ticket_id ORDER BY m.created_at)
-)
-SELECT vip.ticket_id::text AS ticket_id,
-       vip.created_at      AS cliente_at,
-       vip.sig_at          AS respuesta_at,
-       vip.body            AS body,
-       vip.media_type      AS media_type,
+SELECT t.id::text  AS ticket_id,
+       m.created_at, m.from_me, m.body, m.media_type,
+       coalesce(m.is_note, false) AS is_note,
        v.username, v.ranking, v.agencia,
-       v.motivo            AS motivo_vip,
-       usr.name            AS operador,
-       ct.name             AS cliente,
-       t.account           AS account
-  FROM vip
-  JOIN tickets t     ON t.id = vip.ticket_id
+       v.motivo    AS motivo_vip,
+       usr.name    AS operador,
+       ct.name     AS cliente,
+       t.account   AS account
+  FROM messages m
+  JOIN tickets t     ON t.id = m.ticket_id
   JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
   LEFT JOIN users usr   ON usr.id = t.user_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
- -- ACA NO HAY JOIN CONTRA EL LEDGER, y es deliberado. El resumen si lo tiene porque su
- -- clave es un uuid que SQL puede comparar tal cual; la de la espera es
- -- `{ticket}:{created_at.isoformat()}`, y reproducir en SQL el isoformat de Python
- -- --microsegundos incluidos-- es una segunda implementacion de la clave que se rompe en
- -- SILENCIO: si un solo caracter no coincide, el join no matchea, nada se filtra y la
- -- alerta sale cada 60 segundos. La garantia de idempotencia es `marcar_enviada`, que
- -- compara la clave que ESCRIBIO Python. El costo de no filtrar aca es traer unas pocas
- -- filas de mas por ciclo (88 en 30 dias) y descartarlas por PK.
- WHERE vip.from_me = false
-   AND vip.sig_from_me = true
-   -- El piso en SQL acota el scan; la vara de verdad la pone `merece_alerta_de_espera` con
-   -- `espera_efectiva`, que descuenta la noche y aca no se puede reimplementar sin tener
-   -- dos versiones del contrato.
-   AND vip.sig_at - vip.created_at >= make_interval(secs => %(umbral_s)s)
+ WHERE v.es_vip
+   AND t.account = %(account)s
+   AND NOT coalesce(t.is_group, false)
+   AND m.created_at > now() - make_interval(hours => %(lookback_h)s)
+   -- Solo los tickets que se movieron en la ventana. Sin esto se arrastra el historial de
+   -- cada VIP para nada.
+   AND EXISTS (SELECT 1 FROM messages m2
+                WHERE m2.ticket_id = t.id
+                  AND m2.created_at > now() - make_interval(hours => %(ventana_h)s))
+ ORDER BY t.id, m.created_at
 """
 
 
@@ -410,16 +390,40 @@ def _dicts(cur) -> list[dict]:
     return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
-def candidatos_espera_larga(cur, account: str) -> list[dict]:
-    """Pares (mensaje del cliente, respuesta del negocio) con el piso de espera en bruto.
+_CAMPOS_DEL_TICKET = ("ticket_id", "username", "ranking", "agencia", "motivo_vip",
+                      "operador", "cliente", "account")
 
-    Las compuertas finas --la noche, el tope, la cortesia-- las pone
-    `merece_alerta_de_espera` en Python, con las MISMAS funciones que usa la rubrica.
+
+def candidatos_espera_larga(cur, account: str, ahora: datetime | None = None) -> list[dict]:
+    """Un candidato por INTERACCION abierta por el cliente: su arranque y su 1ª respuesta.
+
+    EL CORTE SE HACE EN PYTHON, no en SQL, y no es capricho: la unidad la define
+    `interacciones.partir_en_interacciones`, que lee las notas del CRM (`*resuelto*`,
+    `*reabierto*`), el silencio de 6 h y la gracia de los 120 s del adjunto. Reescribir eso
+    en SQL seria una segunda version del contrato con el que la rubrica califica.
+
+    SE TRAEN MAS MENSAJES QUE LA VENTANA (`lookback`) para que el corte tenga CONTEXTO: una
+    interaccion que arranco hace 26 h y sigue viva se partiria mal si el transcript empieza
+    justo en el borde. Los candidatos si se acotan a la ventana.
     """
-    cur.execute(_ESPERA_LARGA_SQL, {"account": account,
-                                    "ventana_h": VENTANA_ESPERA_LARGA_HORAS,
-                                    "umbral_s": UMBRAL_ESPERA_LARGA_SEGUNDOS})
-    return _dicts(cur)
+    cur.execute(_ESPERA_LARGA_SQL, {
+        "account": account,
+        "ventana_h": VENTANA_ESPERA_LARGA_HORAS,
+        "lookback_h": VENTANA_ESPERA_LARGA_HORAS + SILENCIO_MAX.total_seconds() / 3600,
+    })
+    por_ticket: dict[str, tuple[dict, list[dict]]] = {}
+    for f in _dicts(cur):
+        tk = f["ticket_id"]
+        if tk not in por_ticket:
+            por_ticket[tk] = ({k: f.get(k) for k in _CAMPOS_DEL_TICKET}, [])
+        por_ticket[tk][1].append(f)
+    corte = (ahora or datetime.now(tz=TZ_EC)) - timedelta(hours=VENTANA_ESPERA_LARGA_HORAS)
+    out = []
+    for ticket, mensajes in por_ticket.values():
+        for c in esperas_de_apertura(mensajes, ticket):
+            if c["cliente_at"] >= corte:
+                out.append(c)
+    return out
 
 
 def resumenes_pendientes(cur, account: str) -> list[dict]:
@@ -527,6 +531,56 @@ def espera_de_horario(d: dict) -> tuple[float | None, bool]:
 # con `from_me = false` cuyo cuerpo empieza `*Anya Alexandra:*` y sigue con la plantilla de
 # retiro. Alertar por eso seria avisar que el negocio se hizo esperar a si mismo.
 _PREFIJO_NOTA_CRM = re.compile(r"^\s*\*[^*\n]{1,60}:\*")
+
+
+def esperas_de_apertura(mensajes: list[dict], ticket: dict) -> list[dict]:
+    """Un candidato POR INTERACCION: (arranque del cliente, primera respuesta del operador).
+
+    CORRECCION DEL NEGOCIO (2026-08-31), y cambia la unidad de medida: *"si se guarda un
+    mensaje de una conversacion iniciada no [alerta] porque no tiene nada que ver, ya es el
+    inicio y la primera respuesta de una interaccion lo que importa"*.
+
+    LA PRIMERA VERSION MEDIA CUALQUIER TURNO y por eso alertaba, sobre datos reales, por
+    "ID: 5336766639", "Me confirma" y "Qué el juego quedó 68 a 68": mensajes del MEDIO de
+    una charla donde el operador ya estaba adentro. Eso no es esperar por atencion, es el
+    ida y vuelta normal -- y avisarlo es acusar a alguien que ya atendio.
+
+    SE CORTA CON `interacciones.partir_en_interacciones` Y SE LEE CON `tiempos_de`, que son
+    las MISMAS funciones con las que la rubrica califica agilidad. Ese corte sabe cosas que
+    una consulta SQL no puede saber: `*resuelto*` cierra, `*reabierto*` delata el cierre que
+    no pego, el silencio de 6 h parte, el adjunto de los 120 s sigue siendo el mismo gesto,
+    y la cola de cortesia se pega a la atencion que la gano.
+
+    LA INTERACCION QUE ABRE EL NEGOCIO NO ES UNA ESPERA. Si el primer mensaje real es del
+    operador (una campaña, un seguimiento) no habia nadie esperando y el reloj no aplica.
+
+    `respuesta_at = None` significa "en ESTE ticket todavia nadie contesto", y OJO CON
+    LEERLO COMO ABANDONO. El corte es por TICKET, y el jugador escribe a varias lineas: una
+    respuesta que cayo en otro ticket suyo no se ve desde aca. VERIFICADO sobre 7 dias, las
+    2 interacciones sin respuesta que parecian pedidos reales estaban las dos atendidas --a
+    una le contesto Andree en otro ticket 1 h 51 min despues, y la otra tenia la nota
+    "ESCRIBIO Y SE LO ATENDIO EN LA OTRA LINEA (YA ESTA CARGADA)"--. Las otras 5 eran
+    "gracias" y stickers que el operador cerro sin responder, que es lo correcto.
+
+    POR ESO NO SE ALERTA CON `None`, y es la proteccion, no una omision: `merece_alerta_de_
+    espera` exige las dos puntas. Medir una espera que no termino es la alerta EN VIVO que
+    se borro por imposible, y afirmar abandono mirando un solo ticket es el falso positivo
+    que ya nos comimos una vez.
+    """
+    out = []
+    for frag in partir_en_interacciones(mensajes):
+        reales = [m for m in frag if not m.get("is_note")]
+        if not reales or reales[0].get("from_me"):
+            continue
+        inicio, primera_op, _ = tiempos_de(frag)
+        if inicio is None:
+            continue
+        out.append({**ticket,
+                    "cliente_at": inicio,
+                    "respuesta_at": primera_op,
+                    "body": reales[0].get("body") or "",
+                    "media_type": reales[0].get("media_type") or "chat"})
+    return out
 
 
 def merece_alerta_de_espera(d: dict, llm=None) -> bool:
@@ -740,7 +794,7 @@ def barrer(conn, account: str, canal: Canal,
         # arrastrando backlog.
         if canal.configurado:
             with conn.cursor() as cur:
-                candidatos = candidatos_espera_larga(cur, account)
+                candidatos = candidatos_espera_larga(cur, account, ahora)
             for c in candidatos:
                 if not merece_alerta_de_espera(c, llm):
                     continue
