@@ -1,0 +1,615 @@
+% =====================================================================
+% Parámetros de calificación — Sistema de scoring de atenciones
+% Compilar:  latexmk -pdf parametros-de-calificacion.tex
+%
+% Este documento describe el sistema TAL COMO ESTÁ IMPLEMENTADO en
+% 2026.08-rubricas-v24. Cada umbral corresponde a una constante del
+% código y se cita el módulo donde vive.
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.3cm,headheight=14pt]{geometry}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{primary}{HTML}{1F3864}
+\definecolor{accent}{HTML}{2E75B6}
+\definecolor{soft}{HTML}{EEF3FA}
+\definecolor{warn}{HTML}{C0504D}
+\definecolor{ok}{HTML}{2E7D32}
+\definecolor{gray70}{HTML}{4D4D4D}
+
+\hypersetup{
+  pdftitle={Parametros de calificacion - Sistema de scoring},
+  pdfsubject={Especificacion de rubricas, umbrales y precedencias},
+  pdfkeywords={scoring, rubricas, ATC, calificacion, umbrales}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{gray70}Parámetros de calificación}
+\fancyhead[R]{\small\color{gray70}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primary}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{accent}}{\thesubsection}{0.6em}{}
+\setlist[itemize]{leftmargin=1.3em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.5em,itemsep=2pt,topsep=3pt}
+
+\newcommand{\cod}[1]{\texttt{\small #1}}
+\newtcolorbox{nota}[1][]{colback=soft,colframe=accent,boxrule=0.6pt,
+  arc=2pt,left=6pt,right=6pt,top=5pt,bottom=5pt,#1}
+\newtcolorbox{alerta}[1][]{colback=white,colframe=warn,boxrule=0.8pt,
+  arc=2pt,left=6pt,right=6pt,top=5pt,bottom=5pt,#1}
+
+\newcommand{\est}[1]{\textbf{#1}\,\raisebox{0.5pt}{$\star$}}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries\color{primary} Parámetros de calificación\par}
+\vspace{0.6cm}
+{\Large\color{gray70} Sistema de scoring de atenciones\par}
+\vspace{2cm}
+{\large Versión del scoring: \cod{2026.08-rubricas-v24}\par}
+\vspace{0.4cm}
+{\large 31 de agosto de 2026\par}
+\vfill
+\begin{minipage}{0.82\textwidth}
+\small\color{gray70}
+Este documento describe el sistema \textbf{tal como está implementado}. Cada umbral
+que aparece acá es una constante del código, y se indica el módulo donde vive, para
+que cualquier afirmación se pueda verificar contra la fuente. No describe cómo
+debería funcionar: describe cómo funciona hoy.
+\end{minipage}
+\vspace{2cm}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{Cómo se lee una nota}
+
+\subsection{La escala}
+
+La escala es \textbf{una sola para todos los motivos}, y la definió el negocio el
+6 de agosto de 2026.
+
+\begin{center}
+\begin{tabular}{@{}clL@{}}
+\toprule
+\textbf{Estrellas} & \textbf{Etiqueta} & \textbf{Qué significa} \\
+\midrule
+5 & excelente  & Se logró el \textsc{mejor escenario} del motivo \\
+4 & buena      & Se hizo bien \\
+3 & aceptable  & Faltó algo leve \\
+2 & deficiente & Faltaron varias cosas \\
+1 & mala       & Se demoró mucho \emph{y} contestó mal, o no contestó \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{nota}
+\textbf{La estrella no la elige el modelo.} El LLM juzga \emph{hechos} (¿atendió el
+motivo?, ¿hizo algo extra?) y el \emph{código} traduce esos hechos a una etiqueta, y
+la etiqueta a una estrella, con una tabla fija. Los modelos de lenguaje clasifican
+bien y calibran mal los números: si se les pide directamente ``ponele una nota del 1
+al 5'', la misma conversación saca notas distintas en dos corridas.
+\end{nota}
+
+\subsection{La unidad calificada: la interacción}
+
+Desde el 27 de agosto de 2026 la nota es \textbf{una por interacción}, no una por
+conversación. Una conversación de WhatsApp puede contener muchas atenciones de
+operadores distintos --- se midieron hasta 14 personas en un mismo hilo --- y una
+nota única las mezclaba todas.
+
+Una interacción se corta con las señales del propio CRM:
+
+\begin{center}
+\begin{tabular}{@{}lL@{}}
+\toprule
+\textbf{Señal} & \textbf{Efecto} \\
+\midrule
+\cod{*resuelto*} & Cierra la interacción. Es la frontera principal \\
+\cod{*reabierto*} & Delata un cierre que no pegó (no corta) \\
+Silencio $>$ 6 h & Corta cuando nadie cerró (\cod{SILENCIO\_MAX}) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\medskip
+Dos reglas de ajuste evitan cortes injustos:
+
+\begin{itemize}
+\item \textbf{Gracia de cierre: 120 s} (\cod{GRACIA\_CIERRE\_SEG}). El operador cierra
+y adjunta el comprobante enseguida; es un solo gesto y no dos interacciones.
+\item \textbf{Cola de cortesía: 600 s} (\cod{GRACIA\_CORTESIA\_SEG}). El ``gracias''
+que el cliente manda después del cierre se pega hacia atrás, a la atención que se lo
+ganó. Sin esto, el CRM asigna la conversación a otra persona y esa persona cobra
+\est{1} sin haber escrito una palabra.
+\end{itemize}
+
+\begin{nota}
+\textbf{El identificador de una interacción es determinista}: se deriva de
+(sesión, instante de inicio). Pegar la cola de cortesía \emph{absorbe} fragmentos pero
+nunca mueve un inicio, así que recalificar no re-numera nada.
+\end{nota}
+
+\newpage
+% =====================================================================
+\section{El orden de precedencia}
+
+Esta es la parte que más se malinterpreta: \textbf{no todas las conversaciones pasan
+por el mismo camino}. Hay una cascada, y la primera regla que aplica gana.
+
+\subsection{Paso 0 --- ¿es evaluable?}
+
+Antes de cualquier rúbrica, un filtro decide si la conversación se puede calificar.
+Las que no, quedan registradas con un motivo de salteo: no desaparecen del tablero,
+para que la cobertura sea auditable.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Motivo de salteo} & \textbf{Cuándo} \\
+\midrule
+\cod{grupo\_de\_whatsapp} & Es un grupo. Va \emph{primero}: las rúbricas preguntan si
+se le respondió a \emph{un} cliente, y en un grupo no hay uno \\
+\cod{internal\_notes\_only} & No hay ningún mensaje real, solo notas del CRM \\
+\cod{no\_customer\_reply} & El cliente nunca escribió \\
+\cod{customer\_media\_only} & El cliente solo mandó imágenes o audio \emph{y} el
+operador no resolvió \\
+\cod{anomalous\_size} & Más de 250 mensajes reales (\cod{ANOMALOUS\_MESSAGE\_MAX}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{alerta}
+\textbf{Lo que ya NO se saltea:} que el negocio no haya contestado. Hasta el 21 de
+agosto de 2026 eran 1.167 sesiones salteadas, y el salteo escondía la peor falla que
+este sistema puede medir. Medido sobre 300 de ellas, el \textbf{99,7\% tiene una nota
+del CRM ``\emph{<Nombre> resuelto la conversación}''}: un operador la cerró sin
+escribirle nunca al cliente. Eso es deliberado y atribuible, no un descuido.
+\end{alerta}
+
+\subsection{Paso 1 --- la cascada de rúbricas}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}clX@{}}
+\toprule
+\textbf{\#} & \textbf{Regla} & \textbf{Qué decide} \\
+\midrule
+1 & Sin respuesta      & Nadie del negocio le escribió al cliente $\rightarrow$ \est{1} \\
+2 & Cola de cortesía   & El fragmento es solo un ``gracias'' $\rightarrow$ se saltea \\
+3 & Solo cortesía      & El cliente no planteó nada $\rightarrow$ \est{3} o \est{4} \\
+4 & Segmento agente    & La cola es de agentes $\rightarrow$ rúbrica propia \\
+5 & Redirección        & La respuesta fue solo un traspaso \\
+6 & Por motivo         & El camino general (determinista o LLM) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Por qué ``sin respuesta'' va primero.} Es el único hecho que no necesita
+interpretación: o hay un mensaje del negocio al cliente, o no lo hay. Y hay una
+trampa: \textbf{la nota del CRM no cuenta como respuesta}. Es \cod{from\_me} pero no
+es un mensaje al cliente, y contarla convertiría justo estas sesiones en ``sí
+respondió''.
+\end{nota}
+
+\newpage
+% =====================================================================
+\section{Las rúbricas deterministas}
+
+Seis motivos se califican \textbf{sin LLM}: el resultado sale de hechos medibles
+(hubo comprobante, hubo confirmación, cuánto tardó). Son reproducibles al cien por
+cien y no cuestan inferencia.
+
+\subsection{Depósito}
+\emph{Módulo:} \cod{src/deposito.py}\quad\emph{Umbrales:} \cod{AGIL} = 1 min,
+\cod{ACEPTABLE} = 5 min
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{1} & Mandó el comprobante y \textbf{nadie le respondió} \\
+\est{2} & Respondió pero \textbf{nunca confirmó} que la plata entró \\
+\est{2} & Confirmó, pero el primer aviso tardó más de 5 min \\
+\est{3} & Confirmó, pero el primer aviso tardó más de 1 min \\
+\est{4} & Avisó $\le$ 1 min y confirmó, pero cerró sin preguntar si faltaba algo \\
+\est{4} & Avisó, confirmó y preguntó --- pero el cliente escribió al final y quedó colgado \\
+\est{5} & Avisó $\le$ 1 min, confirmó la acreditación \textbf{y} preguntó si faltaba algo \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Dos ramas con techo en \est{4}.} Existen porque el manual de ATC prohíbe
+ciertos pasos, y castigarlos sería exigir lo prohibido:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lcX@{}}
+\toprule
+\textbf{Rama} & \textbf{Objetivo} & \textbf{Notas} \\
+\midrule
+Rechazo (no se podía acreditar) & 1 min & \est{4} si avisó a tiempo, \est{3} si tardó \\
+Derivación al agente & 5 min & \est{4} si avisó a tiempo, \est{3} si tardó \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Por qué la derivación tiene 5 minutos y no 1.} El manual (cap. 05) exige que,
+antes de derivar, el operador pida el usuario y verifique en el sistema a qué agencia
+pertenece. Eso es una consulta, no un reflejo. Cobrarle el minuto sería cobrarle la
+verificación que el propio manual le manda hacer.
+
+\textbf{Por qué el techo es \est{4} y no \est{5}.} El 5 significa ``el mejor escenario
+del motivo'', y una recarga que no se pudo hacer no lo es.
+\end{nota}
+
+\subsection{Retiro}
+\emph{Módulo:} \cod{src/retiro.py}\quad\emph{Umbrales:} \cod{AGIL} = 1 min,
+\cod{RESPUESTA\_TOPE} = 5 min, \cod{ENTREGA\_AGIL} = 15 min, \cod{ENTREGA\_TOPE} = 30 min
+
+El retiro tiene \textbf{dos relojes}: cuánto tardó en responder, y cuánto tardó en
+entregar el comprobante de la transferencia.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{1} & Pidió el retiro y \textbf{nadie le respondió} \\
+\est{2} & Respondió pero \textbf{nunca envió el comprobante} \\
+\est{2} & Entregó, pero entrega $>$ 30 min o respuesta $>$ 5 min \\
+\est{3} & Entregó, pero respuesta $>$ 1 min o entrega $>$ 15 min \\
+\est{4} & Respondió $\le$ 1 min y entregó $\le$ 15 min, sin preguntar si faltaba algo \\
+\est{4} & Todo bien, pero el cliente escribió al final y quedó colgado \\
+\est{5} & Respondió $\le$ 1 min, entregó $\le$ 15 min \textbf{y} preguntó si faltaba algo \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Tiene la misma rama de \textbf{derivación al agente} con techo en \est{4} y objetivo
+de 5 minutos, por la misma razón del manual.
+
+\subsection{Registro}
+\emph{Módulo:} \cod{src/registro.py}\quad\emph{Umbral:} \cod{ENTREGA\_AGIL} = 5 min
+
+El reloj corre desde que el cliente entrega sus datos hasta que recibe usuario y clave.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{1} & Entregó sus datos y \textbf{nadie le respondió} \\
+\est{2} & Entregó sus datos pero \textbf{nunca recibió usuario y clave}: el alta quedó a medias \\
+\est{3} & Entregó las credenciales pero tardó más de 5 min \\
+\est{3} & Entregó las credenciales pero no se puede medir (salieron antes de los datos) \\
+\est{4} & Creó la cuenta $\le$ 5 min, sin acompañar hasta la primera recarga \\
+\est{5} & Creó la cuenta \textbf{y además} logró que recargara en la misma conversación \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Rama de alta imposible} (el cliente ya tenía cuenta): \est{4} si avisó
+dentro de 5 min, \est{3} si tardó. Techo en \est{4} por la misma lógica que las otras
+ramas de rechazo.
+
+\subsection{Promoción}
+\emph{Módulo:} \cod{src/promo.py}\quad\emph{Umbrales:} \cod{AGIL} = 1 min,
+\cod{RAZONABLE} = 5 min, \cod{TOLERABLE} = 15 min
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{1} & Preguntó por la promo y \textbf{nadie le respondió} \\
+\est{2} & Respondió después de 15 min: la consulta ya se enfrió \\
+\est{3} & Respondió entre 1 y 15 min \\
+\est{4} & Respondió $\le$ 1 min \\
+\est{5} & Mandó el \textbf{material} de la promo y respondió $\le$ 5 min \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Información}
+\emph{Módulo:} \cod{src/info.py}\quad\emph{Umbrales:} \cod{AGIL} = 1 min,
+\cod{TOLERABLE} = 5 min
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{1} & Preguntó y \textbf{nadie le respondió} \\
+\est{2} & Respondió después de 5 min \\
+\est{3} & Respondió entre 1 y 5 min \\
+\est{4} & Respondió $\le$ 1 min, sin preguntar si faltaba algo \\
+\est{4} & Respondió y preguntó, pero el cliente quedó colgado \\
+\est{5} & Respondió $\le$ 1 min \textbf{y} preguntó si faltaba algo \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Soporte de cuenta}
+\emph{Módulo:} \cod{src/soporte.py}\quad\emph{Umbrales:} \cod{AGIL} = 1 min,
+\cod{TOLERABLE} = 5 min
+
+Soporte es el motivo con más ida y vuelta (4,5 turnos de media), así que \textbf{no
+se mide la primera respuesta sino la mediana de todas las esperas}. Una sola demora
+no define una atención de ocho turnos.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{1} & Reportó el problema y \textbf{nadie le respondió} \\
+\est{2} & Contestó, pero el cliente \textbf{no se llevó nada concreto}: ni un paso a
+seguir ni la certeza de que se escaló \\
+\est{2} & Hizo algo por el caso, pero la espera mediana superó los 5 min \\
+\est{3} & Atendió el caso, con espera mediana entre 1 y 5 min \\
+\est{4} & Atendió rápido y dio una salida concreta, sin preguntar si faltaba algo \\
+\est{5} & Atendió rápido, dio una salida concreta \textbf{y} preguntó si faltaba algo \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Redirección}
+\emph{Módulo:} \cod{src/redireccion.py}
+
+Cuando la única respuesta del negocio fue un traspaso a otra línea. Lo que se
+califica es \textbf{a dónde lo mandaron}, no que lo hayan mandado.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+salteo & Traspaso limpio a una línea propia y viva: no se califica \\
+\est{4} & Derivó a otra línea nuestra \textbf{activa}, avisándole al cliente \\
+\est{2} & Derivó \textbf{sin dejarle una línea}: el número no se resuelve o la línea está caída \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+Este motivo \textbf{nunca se le pregunta al modelo}. Que la respuesta haya sido solo
+un traspaso, que el destino sea una línea nuestra y que esa línea esté activa son
+tres hechos que no se pueden verificar leyendo el chat: el último vive en la tabla de
+conexiones. \emph{Cuando el hecho es nuestro, no se pregunta.}
+\end{nota}
+
+\subsection{Agilidad (segmento agente)}
+\emph{Módulo:} \cod{src/agilidad.py}\quad\emph{Umbrales:} \cod{AGIL} = 1 min,
+\cod{BUENO} = 5 min, \cod{ACEPTABLE} = 15 min
+
+Para los agentes que no encajan en depósito, retiro ni información se mide la
+\textbf{peor espera} de todos sus pedidos dentro del horario de atención.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición (peor espera)} \\
+\midrule
+\est{1} & Algún pedido quedó \textbf{sin respuesta} \\
+\est{2} & Más de 15 min \\
+\est{3} & Entre 5 y 15 min \\
+\est{4} & Entre 1 y 5 min \\
+\est{5} & Hasta 1 min \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Sin respuesta y solo cortesía}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lcX@{}}
+\toprule
+\textbf{Rúbrica} & \textbf{Nota} & \textbf{Condición} \\
+\midrule
+Sin respuesta  & \est{1} & El cliente escribió y \textbf{nadie del negocio} le escribió \\
+Solo cortesía  & \est{4} & El cliente no planteó nada y no quedó colgado \\
+Solo cortesía  & \est{3} & El cliente no planteó nada pero se quedó con la última palabra \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\newpage
+% =====================================================================
+\section{El camino del LLM: piso, uplift y modulador}
+
+Los motivos sin rúbrica determinista --- y los casos donde la determinista no
+aplica --- pasan por el modelo. Pero el modelo \textbf{no pone la nota}: responde
+preguntas de hecho y el código deriva la etiqueta.
+
+\subsection{Las tres dimensiones}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Dimensión} & \textbf{Rol} & \textbf{Qué mide} \\
+\midrule
+\cod{resolucion} & piso   & ¿Atendió el motivo de \emph{esta} visita? \\
+\cod{iniciativa} & uplift & ¿Hizo algo más allá del trámite? \\
+\cod{cortesia}   & uplift & ¿Saludó, personalizó, usó el nombre? \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Las reglas, en orden}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Xc@{}}
+\toprule
+\textbf{Situación} & \textbf{Etiqueta} \\
+\midrule
+Maltrato grave & mala (\est{1}) \\
+No atendió \textbf{y} hubo fricción (el cliente rogando, sin respuesta) & mala (\est{1}) \\
+No atendió & deficiente (\est{2}) \\
+Atendió, pero hubo \textbf{fricción} (reinsistió sin respuesta) & deficiente (\est{2}) \\
+Atendió, pero fue \textbf{confuso} \emph{y} está corroborado & deficiente (\est{2}) \\
+Atendió limpio \textbf{+} acción extra \emph{o} cortesía destacada & excelente (\est{5}) \\
+Atendió limpio & buena (\est{4}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Por qué hacer bien el trabajo ya vale \est{4}.} Hasta la versión 3, el piso
+limpio topaba en \est{3} y para pasar de ahí hacía falta empuje comercial. Medido
+sobre 213 sesiones de depósito: 149 respondieron en $\le$ 2 minutos \emph{y}
+confirmaron la acreditación --- el trabajo completo --- y 135 de esas quedaron en
+\est{3}. Hacerlo perfecto valía $+0{,}13$ estrellas contra no hacerlo. La escala no
+medía lo que decía medir.
+\end{nota}
+
+\subsection{Por qué el código corrige al modelo}
+
+El sistema aplica \textbf{overrides deterministas} sobre lo que responde el LLM,
+en los dos sentidos:
+
+\begin{itemize}
+\item Si el modelo dice ``no atendió'' pero el operador \textbf{resolvió} o
+\textbf{empujó} de forma verificable, se corrige a ``atendió''.
+\item Si el modelo dice ``no atendió'' pero \textbf{el propio cliente confirmó} que
+se resolvió, se corrige. El cliente es el único testigo que sabe si su problema se
+arregló.
+\item Si el modelo dice ``maltrato grave'' pero la señal determinista no lo
+encuentra, se corrige.
+\item Un ``confuso'' del modelo \textbf{sin corroboración} (el cliente ni preguntó ni
+reinsistió) no hunde la nota: topa en \est{3}.
+\end{itemize}
+
+\newpage
+% =====================================================================
+\section{El reloj: qué cuenta como espera}
+
+\subsection{Horario de atención}
+
+Todos los tiempos se miden \textbf{descontando la noche}. El horario es de
+\textbf{06:00 a 23:59} hora de Ecuador (18 horas por día).
+
+\begin{alerta}
+\textbf{Esto no es un detalle.} Un cliente que escribe a las 00:06 y recibe respuesta
+a las 06:05 no esperó seis horas: esperó \textbf{cinco minutos de horario}. Publicar
+la cifra de reloj de pared acusaría de negligencia a quien contestó a los seis minutos
+de abrir el turno. La misma función que descuenta la noche la usan todas las rúbricas.
+\end{alerta}
+
+\subsection{Precisión}
+
+Los tiempos se comparan \textbf{redondeados al segundo}. Los objetivos del manual
+están en minutos enteros y se comparaban contra marcas de WhatsApp con milisegundos:
+dos operadores perdieron dos estrellas por 365 y 312 \emph{milisegundos}.
+
+\newpage
+% =====================================================================
+\section{Salteos: lo que no se califica y por qué}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Motivo} & \textbf{Razón} \\
+\midrule
+\cod{grupo\_de\_whatsapp} & No hay \emph{un} cliente a quien se le responda \\
+\cod{internal\_notes\_only} & Solo notas del CRM, ningún mensaje real \\
+\cod{no\_customer\_reply} & El cliente nunca escribió \\
+\cod{customer\_media\_only} & Solo media, sin texto, y el operador no resolvió \\
+\cod{anomalous\_size} & Más de 250 mensajes: patológico \\
+\cod{redireccion} & Traspaso limpio a una línea propia y viva \\
+\cod{datos\_incompletos} & El alta se abandonó porque el cliente no pasó sus datos \\
+\cod{cola\_de\_cortesia} & El fragmento es solo el ``gracias'' de una atención ya cerrada \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{El salteo de cola de cortesía (v24).} Decisión del negocio, textual:
+\emph{``merece el skip porque para el usuario es la misma conversación, no quiere nada
+más; no se debe castigar a ATC por algo que no requiere atención''}.
+
+Funciona en dos capas: una determinista y gratuita, y para el residuo que la primera
+no reconoce, el modelo --- con un costo medido de \textbf{0,8 inferencias por día}.
+Ante cualquier falla del modelo se puntúa: nunca se pierde un reclamo por una
+inferencia que no llegó.
+\end{nota}
+
+\newpage
+% =====================================================================
+\section{Limitaciones conocidas}
+
+Este sistema tiene deudas medidas y documentadas. Ocultarlas haría el documento menos
+útil.
+
+\begin{enumerate}
+\item \textbf{El detector de acreditación está calibrado a la plantilla vieja.}
+Un operador que cierra con ``¡Está listo!'' o ``Lista su recarga'' no es reconocido.
+Medido sobre 2.784 depósitos: quien \emph{no} usa esas frases promedia 4,00 y tiene
+4,1\% de notas $\le$ 2; quien las usa promedia 3,04 y tiene \textbf{48,1\%}. Es
+\textbf{11,7 veces} más probable sacar una nota baja por usar la frase propia. No es
+conducta del operador: es el detector.
+
+\item \textbf{La quinta estrella es inalcanzable en Facebook.} El requisito de
+preguntar ``¿algo más?'' no discrimina por motivo ni por antigüedad: discrimina por
+\textbf{canal}. Sobre 162 atenciones en Facebook, \textbf{0} lo cumplen, porque las
+respuestas rápidas que contienen esa pregunta no existen en ese canal.
+
+\item \textbf{El segmento no entra en el scoring.} Un agente --- un vendedor
+profesional --- se califica con la misma vara comercial que un jugador. Hay una
+rúbrica propia para agentes, pero solo para depósito, retiro, información y agilidad.
+
+\item \textbf{Las sesiones que el CRM reabre no se parten.} Se midió: partirlas
+dejaría al 18\% sin evaluar y perjudicaría a 25 casos concretos. Es una decisión
+tomada, no un olvido.
+\end{enumerate}
+
+% =====================================================================
+\section{Dónde vive cada cosa}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Módulo} & \textbf{Responsabilidad} \\
+\midrule
+\cod{src/router.py}        & Decide si la conversación es evaluable \\
+\cod{src/interacciones.py} & Corta la conversación en interacciones \\
+\cod{src/rubrics.py}       & Escala, dimensiones y derivación de la etiqueta \\
+\cod{src/scorer.py}        & Camino del LLM y overrides deterministas \\
+\cod{src/horario.py}       & Horario de atención y espera efectiva \\
+\cod{src/signals.py}       & Señales deterministas sobre el transcript \\
+\cod{src/worker.py}        & Cascada de precedencia y persistencia \\
+\cod{src/deposito.py} \dots & Una rúbrica determinista por motivo \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\vfill
+\begin{center}
+\small\color{gray70}
+Versión del scoring: \cod{2026.08-rubricas-v24} ---
+el registro completo de cambios vive en \cod{src/store.py}.
+\end{center}
+
+\end{document}
