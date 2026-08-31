@@ -58,7 +58,9 @@ class _FakeCursor:
         texto = " ".join(str(sql).split())
         self.sql.append(texto)
         self.params.append(params)
-        if "FROM conversation_scores cs" in texto:
+        if "FROM users u WHERE u.name" in texto:
+            self._rows = self._todas if self.para == "firmas" else []
+        elif "FROM conversation_scores cs" in texto:
             self._rows = self._todas if self.para == "resumen" else []
         elif "FROM messages m" in texto:
             self._rows = self._todas if self.para == "espera_larga" else []
@@ -822,9 +824,20 @@ def test_una_espera_de_mas_de_6_HORAS_no_es_una_espera_sino_OTRA_conversacion():
 def test_la_PLANTILLA_DEL_OPERADOR_del_lado_del_cliente_no_alerta():
     """VISTO EN LA COPIA: un mensaje con `from_me = false` cuyo cuerpo es
     `*Anya Alexandra:* *Para procesar tu retiro*...`. El CRM lo metio del lado del cliente.
-    Alertar por eso es avisar que el negocio se hizo esperar a si mismo."""
+    Alertar por eso es avisar que el negocio se hizo esperar a si mismo.
+
+    Hace falta CONOCER la firma: sin eso no se descarta, porque `*Monto:*` tiene la misma
+    forma y es el cliente llenando la ficha de retiro."""
     assert alertas.merece_alerta_de_espera(_espera(
+        firmas_del_negocio={"anya alexandra"},
         body="*Anya Alexandra:*\n*Para procesar tu retiro*, por favor completa los datos")) is False
+
+
+def test_la_MISMA_forma_sin_firma_conocida_SI_alerta():
+    """Control negativo: `*Monto:*` es identico en forma y es un pedido de retiro."""
+    assert alertas.merece_alerta_de_espera(_espera(
+        firmas_del_negocio={"anya alexandra"},
+        body="*Monto:* $1000 *Nombre completo: Joseph Delgado *Cedula: 1313458240")) is True
 
 
 def test_sin_las_DOS_puntas_no_se_alerta():
@@ -1178,7 +1191,8 @@ def test_la_PLANTILLA_del_operador_no_tapa_al_cliente_de_verdad():
             _cli(1, "Monto 300 banco pichincha"),
             {"created_at": datetime(2026, 8, 28, 14, 20, tzinfo=TZ), "from_me": True,
              "body": "va", "is_note": False, "media_type": "chat", "autor": "Andree"}]
-    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"},
+                                    {"anya alexandra"})[0]
     assert alertas.merece_alerta_de_espera(c) is True
 
 
@@ -1186,5 +1200,125 @@ def test_la_plantilla_SOLA_sigue_sin_alertar():
     msgs = [_cli(0, "*Anya Alexandra:*\n*Para procesar tu retiro* completa los datos"),
             {"created_at": datetime(2026, 8, 28, 14, 20, tzinfo=TZ), "from_me": True,
              "body": "va", "is_note": False, "media_type": "chat", "autor": "Andree"}]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"},
+                                    {"anya alexandra"})[0]
+    assert alertas.merece_alerta_de_espera(c) is False
+
+
+def test_la_firma_se_APRENDE_del_propio_lote_sin_pasarsela():
+    """En produccion nadie le pasa el conjunto: sale de los mensajes `from_me` del batch,
+    donde Anya aparece firmando sus propias respuestas."""
+    msgs = [_cli(0, "*Anya Alexandra:*\n*Para procesar tu retiro* completa los datos"),
+            {"created_at": datetime(2026, 8, 28, 14, 20, tzinfo=TZ), "from_me": True,
+             "body": "*Anya Alexandra:* va", "is_note": False, "media_type": "chat",
+             "autor": "Anya Alexandra"}]
     c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
     assert alertas.merece_alerta_de_espera(c) is False
+
+
+# --- EL GUARD DE LA PLANTILLA TIENE QUE SER PRECISO (2026-08-31) ------------
+#
+# EL PATRON `*Algo:*` AL PRINCIPIO NO ALCANZA, y casi me cuesta caro. Sobre 30 dias hay
+# 1.818 mensajes con `from_me = false` que empiezan asi, y son DOS cosas distintas:
+#
+#   400  la firma del NEGOCIO ("*Anya Alexandra:* *Para procesar tu retiro*...") mal
+#        clasificada por el CRM. Esta si hay que sacarla.
+# 1.418  NO son nuestras. Y ahi adentro esta el CLIENTE LLENANDO EL FORMULARIO:
+#          "*Nombre de Agencia:* AGCOX *Banco:* Pichincha *Cuenta:* Ahorros..."  (138)
+#          "*Monto:* $1000 *Nombre completo: Joseph Delgado *Cedula: ..."        (129)
+#        Eso es un PEDIDO DE RETIRO. Descartarlo es perder al cliente que mas explicito
+#        fue. (El resto son agencias que firman con el nombre de su propio agente.)
+#
+# EN EL UNIVERSO VIP de 30 dias los 107 casos son TODOS firma del negocio, asi que el
+# patron ancho no hacia daño hoy -- pero por suerte de la poblacion, no por construccion.
+# El dia que un VIP mande el formulario con asteriscos se pierde su retiro en silencio.
+#
+# EL DISCRIMINADOR ES DATO, NO LEXICO: una firma cuenta como del negocio cuando aparece en
+# mensajes con `from_me = true`. Se calcula del MISMO lote que ya se trajo (28 firmas
+# distintas en 60 dias), asi que no cuesta una consulta y se recalibra sola cuando entra
+# una persona nueva.
+
+def _msg(minuto, from_me, body, autor=None):
+    return {"created_at": datetime(2026, 8, 28, 14, minuto, tzinfo=TZ), "from_me": from_me,
+            "body": body, "is_note": False, "media_type": "chat", "autor": autor}
+
+
+def test_firmas_del_negocio_sale_de_los_mensajes_from_me():
+    msgs = [_msg(0, True, "*Gabriela:* Buenas tardes"),
+            _msg(1, False, "*Monto:* $1000 *Cedula: 123"),
+            _msg(2, True, "hola sin firma")]
+    assert alertas.firmas_del_negocio(msgs) == {"gabriela"}
+
+
+def test_la_plantilla_del_negocio_mal_clasificada_se_saca():
+    msgs = [_msg(0, False, "*Gabriela:* *Para procesar tu retiro* completa los datos"),
+            _msg(30, True, "va", autor="Gabriela")]
+    firmas = {"gabriela"}
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "t"}, firmas)[0]
+    assert alertas.merece_alerta_de_espera(c) is False
+
+
+def test_el_FORMULARIO_LLENADO_POR_EL_CLIENTE_si_alerta():
+    """`*Monto:*` no es la firma de nadie: es el campo de la ficha que el cliente completo.
+    Es el pedido de retiro mas explicito que existe y NO se puede perder."""
+    msgs = [_msg(0, False, "*Monto:* $1000 *Nombre completo: Joseph Delgado *Cedula: 1313458240"),
+            _msg(30, True, "va", autor="Gabriela")]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "t"}, {"gabriela"})[0]
+    assert alertas.merece_alerta_de_espera(c) is True
+
+
+def test_una_AGENCIA_que_firma_con_su_agente_no_se_confunde_con_el_negocio():
+    """Las agencias firman `*Gussepy Cedeño:*`. No es operador nuestro, asi que su pedido
+    cuenta como cualquier otro."""
+    msgs = [_msg(0, False, "*Gussepy Cedeño:* Abono $20 a la deuda, me confirma esta boleta"),
+            _msg(30, True, "va", autor="Gabriela")]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "t"}, {"gabriela"})[0]
+    assert alertas.merece_alerta_de_espera(c) is True
+
+
+def test_sin_firmas_conocidas_NO_se_descarta_nada():
+    """Ante la duda no se pierde el pedido: si no sabemos que firmas usa el negocio, el
+    mensaje del cliente vale. La polaridad es la misma que en el resto de la alerta."""
+    msgs = [_msg(0, False, "*Gabriela:* *Para procesar tu retiro* completa los datos"),
+            _msg(30, True, "va", autor="Gabriela")]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "t"}, set())[0]
+    assert alertas.merece_alerta_de_espera(c) is True
+
+
+# --- LAS FIRMAS SE PREGUNTAN A LA BASE, NO SE APRENDEN DEL LOTE (2026-08-31) -
+#
+# APRENDERLAS DEL LOTE ERA UNA REGRESION QUE ME COMI EN LA EVALUACION: el conjunto salia de
+# los mensajes `from_me` de los tickets VIP de la ventana, y ahi Anya Alexandra no aparecia
+# firmando. Resultado: su plantilla de retiro --el caso que el guard existe para tapar--
+# volvia a alertar. El lote no es una muestra del padron de operadores.
+#
+# LA FUENTE SON DOS, UNIDAS, porque ninguna sola alcanza:
+#     39  `users.name` -- el padron. Tiene a Anya.
+#     28  las firmas vistas en mensajes `from_me` -- caza al que el CRM firma con un nombre
+#         que NO es el de `users` (la divergencia de identidad del 2026-08-27: `users.name`
+#         dice 'Ramirez' y la firma dice 'Deninson').
+#     43  la union
+#
+# Es UNA consulta por barrido y no depende de que la persona haya escrito en la ventana.
+
+def test_las_firmas_se_piden_a_la_BASE_uniendo_users_y_los_mensajes():
+    sql = alertas._FIRMAS_SQL
+    assert "FROM users" in sql, "el padron: tiene a los que no firmaron en la ventana"
+    assert "m.from_me" in sql, "y las firmas reales: cazan la divergencia de identidad"
+    assert "UNION" in sql
+
+
+def test_firmas_conocidas_normaliza_a_minusculas_y_descarta_vacios():
+    cur = _FakeCursor(rows=[("Anya Alexandra",), (None,), ("  ",), ("miguel",)],
+                      cols=("firma",), para="firmas")
+    assert alertas.firmas_conocidas(cur) == {"anya alexandra", "miguel"}
+
+
+def test_el_barrido_pregunta_las_firmas_antes_de_juzgar(monkeypatch):
+    """Si no las pidiera, el guard quedaria ciego y la plantilla del negocio alertaria."""
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
+    cur = _FakeCursor()
+    alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                   ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ), ledger_vacio_=False)
+    assert any("FROM users" in s and "UNION" in s for s in cur.sql)
