@@ -971,10 +971,29 @@ _SCORES_BACKUP_TABLE = "conversation_scores_pre_session"
 
 
 def _create_fresh_scores(cur) -> None:
-    """Crea la tabla fresca conversation_scores + índices (idempotente)."""
+    """Crea la tabla fresca conversation_scores + columnas + índices (idempotente).
+
+    EL ORDEN ES TABLA -> COLUMNAS -> INDICES, y no es cosmético: lo rompió un deploy real
+    (2026-08-31).
+
+        [worker] migración error: UndefinedColumn: column "rescore_pedido_at" does not exist
+        LINE 1: ...pedido ON conversation_scores (session_id) WHERE rescore_pe...
+
+    Antes esto hacía `CREATE TABLE IF NOT EXISTS` y enseguida los índices. Sobre una tabla
+    de PRODUCCIÓN ya creada el CREATE es un no-op, así que el índice PARCIAL del rescore
+    --que nombra `rescore_pedido_at` en su WHERE-- corría ANTES de que la columna existiera:
+    la agrega `ensure_scores_columns`, que corre DESPUÉS en el arranque.
+
+    Y NO ERA COSMÉTICO. Las dos migraciones van en la MISMA transacción, así que al reventar
+    la de sesión, `ensure_interaccion_scoring_migration` NO LLEGABA A CORRER -- justo la que
+    evita que se pise una interacción con la siguiente en silencio, "el peor desenlace: el
+    síntoma es idéntico a que todo funcione".
+
+    Asegurando las columnas acá, da igual desde dónde se entre: tabla nueva, tabla vieja,
+    migración o arranque.
+    """
     cur.execute(_CREATE_SCORES_TABLE)
-    for stmt in _SCORES_INDEXES:
-        cur.execute(stmt)
+    ensure_scores_columns(cur)   # columnas E índices, en ese orden
 
 
 def ensure_session_scoring_migration(cur) -> dict:

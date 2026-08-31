@@ -1720,3 +1720,62 @@ def test_el_arranque_asegura_las_COLUMNAS_y_los_INDICES():
 def test_una_tabla_FRESCA_ya_nace_con_la_columna():
     from src import store
     assert "rescore_pedido_at" in store._CREATE_SCORES_TABLE
+
+
+# --- UN INDICE NUEVO NO PUEDE BLOQUEAR LA MIGRACION (2026-08-31) ------------
+#
+# BUG DE PRODUCCION, visto en el log del despliegue:
+#
+#     [worker] migración error: UndefinedColumn: column "rescore_pedido_at" does not exist
+#     LINE 1: ...pedido  ON conversation_scores (session_id) WHERE rescore_pe...
+#     [worker] ensure_scores_columns ok
+#
+# QUE PASO. `_create_fresh_scores` hacia `CREATE TABLE IF NOT EXISTS` y enseguida los
+# indices. Sobre una tabla de PRODUCCION ya creada el CREATE es un no-op, asi que el indice
+# PARCIAL del rescore --que nombra `rescore_pedido_at` en su WHERE-- corria ANTES de que la
+# columna existiera. La columna la agrega `ensure_scores_columns`, que corre DESPUES.
+#
+# Y NO ERA COSMETICO: las dos migraciones van en la MISMA transaccion, asi que al reventar
+# la de sesion, `ensure_interaccion_scoring_migration` NO LLEGO A CORRER. Esa es justo la
+# que evita que se pise una interaccion con la siguiente EN SILENCIO -- el propio docstring
+# la llama "el peor desenlace: el sintoma es identico a que todo funcione".
+#
+# POR QUE NO LO VIERON MIS PRUEBAS: la de base virgen creaba la tabla FRESCA (que ya nace
+# con la columna) y la de "como produccion" corria `ensure_scores_columns` pero NO las
+# migraciones. Ninguna cruzo tabla-vieja + migracion.
+#
+# EL ARREGLO ES DE ORDEN, no de contenido: la tabla primero, las COLUMNAS despues, los
+# indices al final. Asi da igual desde donde se entre.
+
+def test_crear_la_tabla_asegura_las_COLUMNAS_antes_que_los_INDICES():
+    from src import store
+    ejecutado = []
+
+    class _Cur:
+        def execute(self, sql, params=None):
+            ejecutado.append(" ".join(str(sql).split()))
+    store._create_fresh_scores(_Cur())
+    creates = [i for i, s in enumerate(ejecutado) if s.startswith("CREATE TABLE")]
+    alters = [i for i, s in enumerate(ejecutado) if "ADD COLUMN IF NOT EXISTS" in s]
+    indices = [i for i, s in enumerate(ejecutado) if s.startswith("CREATE INDEX")]
+    assert creates and alters and indices, ejecutado
+    assert max(creates) < min(alters), "la tabla antes que las columnas"
+    assert max(alters) < min(indices), (
+        "las COLUMNAS antes que los indices: un indice que nombra una columna nueva "
+        "revienta sobre una tabla vieja y se lleva puesta la migracion entera")
+
+
+def test_el_indice_del_rescore_nombra_una_columna_que_ya_se_aseguro():
+    """Control del test de arriba, atado al caso concreto que rompio produccion."""
+    from src import store
+    ejecutado = []
+
+    class _Cur:
+        def execute(self, sql, params=None):
+            ejecutado.append(" ".join(str(sql).split()))
+    store._create_fresh_scores(_Cur())
+    alter = next(i for i, s in enumerate(ejecutado)
+                 if "ADD COLUMN IF NOT EXISTS rescore_pedido_at" in s)
+    idx = next(i for i, s in enumerate(ejecutado)
+               if "idx_scores_rescore_pedido" in s)
+    assert alter < idx
