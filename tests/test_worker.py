@@ -1534,3 +1534,107 @@ def test_el_ciclo_de_scoring_ya_NO_barre_alertas():
     import inspect
     fuente = inspect.getsource(worker.run_worker_loop)
     assert "barrer_alertas(" not in fuente, "el barrido vive en run_alert_loop"
+
+
+# --- EL BARRIDO ROTO TIENE QUE QUEDAR ESCRITO (2026-08-31) ------------------
+#
+# EL HUECO: `run_alert_loop` corre en HILO PROPIO. Si se rompe, hoy solo escribe en stdout,
+# y stdout de un contenedor se pierde en el redeploy. El scoring ya persiste sus fallos en
+# la tabla `errors` (compartida con el ETL desde el 2026-08-28) y las alertas no.
+#
+# UN HILO QUE SE ROMPE EN SILENCIO ES PEOR QUE UNO QUE NO EXISTE: el canal se queda mudo y
+# nadie distingue "no hubo esperas largas" de "el barrido esta muerto hace tres dias".
+#
+# Por eso ademas hay LATIDO: cada ciclo tranquilo tambien escribe, para que el silencio del
+# log sea una señal y no el estado normal.
+
+def test_un_barrido_ROTO_se_persiste_en_la_tabla_errors(monkeypatch):
+    registrados = []
+    monkeypatch.setattr(worker.errores, "registrar",
+                        lambda comp, exc=None, **kw: registrados.append((comp, kw)))
+
+    class _Cfg:
+        database_url = "postgresql://x/y"
+        scoring_accounts = ["sistemas"]
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    import psycopg, src.alertas as alertas_mod
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _Conn())
+
+    def _barrido_roto(*a, **k):
+        raise RuntimeError("se rompio el barrido")
+    monkeypatch.setattr(alertas_mod, "barrer", _barrido_roto)
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    worker.run_alert_loop(_Cfg(), canal=object(),
+                          should_stop=lambda: bool(registrados), log=lambda m: None)
+    assert registrados, "un hilo que se rompe en silencio deja el canal mudo sin aviso"
+    comp, kw = registrados[0]
+    assert comp == "alertas"
+    assert kw.get("account") == "sistemas", \
+        "la CUENTA en curso va en la columna: el indice del ETL es (account, component, at)"
+
+
+def test_si_se_cae_la_CONEXION_se_registra_sin_cuenta(monkeypatch):
+    """No hubo cuenta en curso: inventar una seria decir que fallo su barrido."""
+    registrados = []
+    monkeypatch.setattr(worker.errores, "registrar",
+                        lambda comp, exc=None, **kw: registrados.append((comp, kw)))
+
+    class _Cfg:
+        database_url = "postgresql://x/y"
+        scoring_accounts = ["sistemas"]
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db caida")))
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    worker.run_alert_loop(_Cfg(), canal=object(),
+                          should_stop=lambda: bool(registrados), log=lambda m: None)
+    assert registrados and registrados[0][1].get("account") is None
+
+
+def test_si_el_REGISTRADOR_falla_el_loop_de_alertas_SIGUE(monkeypatch):
+    """Misma cautela que el lote de scoring: un registrador roto no puede matar el hilo."""
+    def _registrador_roto(*a, **k):
+        raise RuntimeError("la tabla errors no existe")
+    monkeypatch.setattr(worker.errores, "registrar", _registrador_roto)
+
+    class _Cfg:
+        database_url = "postgresql://x/y"
+        scoring_accounts = ["sistemas"]
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("db")))
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    vueltas = {"n": 0}
+
+    def _stop():
+        vueltas["n"] += 1
+        return vueltas["n"] > 1
+    worker.run_alert_loop(_Cfg(), canal=object(), should_stop=_stop, log=lambda m: None)
+
+
+def test_el_loop_de_alertas_LATE_aunque_no_haya_nada_que_mandar(monkeypatch):
+    """Sin latido, un hilo muerto se ve igual que un dia sin esperas largas."""
+    dichos = []
+
+    class _Cfg:
+        database_url = "postgresql://x/y"
+        scoring_accounts = ["sistemas"]
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    import psycopg, src.alertas as alertas_mod
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _Conn())
+    monkeypatch.setattr(alertas_mod, "barrer", lambda *a, **k: {
+        "espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0})
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    monkeypatch.setattr(worker, "ALERTAS_LATIDO_CICLOS", 2)
+    # Se cuenta por LATIDOS y no por llamadas a `should_stop`: el sueño tambien la consulta.
+    worker.run_alert_loop(_Cfg(), canal=object(), log=dichos.append,
+                          should_stop=lambda: sum("latido" in d for d in dichos) >= 2)
+    latidos = [d for d in dichos if "latido" in d]
+    assert len(latidos) >= 2, dichos
+    assert "ciclo 2" in latidos[0] and "ciclo 4" in latidos[1], latidos

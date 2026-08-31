@@ -1255,3 +1255,27 @@ def test_un_tipo_NUEVO_siembra_aunque_la_cuenta_ya_tenga_ledger(monkeypatch):
                        alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ))
     assert r["espera_larga"] == 0 and r["sembrados"] >= 1, r
+
+
+def test_los_parametros_de_make_interval_son_ENTEROS():
+    """LO ENCONTRO LA PRUEBA CONTRA LA BASE DE VERDAD, no los tests: `make_interval(hours
+    => ...)` NO acepta un double y `VENTANA + SILENCIO_MAX.total_seconds()/3600` da 30.0.
+
+        psycopg.errors.UndefinedFunction: function make_interval(hours => double
+        precision) does not exist
+
+    El cursor falso no ejecuta SQL, asi que ningun test unitario lo podia ver. Es la misma
+    clase de bug que el `%` suelto que ya tiene su guard: revienta SOLO contra Postgres."""
+    class _Cur(_FakeCursor):
+        def execute(self, sql, params=None):
+            super().execute(sql, params)
+            self.description = [type("D", (), {"name": c})
+                                for c in ("ticket_id", "created_at", "from_me", "body",
+                                          "media_type", "is_note", "autor")]
+    cur = _Cur()
+    alertas.candidatos_espera_larga(cur, "sistemas",
+                                    ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
+    for p in cur.params:
+        for k, v in (p or {}).items():
+            if k.endswith("_h") or k.endswith("_s") or k == "dias":
+                assert isinstance(v, int), f"{k}={v!r} ({type(v).__name__}) rompe make_interval"

@@ -422,7 +422,9 @@ def candidatos_espera_larga(cur, account: str, ahora: datetime | None = None) ->
     cur.execute(_ESPERA_LARGA_SQL, {
         "account": account,
         "ventana_h": VENTANA_ESPERA_LARGA_HORAS,
-        "lookback_h": VENTANA_ESPERA_LARGA_HORAS + SILENCIO_MAX.total_seconds() / 3600,
+        # ENTERO: `make_interval(hours => ...)` no acepta un double precision, y esta
+        # division da float. Lo encontro la prueba contra la base, no los tests.
+        "lookback_h": VENTANA_ESPERA_LARGA_HORAS + int(SILENCIO_MAX.total_seconds() // 3600),
     })
     filas = _dicts(cur)
     por_ticket: dict[str, tuple[dict, list[dict]]] = {}

@@ -272,6 +272,11 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
 # `VENTANA_RESUMEN_HORAS` (2 h) mientras el ciclo tardaba entre 2,4 y 3,9 horas.
 ALERTAS_POLL_SEGUNDOS = 60
 
+# CADA CUANTOS CICLOS ESCRIBE EL LATIDO. A 60 s por ciclo, 30 son media hora: se ve
+# que el hilo vive sin llenar el log. Un hilo muerto y un dia tranquilo son el mismo
+# silencio; el latido es lo unico que los separa.
+ALERTAS_LATIDO_CICLOS = 30
+
 HOLD_CERRADA = timedelta(minutes=5)
 HOLD_SIN_CIERRE = SILENCIO_MAX
 
@@ -785,16 +790,30 @@ def run_alert_loop(cfg, canal, llm=None, should_stop=None, log=_emit_stdout) -> 
     from src.alertas import barrer as barrer_alertas
 
     log(f"[alertas] loop propio cada {ALERTAS_POLL_SEGUNDOS}s")
+    ciclos = 0
     while not (should_stop and should_stop()):
+        ciclos += 1
+        cuenta_en_curso = None
         try:
             with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
                 for account in cfg.scoring_accounts:
+                    cuenta_en_curso = account
                     a = barrer_alertas(conn, account, canal, log=log, llm=llm)
                     if a["espera_larga"] or a["resumen"] or a["fallos"]:
                         log(f"[alertas] {account}: espera_larga={a['espera_larga']} "
                             f"resumen={a['resumen']} fallos={a['fallos']}")
         except Exception as e:  # noqa: BLE001 - el hilo tiene que sobrevivir a la BD
             log(f"[alertas] ciclo ROTO: {type(e).__name__}: {e}")
+            # A LA TABLA `errors`, NO SOLO A STDOUT. Este loop corre en hilo propio: si se
+            # rompe en silencio el canal se queda mudo y nadie distingue "no hubo esperas
+            # largas" de "el barrido esta muerto hace tres dias". stdout de un contenedor
+            # se pierde en el redeploy; `errors` sobrevive (y la comparte el ETL).
+            _registrar_fallo("alertas", e, cuenta_en_curso,
+                             {"ciclo": ciclos, "poll_s": ALERTAS_POLL_SEGUNDOS})
+        # EL LATIDO. Sin el, un hilo muerto se ve EXACTAMENTE igual que un dia tranquilo:
+        # las dos cosas son silencio. Con el, el silencio pasa a ser una señal.
+        if ciclos % ALERTAS_LATIDO_CICLOS == 0:
+            log(f"[alertas] latido · ciclo {ciclos}")
         # Sueño en tramos de 1 s para que la parada corte enseguida, igual que el scoring.
         for _ in range(max(1, ALERTAS_POLL_SEGUNDOS)):
             if should_stop and should_stop():
