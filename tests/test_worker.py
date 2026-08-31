@@ -1638,3 +1638,85 @@ def test_el_loop_de_alertas_LATE_aunque_no_haya_nada_que_mandar(monkeypatch):
     latidos = [d for d in dichos if "latido" in d]
     assert len(latidos) >= 2, dichos
     assert "ciclo 2" in latidos[0] and "ciclo 4" in latidos[1], latidos
+
+
+# --- RESCORE PARCIAL: encolar SOLO lo que un cambio toca (2026-08-31) -------
+#
+# PEDIDO DEL NEGOCIO: "el tema del scoreo ya esta llegando a un punto fuerte, ya no hay
+# tantos errores, hay mas bien scoreados que mal scoreados, por lo que quiero hacer un
+# sistema de reescoreo parcial... que se vuelvan a encolar en caso de que cambie algo que
+# estan scoreandose mal y no scorear todo desde 0".
+#
+# LO QUE CUESTA HOY: rescorear = truncar la tabla. Son 146.968 sesiones a 16,6/h = ~369
+# dias, y mientras tanto el tablero muestra el 0,7% de la historia. Un arreglo tipico toca
+# 77 filas (el falso negativo de "esta listo") o 65 (v24). Se pagan 369 dias por 77 filas.
+#
+# ES UN TIMESTAMP Y NO UN BOOLEANO, y la diferencia es que un booleano hay que APAGARLO
+# despues. Ese segundo paso se olvida o falla a la mitad y deja filas encolandose para
+# siempre. Con un instante no hay nada que apagar: la fila esta servida cuando
+# `scored_at >= rescore_pedido_at`. Es EXACTAMENTE el mecanismo que la consulta ya usa con
+# `end_at`, y de yapa queda el registro de cuando se pidio.
+
+def test_una_fila_con_rescore_pedido_vuelve_a_estar_PENDIENTE():
+    sql = " ".join(worker.PENDING_SESSIONS_SQL.split())
+    assert "rescore_pedido_at" in sql
+    assert "s.rescore_pedido_at > s.scored_at" in sql, \
+        "servida cuando se la scoreo DESPUES del pedido; sin esto se encola para siempre"
+
+
+def test_el_pedido_es_una_rama_APARTE_y_no_toca_la_condicion_de_siempre():
+    """Un pendiente normal --sesion cerrada sin score-- tiene que seguir entrando igual.
+    Si el pedido se metiera en el mismo NOT EXISTS, encolar uno apagaria al otro."""
+    sql = " ".join(worker.PENDING_SESSIONS_SQL.split())
+    assert "NOT EXISTS ( SELECT 1 FROM conversation_scores s WHERE s.session_id" in sql
+    assert " OR EXISTS (" in sql, "el pedido suma casos, no los reemplaza"
+
+
+def test_lo_PEDIDO_va_adelante_de_la_cola_pero_detras_de_lo_fresco():
+    """Hoy el orden es `end_at DESC`. Un rescore pedido de algo viejo quedaria al fondo de
+    un backlog de 147.000 sesiones, o sea NUNCA. Pero tampoco puede tapar lo de hoy: una
+    charla que acaba de cerrar sigue siendo lo primero."""
+    sql = " ".join(worker.PENDING_SESSIONS_SQL.split())
+    orden = sql[sql.index("ORDER BY"):]
+    fresco = orden.index("cs.end_at > now()")           # tramo 1
+    pedido = orden.index("s.rescore_pedido_at > s.scored_at")   # tramo 2
+    resto = orden.index("cs.end_at DESC, cs.session_id")        # tramo 3
+    assert fresco < pedido < resto, (
+        f"el orden tiene que ser fresco -> pedido -> backlog, y quedo: {orden}")
+
+
+def test_la_columna_se_crea_sola_al_arrancar():
+    """Se levanta el servicio y la columna aparece: mismo self-healing que el resto."""
+    from src.store import _SCORES_COLUMN_TYPES
+    tipos = dict(_SCORES_COLUMN_TYPES)
+    assert tipos.get("rescore_pedido_at") == "timestamptz"
+
+
+def test_el_indice_del_pedido_tambien_se_crea_solo():
+    """Sin indice, la rama nueva escanea `conversation_scores` entera en CADA ciclo del
+    worker. Parcial: las filas sin pedido son casi todas y no hacen falta en el."""
+    from src import store
+    idx = " ".join(store._SCORES_INDEXES) if hasattr(store, "_SCORES_INDEXES") else ""
+    assert "rescore_pedido_at" in idx, "falta el indice parcial del pedido"
+    assert "WHERE rescore_pedido_at IS NOT NULL" in idx
+
+
+def test_el_arranque_asegura_las_COLUMNAS_y_los_INDICES():
+    """`ensure_scores_columns` solo agregaba columnas. Un indice nuevo sobre una tabla de
+    PRODUCCION ya creada no se aplicaba nunca -- `CREATE TABLE IF NOT EXISTS` no la toca --
+    y el rescore parcial se quedaba sin el suyo, escaneando la tabla entera por ciclo."""
+    from src import store
+    ejecutado = []
+
+    class _Cur:
+        def execute(self, sql, params=None):
+            ejecutado.append(" ".join(str(sql).split()))
+    store.ensure_scores_columns(_Cur())
+    junto = " ".join(ejecutado)
+    assert "ADD COLUMN IF NOT EXISTS rescore_pedido_at timestamptz" in junto
+    assert "CREATE INDEX IF NOT EXISTS idx_scores_rescore_pedido" in junto
+
+
+def test_una_tabla_FRESCA_ya_nace_con_la_columna():
+    from src import store
+    assert "rescore_pedido_at" in store._CREATE_SCORES_TABLE

@@ -888,6 +888,8 @@ CREATE TABLE IF NOT EXISTS conversation_scores (
     interaccion_seq         integer,
     interaccion_ini         timestamptz,
     interaccion_fin         timestamptz,
+    -- Rescore parcial: ver `_SCORES_COLUMN_TYPES`. NULL = nadie pidio nada.
+    rescore_pedido_at       timestamptz,
     conversation_id         uuid NOT NULL,
     account                 text NOT NULL,
     ticket_id               uuid,
@@ -957,6 +959,11 @@ _SCORES_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_scores_created         ON conversation_scores (conversation_created_at)",
     "CREATE INDEX IF NOT EXISTS idx_scores_rubric_status   ON conversation_scores (rubric, eval_status)",
     "CREATE INDEX IF NOT EXISTS idx_scores_session         ON conversation_scores (session_id)",
+    # RESCORE PARCIAL. PARCIAL de verdad (`WHERE ... IS NOT NULL`): las filas SIN pedido
+    # son casi todas y no hacen falta en el indice. Sin el, la rama nueva de
+    # `PENDING_SESSIONS_SQL` escanea `conversation_scores` entera en CADA ciclo del worker.
+    "CREATE INDEX IF NOT EXISTS idx_scores_rescore_pedido  ON conversation_scores "
+    "(session_id) WHERE rescore_pedido_at IS NOT NULL",
 )
 
 # Nombre del backup de la tabla previa (grano conversación) que deja la migración.
@@ -1077,15 +1084,45 @@ _SCORES_COLUMN_TYPES = (
     ("interaccion_seq", "integer"),
     ("interaccion_ini", "timestamptz"),
     ("interaccion_fin", "timestamptz"),
+    # RESCORE PARCIAL (2026-08-31). Pedido del negocio: "ya hay mas bien scoreados que mal
+    # scoreados... quiero un sistema de reescoreo parcial, que se vuelvan a encolar en caso
+    # de que cambie algo que estan scoreandose mal y no scorear todo desde 0".
+    #
+    # LO QUE COSTABA: rescorear era TRUNCAR. 146.968 sesiones a 16,6/h = ~369 dias, con el
+    # tablero mostrando el 0,7% de la historia mientras tanto. Un arreglo tipico toca 77
+    # filas (el falso negativo de "esta listo") o 65 (v24).
+    #
+    # ES UN INSTANTE Y NO UN BOOLEANO, y la diferencia es que un booleano hay que APAGARLO
+    # despues. Ese segundo paso se olvida o falla a la mitad y deja filas encolandose para
+    # siempre. Con un instante no hay nada que apagar: la fila esta servida cuando
+    # `scored_at >= rescore_pedido_at`, que es el MISMO mecanismo que la consulta de
+    # pendientes ya usa con `end_at`. Y queda el registro de cuando se pidio.
+    #
+    # SE MARCA CON UNA SENTENCIA que escribe quien hace el cambio, apuntando a lo que ese
+    # cambio toca. El sistema NO adivina: un cambio en la rubrica de `retiro` toca
+    # `motivo='retiro'`, pero uno en `client_sin_motivo` toca cualquier cosa, y eso no se
+    # automatiza sin mentir. Ver `scripts/pedir_rescore.py`, que obliga a ver el conteo
+    # antes de escribir.
+    #     UPDATE conversation_scores SET rescore_pedido_at = now()
+    #      WHERE motivo = 'deposito' AND scoring_version < '2026.09-v25';
+    ("rescore_pedido_at", "timestamptz"),
 )
 
 
 def ensure_scores_columns(cur) -> None:
-    """Agrega las columnas del pase LLM unificado si faltan (idempotente)."""
+    """Agrega columnas E INDICES faltantes a `conversation_scores` (idempotente).
+
+    LOS INDICES TAMBIEN, y no es de mas: `_create_fresh_scores` solo corre cuando la tabla
+    NO existe, asi que un indice nuevo nunca llegaba a una tabla de PRODUCCION ya creada.
+    El del rescore parcial se habria quedado afuera, y sin el su rama de
+    `PENDING_SESSIONS_SQL` escanea la tabla entera en CADA ciclo del worker.
+    """
     for col, coltype in _SCORES_COLUMN_TYPES:
         cur.execute(
             f"ALTER TABLE conversation_scores ADD COLUMN IF NOT EXISTS {col} {coltype}"
         )
+    for stmt in _SCORES_INDEXES:
+        cur.execute(stmt)
 
 
 # Namespace fijo para derivar el id de una interaccion. Fijo y versionado en el codigo:

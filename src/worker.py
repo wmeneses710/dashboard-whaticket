@@ -337,10 +337,33 @@ SELECT {_CONV_FIELDS}, cs.session_id AS session_id
    -- Pendiente = sin score, O con un score MAS VIEJO que el ultimo episodio de la
    -- sesion (la sesion crecio despues de scorearse, p. ej. una continuacion diferida
    -- que se mergeo hasta 48h despues) -> re-scorear para no quedar con nota vieja.
-   AND NOT EXISTS (
-     SELECT 1 FROM conversation_scores s
-      WHERE s.session_id = cs.session_id AND s.scored_at >= cs.end_at)
- ORDER BY cs.end_at DESC, cs.session_id
+   AND (
+     NOT EXISTS (
+       SELECT 1 FROM conversation_scores s
+        WHERE s.session_id = cs.session_id AND s.scored_at >= cs.end_at)
+     -- RESCORE PARCIAL (2026-08-31). RAMA APARTE y no una condicion mas adentro del
+     -- NOT EXISTS: metida ahi, encolar un pedido APAGARIA el caso normal de esa sesion.
+     -- Suma casos, no los reemplaza.
+     --
+     -- SERVIDA CUANDO SE LA SCOREO DESPUES DEL PEDIDO. No hay flag que apagar: por eso la
+     -- columna es un instante y no un booleano (ver `store._SCORES_COLUMN_TYPES`). Si
+     -- fuera `IS NOT NULL`, la fila se encolaria para siempre.
+     OR EXISTS (
+       SELECT 1 FROM conversation_scores s
+        WHERE s.session_id = cs.session_id AND s.rescore_pedido_at > s.scored_at)
+   )
+ -- EL ORDEN, en tres tramos:
+ --   1. lo FRESCO primero, siempre. Una charla que acaba de cerrar es lo que el negocio
+ --      mira hoy, y ningun rescore puede taparla.
+ --   2. lo PEDIDO despues. Sin esto quedaria al fondo de un backlog de 147.000 sesiones,
+ --      o sea NUNCA: `end_at DESC` manda al final justo lo viejo que se quiere corregir.
+ --   3. el resto del backlog.
+ -- El corte de "fresco" es el mismo silencio con el que se parte la interaccion.
+ ORDER BY (cs.end_at > now() - make_interval(secs => %(hold_sin_cierre)s)) DESC,
+          EXISTS (SELECT 1 FROM conversation_scores s
+                   WHERE s.session_id = cs.session_id
+                     AND s.rescore_pedido_at > s.scored_at) DESC,
+          cs.end_at DESC, cs.session_id
  LIMIT %(limit)s
 """
 
