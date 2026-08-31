@@ -1,10 +1,40 @@
-"""Las dos alertas de jugador VIP, a Telegram.
+"""La alerta de jugador VIP, a Telegram.
 
-QUE PIDIO EL NEGOCIO (2026-08-26), y son DOS disparos distintos:
+QUE PIDIO EL NEGOCIO (2026-08-26):
 
-  ESPERA   el cliente VIP lleva mas de 5 minutos sin respuesta, EN HORARIO de atencion.
   RESUMEN  termino una conversacion suya: quien la atendio, para que, la calificacion,
            la duracion y el motivo.
+
+ERAN DOS. La otra --ESPERA, "el cliente VIP lleva mas de 5 minutos sin respuesta"-- se
+BORRO el 2026-08-31, medida contra 30 dias de datos reales. En horario de atencion y con
+el umbral de 5 minutos que pidio el negocio, **132 esperas lo superaron y solo 3 habrian
+llegado**:
+
+    100 de 132   el operador contesto ANTES de que la alerta pudiera existir. La espera
+                 mediana de este grupo es 6,6 min y el piso de la alerta son 10 (5 de
+                 umbral + 5 de prorroga): el aviso nace tarde por aritmetica.
+     29 de 132   el ETL nos entrego el mensaje del cliente cuando ya estaba atendida
+                 (mediana de captura: 26 min).
+      3 de 132   llegaban, y solo porque ese dia el ETL tardo 0,4 min.
+
+NO SE ARREGLA MOVIENDO EL UMBRAL: a 30 minutos son 18 las que deberian y CERO las que
+llegan. El retraso del pipeline es mas grande que la ventana en la que el aviso serviria.
+
+Y TAMPOCO HABIA A QUIEN AVISAR. Censados uno por uno los 8 casos de 30 dias en que nadie
+le hablo al jugador ni toco el CRM: 7 entraron de madrugada y se atendieron entre las
+06:00 y las 06:46 al abrir el turno --incluidos un retiro de $100 y un problema de
+deposito-- y el octavo era un "gracias". Cero abandonos.
+
+TRES COSAS QUE APRENDIMOS MIDIENDO, y que valen para cualquier alerta futura de este tipo:
+  * SE MIRA A LA PERSONA, NO AL TICKET. El cliente escribe a varias lineas a la vez; un
+    caso que parecia abandono tenia la nota "SE LO ATENDIO EN LA OTRA LINEA (YA ESTA
+    CARGADA)" veinte minutos despues.
+  * LA NOTA DEL CRM ES ATENCION. Cuando el ultimo mensaje es un "gracias", el operador
+    cierra sin responder --y eso esta BIEN--. Mirar solo `messages.from_me` acusa a gente
+    que hizo su trabajo: los 7 "nunca respondidos" de una semana tenian un `*resuelto*`
+    entre 9 y 56 segundos despues.
+  * `captured_at` ES EL RELOJ HONESTO. Simular con `created_at` miente a favor: mide
+    cuando el cliente escribio, no cuando pudimos enterarnos.
 
 EL MECANISMO DE ENVIO SALE DE `grafana-llm-alertas`, que ya manda a Telegram en
 produccion. Se copio tal cual lo que alli ya esta probado:
@@ -16,9 +46,6 @@ produccion. Se copio tal cual lo que alli ya esta probado:
     la forma de la llamada es la misma. Una alerta no justifica una dependencia nueva.
   * Si falta el token o el chat, el canal CALLA y el envio se saltea SIN error: sirve
     para desplegar en seco antes de conectar el grupo. Es textual de su `.env.example`.
-    UN SOLO BOT y no dos: alla usan uno por tipo de alerta, pero aca el negocio pidio un
-    unico canal. Las dos alertas se distinguen por el emoji y el titulo (⏳ / 🍀), no por
-    el destino, asi que el prefijo del mensaje es lo unico que separa una de la otra.
   * Throttle de 0,15 s entre envios (~10 msg/s, lejos del limite del Bot API), sin dormir
     en el primero.
 
@@ -40,53 +67,23 @@ import html
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import httpx
 
-from src.horario import TZ as TZ_EC
-from src.horario import en_horario, espera_efectiva
+from src.horario import espera_efectiva
 
 logger = logging.getLogger(__name__)
 
 # ~10 msg/s. El limite del Bot API es mas alto; esto deja margen y ordena la salida.
 THROTTLE_SEGUNDOS = 0.15
 
-# EL UMBRAL, y lo fija el PIPELINE, no el gusto. El negocio pidio 5 minutos y el dato dice
-# que a 5 minutos la alerta MIENTE: MEDIDO sobre 53.828 mensajes de cliente en conversacion
-# viva, el ETL tarda p50 **9 minutos** en entregarnoslos, asi que una alerta de "5 min"
-# dispara, en la mediana, cuando ya pasaron 9. A 15 minutos la mediana coincide con lo
-# prometido -- es el primer valor donde el numero del mensaje es cierto.
-#
-#     umbral   dispara a tiempo   espera real p50 al disparar
-#      5 min        47,1%                9,0 min   <- promete 5, dispara a los 9
-#     15 min        57,0%               15,0 min   <- deja de mentir
-#     30 min        63,5%               30,0 min
-UMBRAL_ESPERA_SEGUNDOS = 900
-
-# LA PRORROGA: cuanto tiene que pasar entre la PRIMERA vez que vemos la espera y la alerta.
-# Idea del negocio, y el motivo es duro: el ETL NO entrega en orden. MEDIDO sobre 20 dias,
-# el 71,6% de los mensajes llega despues de otro mas nuevo, y cuando llega tarde esta p50
-# 3 min y p90 2 h atras. Que no veamos la respuesta no prueba que no exista.
-# Baja las falsas alarmas de 2,06% a 1,71% de las conversaciones bien atendidas: es poco,
-# y va igual porque es gratis y hace la alerta defendible.
-PRORROGA_SEGUNDOS = 300
-
-# LAS DOS VENTANAS, y son distintas a proposito. El negocio lo dijo asi: "no me importan
-# los de ayer, solo alertar a los de ahora".
-#
-#   RESUMEN: un resumen viejo NO es noticia. La conversacion cerro, la nota esta puesta y
-#   el tablero la tiene. Dos horas alcanzan de sobra como red por si el worker se
-#   reinicio; mas que eso es replicar historia. (Era un DIA, y con el ledger vacio eso
-#   son 155 mensajes de golpe.)
-#
-#   ESPERA: una espera vieja SIGUE ABIERTA -- el cliente continua sin respuesta, asi que
-#   todavia es un problema de AHORA. Ademas el ETL tarda p90 2 h en traernos el mensaje
-#   del cliente: una ventana corta perderia justo las esperas largas, que son las unicas
-#   que este pipeline logra ver a tiempo. Lo que la acota de verdad no es el numero, es
-#   `en_horario` (a las 04:00 nadie trabaja) y el ledger.
+# LA VENTANA. El negocio lo dijo asi: "no me importan los de ayer, solo alertar a los de
+# ahora". Un resumen viejo NO es noticia: la conversacion cerro, la nota esta puesta y el
+# tablero la tiene. Dos horas alcanzan de sobra como red por si el worker se reinicio; mas
+# que eso es replicar historia. (Era un DIA, y con el ledger vacio eso son 155 mensajes de
+# golpe.)
 VENTANA_RESUMEN_HORAS = 2
-VENTANA_ESPERA_HORAS = 48
 
 # CUANDO PASO LA CHARLA, que NO es lo mismo que cuando la calificamos. `scored_at` dice
 # cuando la MIRAMOS: un backfill de scoring le pone `now()` a una conversacion de marzo.
@@ -97,9 +94,17 @@ VENTANA_ESPERA_HORAS = 48
 # la mañana sigue siendo noticia.
 VENTANA_CHARLA_HORAS = 24
 
-# El tipo del ledger para la PRIMERA observacion. No es una alerta: es la anotacion que
-# permite confirmarla en la siguiente pasada.
-TIPO_VISTA = "espera_vista"
+# LA ESPERA LARGA, marcada en el resumen. Es la vara del negocio: 5 minutos.
+#
+# ES LA VERSION QUE SI SE PUEDE de "avisar que un VIP espero". La alerta EN VIVO se borro
+# porque el pipeline llega tarde por aritmetica; esta es retrospectiva --la charla ya
+# cerro-- asi que no necesita ganarle a nadie de mano y el numero esta MEDIDO, no inferido.
+# No puede acusar a alguien que si atendio.
+#
+# CUANTO MARCA: 23 de 890 resumenes VIP (2,6%) superan los 5 minutos. Se destaca sin ahogar
+# el canal; si marcara la mitad no distinguiria nada.
+UMBRAL_ESPERA_LARGA_SEGUNDOS = 300
+MARCA_ESPERA_LARGA = "⏳"
 
 _SIN_DATO = "N/D"
 
@@ -178,8 +183,11 @@ _CREATE_STMTS = (
     """
     CREATE TABLE IF NOT EXISTS alertas_enviadas (
         account    text        NOT NULL,
-        tipo       text        NOT NULL,   -- 'espera' | 'resumen'
-        clave      text        NOT NULL,   -- que EPISODIO, no que jugador
+        -- `tipo` sobrevive a la baja de la alerta de latencia (2026-08-31) y hoy vale
+        -- siempre 'resumen'. Se conserva porque es parte de la PK: sacarlo pide migrar
+        -- una tabla viva para no ganar nada, y deja la puerta abierta a un tipo nuevo.
+        tipo       text        NOT NULL,
+        clave      text        NOT NULL,   -- que INTERACCION, no que jugador
         enviada_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (account, tipo, clave)
     )""",
@@ -210,16 +218,6 @@ def ledger_vacio(cur, account: str) -> bool:
     # Sin fila es lo mismo que sin rastro: se trata como primer arranque, que es el lado
     # seguro -- siembra y no manda.
     return not fila or fila[0] == 0
-
-
-def clave_espera(ticket_id: str, ultimo_cliente_at: datetime) -> str:
-    """El EPISODIO de espera, no el ticket.
-
-    Si la clave fuera solo el ticket, un cliente que vuelve a esperar mañana en la misma
-    conversacion no volveria a alertar NUNCA. El instante del ultimo mensaje del cliente
-    es lo que distingue una espera de la siguiente.
-    """
-    return f"{ticket_id}:{ultimo_cliente_at.isoformat()}"
 
 
 def clave_resumen(interaccion_id: str) -> str:
@@ -257,120 +255,18 @@ def ahora_de_la_base(cur) -> datetime:
 
     `barrer` comparaba `datetime.now()` de la APP contra timestamps que salen de la base.
     Hoy dan igual porque la BD corre en 127.0.0.1; en produccion esta en otra maquina, y
-    un desfase corre la espera de los dos lados: si la app atrasa, la alerta no suena; si
-    adelanta, se infla. Un solo reloj y se acabo la clase de bug.
+    un desfase mueve la ventana de las dos puntas y el resumen se manda de mas o de
+    menos. Un solo reloj y se acabo la clase de bug.
     """
     cur.execute("SELECT now()")
     return cur.fetchone()[0]
 
 
-def confirmados(cur, account: str, candidatos: list[dict], ahora: datetime,
-                prorroga_segundos: int = PRORROGA_SEGUNDOS) -> list[dict]:
-    """Los episodios que ya se vieron antes y SIGUEN sin respuesta.
-
-    LA PRIMERA VEZ NO ALERTA: se anota y se espera. Recien cuando la prorroga vencio y el
-    episodio sigue apareciendo como candidato, el silencio es creible. Es la confirmacion
-    en dos observaciones que pidio el negocio.
-
-    CANCELAR ES GRATIS: si la respuesta aparece, `candidatos_espera` deja de traer el
-    episodio y la anotacion queda huerfana. No hay que retractar nada.
-    """
-    if not candidatos:
-        return []
-    claves = [clave_espera(c["ticket_id"], c["ultimo_cliente_at"]) for c in candidatos]
-    cur.execute("SELECT clave, enviada_at FROM alertas_enviadas "
-                "WHERE account=%s AND tipo=%s AND clave = ANY(%s)",
-                (account, TIPO_VISTA, claves))
-    visto = dict(cur.fetchall())
-    limite = timedelta(seconds=prorroga_segundos)
-    listos, nuevos = [], []
-    for c, clave in zip(candidatos, claves):
-        cuando = visto.get(clave)
-        if cuando is None:
-            nuevos.append(clave)
-        elif ahora - cuando >= limite:
-            listos.append(c)
-    for clave in nuevos:
-        marcar_enviada(cur, account, TIPO_VISTA, clave)
-    return listos
-
-
-# --- ESPERA: el horario manda -----------------------------------------------
-
-def filtrar_espera(candidatos: list[dict], ahora: datetime,
-                   umbral_segundos: int = UMBRAL_ESPERA_SEGUNDOS) -> list[dict]:
-    """Los candidatos que de verdad estan esperando demasiado.
-
-    DOS COMPUERTAS, y las dos son de `src/horario.py`:
-
-    1. `en_horario(ahora)`. A las 04:00 no hay nadie trabajando y avisar no sirve de nada.
-    2. `espera_efectiva`, que descuenta la noche. Un cliente que escribio 23:50 y sigue
-       esperando 06:05 NO lleva seis horas: lleva quince minutos de horario. Medir por
-       reloj de pared dispararia una tormenta cada mañana al abrir.
-
-    Es la misma regla que ya evita que el tablero reproche "respondio 1,7 horas despues"
-    cuando fueron 8 minutos.
-    """
-    if not en_horario(ahora):
-        return []
-    out = []
-    for c in candidatos:
-        efectiva = espera_efectiva(c.get("ultimo_cliente_at"), ahora)
-        if efectiva is None:
-            continue
-        seg = efectiva.total_seconds()
-        if seg >= umbral_segundos:
-            out.append({**c, "espera_segundos": int(seg)})
-    return out
-
-
 # --- de donde salen los candidatos ------------------------------------------
 #
-# LAS DOS CONSULTAS VIVEN ACA Y NO EN src/queries.py: aquel modulo es el del TABLERO y
-# pasa por `_rows_as_dicts`, que censura. Estas alimentan un canal interno y devuelven
-# metadatos, no texto de chat.
-
-# EL ULTIMO MENSAJE DE LA CONVERSACION, ignorando las NOTAS del CRM. Una nota es interna:
-# contarla como respuesta al cliente es el bug que `hubo_respuesta_del_negocio` ya
-# documenta en src/sin_respuesta.py, y aca apagaria la alerta justo cuando hace falta.
-#
-# LA VENTANA DE DOS DIAS NO ES UN ATAJO: una espera mas vieja que eso ya no es una espera,
-# es una conversacion abandonada, y avisar de ella a los cinco minutos de horario seria
-# revivir historia. Ademas acota el scan de `messages`.
-_ESPERA_SQL = """
-WITH ultimo AS (
-    SELECT DISTINCT ON (m.ticket_id)
-           m.ticket_id, m.from_me, m.created_at
-    FROM messages m
-    JOIN tickets t ON t.id = m.ticket_id
-    JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
-    WHERE v.es_vip
-      AND t.account = %(account)s
-      AND t.closed_at IS NULL
-      AND NOT coalesce(t.is_group, false)
-      AND coalesce(m.is_note, false) = false
-      AND m.created_at > now() - make_interval(hours => %(ventana_h)s)
-    ORDER BY m.ticket_id, m.created_at DESC
-)
-SELECT u.ticket_id::text AS ticket_id,
-       u.created_at       AS ultimo_cliente_at,
-       v.username, v.ranking, v.agencia,
-       v.motivo           AS motivo_vip,
-       q.name             AS queue,
-       usr.name           AS operador,
-       -- LA LLAVE PARA BUSCAR EN EL TABLERO. El buscador matchea `contacts.name`,
-       -- `contacts.number` y el operador ("cliente u operador..."): por el `username` del
-       -- CASINO no se puede buscar. Y la cuenta dice cual de los dos tableros abrir.
-       ct.name            AS cliente,
-       t.account          AS account
-FROM ultimo u
-JOIN tickets t   ON t.id = u.ticket_id
-JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
-LEFT JOIN queues q   ON q.id = t.queue_id
-LEFT JOIN users usr  ON usr.id = t.user_id
-LEFT JOIN contacts ct ON ct.id = t.contact_id
-WHERE u.from_me = false
-"""
+# LA CONSULTA VIVE ACA Y NO EN src/queries.py: aquel modulo es el del TABLERO y pasa por
+# `_rows_as_dicts`, que censura. Esta alimenta un canal interno y devuelve metadatos, no
+# texto de chat.
 
 # EL RESUMEN SALE DE LA SESION YA SCOREADA, que es lo que define "termino la conversacion":
 # `worker.fetch_pending_sessions` trae sesiones CERRADAS sin scorear, y cuando el score se
@@ -388,8 +284,14 @@ SELECT cs.interaccion_id::text AS interaccion_id,
        cs.user_name     AS operador,
        cs.motivo        AS motivo,
        cs.stars, cs.first_response_seconds, cs.resolution_seconds,
+       -- CUANDO ESCRIBIO EL CLIENTE. La necesita `espera_de_horario` para descontar la
+       -- noche: `first_response_seconds` es reloj de pared y sin esta columna la marca
+       -- de espera larga publicaria las horas que el negocio estuvo cerrado.
+       cs.conversation_created_at AS conversation_created_at,
        cs.segment       AS segment,
-       -- Ver la nota de `_ESPERA_SQL`: por el `username` del casino no se busca.
+       -- LA LLAVE PARA BUSCAR EN EL TABLERO. El buscador matchea `contacts.name`,
+       -- `contacts.number` y el operador: por el `username` del CASINO no se puede
+       -- buscar. Y la cuenta dice cual de los dos tableros abrir.
        ct.name          AS cliente,
        cs.account       AS account
 FROM conversation_scores cs
@@ -416,17 +318,6 @@ WHERE v.es_vip
 def _dicts(cur) -> list[dict]:
     cols = [d.name for d in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
-
-
-def candidatos_espera(cur, account: str) -> list[dict]:
-    """Conversaciones VIP abiertas cuyo ULTIMO mensaje es del cliente.
-
-    No filtra por tiempo: eso lo hace `filtrar_espera` con `espera_efectiva`, que es
-    codigo de produccion y sabe descontar la noche. Reimplementar esa resta en SQL seria
-    una segunda version del contrato.
-    """
-    cur.execute(_ESPERA_SQL, {"account": account, "ventana_h": VENTANA_ESPERA_HORAS})
-    return _dicts(cur)
 
 
 def resumenes_pendientes(cur, account: str) -> list[dict]:
@@ -491,40 +382,59 @@ def _buscar_en(d: dict) -> str:
     return f"🔎 {nombre}cuenta {_esc(d.get('account') or _SIN_DATO)}"
 
 
-def _titulo(d: dict) -> str:
-    puesto = f" #{_esc(d['ranking'])}" if d.get("ranking") else ""
-    agencia = f" · {_esc(d['agencia'])}" if d.get("agencia") else ""
-    return f"<b>{_esc(d.get('username') or _SIN_DATO)}</b>{puesto}{agencia}"
+def espera_de_horario(d: dict) -> tuple[float | None, bool]:
+    """(segundos que espero DE HORARIO, si la noche recorto la cifra).
 
+    POR QUE NO ALCANZA `first_response_seconds`: es RELOJ DE PARED. `metrics` lo calcula
+    como una resta pelada y no descuenta la noche, asi que un mensaje que entra con el
+    negocio cerrado acumula horas que nadie podia atender.
 
-def _hora_ec(cuando) -> str:
-    """La hora local de Ecuador, que es donde trabaja el que lee la alerta."""
-    if not isinstance(cuando, datetime):
-        return _SIN_DATO
-    return cuando.astimezone(TZ_EC).strftime("%H:%M")
+    EL CASO QUE OBLIGA A ESTO (`05123a61`, real): el cliente escribio 00:06 y la operadora
+    contesto 06:05. Reloj de pared **359 minutos**; el negocio abre 06:00, asi que la
+    espera de horario son **5,7 minutos**. Publicar "esperó 6 horas" en el grupo donde lee
+    gerencia es acusar a quien contesto a los seis minutos de abrir el turno. De las 23
+    esperas que el reloj de pared marca sobre 5 min, DOS son de esta clase.
 
+    SE USA `horario.espera_efectiva` Y NO UNA RESTA PROPIA: es la MISMA funcion con la que
+    la rubrica califica la agilidad. Una segunda version del contrato es como se rompen
+    estas cosas -- el tablero diria una cosa y Telegram otra sobre el mismo hecho.
 
-def mensaje_espera(d: dict) -> str:
-    """ALERTA. Grita, y la primera linea carga lo que se lee en la notificacion.
-
-    LLEVA LA HORA A LA QUE ESCRIBIO EL CLIENTE, y no es adorno. MEDIDO: el 42,6% de estas
-    alertas puede dispararse tarde por el retraso del ETL (p75 39 min, p90 2 h). Si el
-    mensaje solo dijera "lleva 20 min", el que lo lee asume que es en vivo. La hora lo
-    desmiente sin que nadie tenga que conocer el pipeline.
+    SIN LA HORA EN QUE ESCRIBIO NO SE PUEDE DESCONTAR NADA, y ahi devuelve el reloj de
+    pared SIN marcar como recortado... salvo que ni eso haya. Ante la duda no se acusa: el
+    llamador solo marca cuando hay hora, porque marcar a ciegas es justo el falso positivo
+    que este diseño viene a evitar.
     """
-    hora = d.get("ultimo_cliente_at")
-    cuerpo = [
-        f"👤 <b>{_esc(d.get('username') or _SIN_DATO)}</b>"
-        f"  <code>#{_esc(d.get('ranking') or '?')}</code>  {_esc(d.get('agencia') or _SIN_DATO)}",
-        _buscar_en(d),
-        f"📋 {_quien(d.get('queue'))} · 🧑‍💼 {_quien(d.get('operador'))}",
-    ]
-    if isinstance(hora, datetime):
-        cuerpo.append(f"🕐 Escribió {_hora_ec(hora)}")
-    cuerpo.append(f"⭐ VIP por {_esc(d.get('motivo_vip') or _SIN_DATO)}")
-    return "\n".join(
-        [f"🚨 <b>ATENCIÓN — VIP esperando {duracion(d.get('espera_segundos'))}</b>", ""]
-        + cuerpo)
+    bruto = d.get("first_response_seconds")
+    desde = d.get("conversation_created_at")
+    if bruto is None or desde is None:
+        return bruto, False
+    try:
+        hasta = desde + timedelta(seconds=float(bruto))
+    except (TypeError, ValueError):
+        return bruto, False
+    efectiva = espera_efectiva(desde, hasta)
+    if efectiva is None:
+        return bruto, False
+    seg = efectiva.total_seconds()
+    # El redondeo al segundo evita el "5 min contra 5 min" por milisegundos, la misma
+    # leccion que ya esta en `horario.espera_efectiva`.
+    return seg, round(seg) < round(float(bruto))
+
+
+def espera_larga(d: dict) -> bool:
+    """Se marca la espera larga? Pide DOS cosas, y la primera es la que protege.
+
+    1. QUE SE PUEDA DESCONTAR LA NOCHE, o sea que haya `conversation_created_at`. Sin esa
+       hora solo queda el reloj de pared, y marcar con el reloj de pared es exactamente el
+       falso positivo que este diseño viene a evitar: acusaria de "6 horas" a quien
+       contesto seis minutos despues de abrir. Ante la duda NO se acusa -- el resumen sale
+       igual, sin la marca, y el numero sigue estando en la linea del reloj.
+    2. Que la espera DE HORARIO supere la vara del negocio.
+    """
+    if d.get("conversation_created_at") is None:
+        return False
+    seg, _ = espera_de_horario(d)
+    return seg is not None and seg >= UMBRAL_ESPERA_LARGA_SEGUNDOS
 
 
 def _estrellas(v) -> str:
@@ -558,41 +468,56 @@ def mensaje_resumen(d: dict) -> str:
     """
     estrellas = d.get("stars")
     nota = f"{estrellas:g} de 5" if estrellas is not None else "sin nota"
-    return "\n".join([
+    seg, recortada = espera_de_horario(d)
+    # LA CIFRA QUE SE PUBLICA ES LA DE HORARIO, no la de reloj de pared. Ver
+    # `espera_de_horario`. El sufijo aparece SOLO cuando las dos difieren: sin el, el que
+    # compara con el tablero --que muestra el reloj de pared-- cree que una de las dos
+    # miente; puesto siempre, es ruido en el 97% de los mensajes.
+    tiempo = f"⏱ 1ª respuesta {duracion(seg)}"
+    if recortada:
+        tiempo += " de horario"
+    tiempo += f" · duró {duracion(d.get('resolution_seconds'))}"
+    cuerpo = [
         "🍀 <b>Conversación cerrada</b>",
+    ]
+    # LA MARCA VA ARRIBA Y NOMBRA A QUIEN RESPONDIO, que es lo que pidio el negocio: la
+    # primera linea es lo que se lee en la notificacion sin abrir el chat.
+    if espera_larga(d):
+        cuerpo.append(f"{MARCA_ESPERA_LARGA} <b>Esperó {duracion(seg)} por respuesta</b>"
+                      f" — {_quien(d.get('operador'))}")
+    cuerpo += [
         "",
         f"👤 <b>{_esc(d.get('username') or _SIN_DATO)}</b>"
         f"  <code>#{_esc(d.get('ranking') or '?')}</code>  {_esc(d.get('agencia') or _SIN_DATO)}",
         _buscar_en(d),
         f"🧑‍💼 {_quien(d.get('operador'))} · 📌 {_para_que(d)}",
         f"{_estrellas(estrellas)}  {nota}",
-        f"⏱ 1ª respuesta {duracion(d.get('first_response_seconds'))}"
-        f" · duró {duracion(d.get('resolution_seconds'))}",
+        tiempo,
         f"⭐ VIP por {_esc(d.get('motivo_vip') or _SIN_DATO)}",
-    ])
+    ]
+    return "\n".join(cuerpo)
 
 
 # --- el barrido: lo unico que el worker necesita llamar ----------------------
 
 def barrer(conn, account: str, canal: Canal,
            ahora: datetime | None = None,
-           umbral_segundos: int = UMBRAL_ESPERA_SEGUNDOS,
            log=None, ledger_vacio_=None) -> dict:
-    """Un ciclo de alertas de UNA cuenta. Devuelve `{"espera": n, "resumen": n}`.
+    """Un ciclo de alertas de UNA cuenta. Devuelve `{"resumen": n, ...}`.
 
-    EL ORDEN DE CADA ALERTA ES: marcar primero, mandar despues. Al reves, un fallo de red
-    despues del envio dejaria la alerta sin rastro y el proximo barrido --sesenta segundos
-    mas tarde-- la repetiria. Se prefiere perder un aviso a repetirlo: el canal que grita
-    dos veces por lo mismo se deja de leer, y eso apaga las dos alertas a la vez.
+    EL ORDEN ES: marcar primero, mandar despues. Al reves, un fallo de red despues del
+    envio dejaria la alerta sin rastro y el proximo barrido --sesenta segundos mas tarde--
+    la repetiria. Se prefiere perder un aviso a repetirlo: el canal que dice dos veces lo
+    mismo se deja de leer.
 
     NO LANZA NUNCA. El worker lo llama dentro de su ciclo de scoring; una alerta rota no
     puede dejar sesiones sin calificar.
     """
     # `fallos` NO es cosmetico. Antes se devolvia solo lo ENVIADO: si los diez envios del
-    # ciclo fallaban, esto daba {espera:0, resumen:0}, que es lo MISMO que devuelve un dia
-    # tranquilo. El worker solo loguea cuando hay algo, asi que un canal caido se veia
-    # identico a que no hubiera pasado nada.
-    hecho = {"espera": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
+    # ciclo fallaban, esto daba {resumen:0}, que es lo MISMO que devuelve un dia tranquilo.
+    # El worker solo loguea cuando hay algo, asi que un canal caido se veia identico a que
+    # no hubiera pasado nada.
+    hecho = {"resumen": 0, "fallos": 0, "sembrados": 0}
     # El worker escribe con timestamp por `emit`; el `logger` de la libreria sale por
     # stderr sin hora ni nombre y en un log de contenedor mezclado con uvicorn no se
     # rastrea. Con el `log` inyectado la falla aparece en la misma corriente que el resto.
@@ -613,40 +538,8 @@ def barrer(conn, account: str, canal: Canal,
             primera = ledger_vacio(cur, account) if ledger_vacio_ is None else ledger_vacio_
         conn.commit()
 
-        # ESPERA. La compuerta del horario va ANTES de la consulta: un barrido cada 60 s
-        # durante las 6 horas de cierre son 360 consultas para nada.
-        if canal.configurado and en_horario(ahora):
-            with conn.cursor() as cur:
-                candidatos = candidatos_espera(cur, account)
-            # LA CONFIRMACION EN DOS OBSERVACIONES va DESPUES del umbral y del horario:
-            # solo se anota lo que ya califica, no todo lo que respira.
-            listos = filtrar_espera(candidatos, ahora, umbral_segundos)
-            with conn.cursor() as cur:
-                listos = confirmados(cur, account, listos, ahora)
-            conn.commit()
-            for c in listos:
-                clave = clave_espera(c["ticket_id"], c["ultimo_cliente_at"])
-                with conn.cursor() as cur:
-                    nueva = marcar_enviada(cur, account, "espera", clave)
-                conn.commit()
-                if not nueva:
-                    continue
-                if primera:
-                    hecho["sembrados"] += 1
-                    continue
-                estado = canal.enviar(mensaje_espera(c))
-                if estado == OK:
-                    hecho["espera"] += 1
-                else:
-                    hecho["fallos"] += 1
-                    decir(f"[alertas] {account} espera {clave}: {estado}")
-                if estado == REINTENTAR:
-                    with conn.cursor() as cur:
-                        desmarcar(cur, account, "espera", clave)
-                    conn.commit()
-                time.sleep(THROTTLE_SEGUNDOS)
-
-        # RESUMEN. No mira el horario: una conversacion que cerro 23:50 se avisa igual.
+        # NO MIRA EL HORARIO: una conversacion que cerro 23:50 se avisa igual. El resumen
+        # no pide que nadie entre a atender, asi que llegar de noche no molesta.
         if canal.configurado:
             with conn.cursor() as cur:
                 pendientes = resumenes_pendientes(cur, account)

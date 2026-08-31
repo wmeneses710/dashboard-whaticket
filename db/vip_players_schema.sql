@@ -1,9 +1,10 @@
 -- Jugadores VIP / criticos marcados en NUESTRA base (nivel PERSONA-por-cuenta).
 --
--- Una fila por (cuenta, contacto). Alimenta las alertas especiales que pidio el
--- negocio: una de RESUMEN cuando un jugador critico es atendido (quien, para que,
--- calificacion, duracion, motivo) y otra de ESPERA LARGA. Las dos arrancan igual --
--- resolver si el contacto que escribio esta en la lista-- y eso tiene que costar cero.
+-- Una fila por (cuenta, contacto). Alimenta la alerta especial que pidio el negocio: el
+-- RESUMEN de cuando un jugador critico es atendido (quien, para que, calificacion,
+-- duracion, motivo), que ademas MARCA la espera larga --medida de horario, no de reloj
+-- de pared--. Arranca por resolver si el contacto que escribio esta en la lista, y eso
+-- tiene que costar cero.
 --
 -- POR QUE UNA TABLA PROPIA Y NO UNA COLUMNA EN `contacts`: `contacts` es del ETL y este
 -- repo no le escribe ni una fila. Una columna ahi es pedirle a otro proyecto que la

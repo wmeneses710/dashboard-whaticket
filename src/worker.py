@@ -904,16 +904,16 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
                         rate = (c["evaluated"] / dt * 60) if dt > 0 else 0.0
                         emit(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} "
                              f"err={c['error']} · {dt:.0f}s ({rate:.1f} eval/min)")
-                    # ALERTAS DE JUGADOR VIP. Va DESPUES del lote y no antes: el resumen
+                    # ALERTA DE JUGADOR VIP. Va DESPUES del lote y no antes: el resumen
                     # sale de la sesion recien calificada, asi que un aviso llega en el
                     # mismo ciclo en que la charla se cerro. `barrer` no lanza nunca y con
-                    # los dos canales apagados no hace nada: el scoring es el producto.
+                    # el canal apagado no hace nada: el scoring es el producto.
                     a = barrer_alertas(conn, account, canal_vip, log=emit)
                     # SE LOGUEA TAMBIEN CUANDO FALLA. Sin el conteo de fallos, un canal
                     # caido devolvia los mismos ceros que un dia tranquilo y no escribia
                     # una sola linea.
-                    if a["espera"] or a["resumen"] or a["fallos"]:
-                        emit(f"[worker] {account}: alertas VIP espera={a['espera']} "
+                    if a["resumen"] or a["fallos"]:
+                        emit(f"[worker] {account}: alertas VIP "
                              f"resumen={a['resumen']} fallos={a['fallos']}")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
