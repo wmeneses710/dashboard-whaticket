@@ -1454,3 +1454,83 @@ def test_si_el_registrador_falla_el_lote_SIGUE(monkeypatch):
     monkeypatch.setattr(worker, "score_session_and_store", fake_score)
     counts = score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
     assert counts == {"evaluated": 2, "skipped": 0, "error": 1, "seen": 3}
+
+
+# --- EL BARRIDO DE ALERTAS TIENE SU PROPIA CADENCIA (2026-08-31) ------------
+#
+# EL NUMERO QUE LO PIDE: de los ~33 minutos que tardaba en llegar una alerta de espera
+# larga, **29,6 eran esperando el barrido** (p50 medido sobre 5 dias de envios reales;
+# p90 71,5 min, peor 97,6). El ETL solo aporta 2,9.
+#
+# LA CAUSA: `barrer` corria DENTRO del ciclo de scoring, despues de `score_sessions_batch`.
+# Un lote son 20 sesiones y una sesion puede tener 167 interacciones, asi que el ciclo
+# --y con el, el barrido-- tarda horas. La alerta no llegaba tarde por la alerta: llegaba
+# tarde por el backlog del scoring, del que no depende en nada.
+#
+# EL NEGOCIO LO PIDIO ASI: "las alertas deben ser con lo que vayan llegando, no deben
+# acumularse, las que se envian son por el realtime... yo estimaba un maximo de 15 minutos".
+#
+# Con hilo propio cada 60 s, lo que aporta el barrido pasa de 29,6 min a menos de uno, y lo
+# que queda es el ETL. EFECTO LATERAL QUE IMPORTA: el resumen deja de perder el 17,9% por
+# caerse de `VENTANA_RESUMEN_HORAS` mientras el ciclo tardaba 2,4-3,9 h.
+
+def test_el_loop_de_alertas_barre_cada_cuenta_y_duerme_su_intervalo(monkeypatch):
+    barridos, dormido = [], []
+    monkeypatch.setattr(worker, "ALERTAS_POLL_SEGUNDOS", 60)
+
+    def _stop():
+        # corta tras DOS vueltas completas. Se cuenta por barridos y no por llamadas,
+        # porque `should_stop` tambien se consulta dentro del sueño en tramos de 1 s.
+        return len(barridos) >= 4
+
+    class _Cfg:
+        database_url = "postgresql://x/y"
+        scoring_accounts = ["sistemas", "datos"]
+
+    import src.alertas as alertas_mod
+    monkeypatch.setattr(alertas_mod, "barrer",
+                        lambda conn, acc, canal, **kw: barridos.append(acc)
+                        or {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0})
+    monkeypatch.setattr(worker.time, "sleep", lambda s: dormido.append(s))
+
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def close(self): pass
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect", lambda *a, **k: _Conn())
+
+    worker.run_alert_loop(_Cfg(), canal=object(), llm=None, should_stop=_stop,
+                          log=lambda m: None)
+    assert barridos == ["sistemas", "datos", "sistemas", "datos"]
+    assert dormido and all(d <= 1 for d in dormido), "duerme en tramos de 1s (parada rapida)"
+
+
+def test_el_loop_de_alertas_NO_muere_si_la_base_se_cae(monkeypatch):
+    """Una alerta rota no puede matar su propio hilo: al ciclo siguiente reintenta."""
+    vueltas = {"n": 0}
+
+    def _stop():
+        vueltas["n"] += 1
+        return vueltas["n"] > 2
+
+    class _Cfg:
+        database_url = "postgresql://x/y"
+        scoring_accounts = ["sistemas"]
+
+    def _revienta(*a, **k):
+        raise RuntimeError("se cayo la base")
+    import psycopg
+    monkeypatch.setattr(psycopg, "connect", _revienta)
+    monkeypatch.setattr(worker.time, "sleep", lambda s: None)
+    dichos = []
+    worker.run_alert_loop(_Cfg(), canal=object(), llm=None, should_stop=_stop,
+                          log=dichos.append)
+    assert any("alertas" in d and "RuntimeError" in d for d in dichos), dichos
+
+
+def test_el_ciclo_de_scoring_ya_NO_barre_alertas():
+    """Si siguiera barriendo desde ahi, volveria a pegarse al ritmo del lote."""
+    import inspect
+    fuente = inspect.getsource(worker.run_worker_loop)
+    assert "barrer_alertas(" not in fuente, "el barrido vive en run_alert_loop"

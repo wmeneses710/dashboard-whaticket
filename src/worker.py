@@ -7,6 +7,7 @@ sistemas conviven en la misma BD y el worker procesa las cuentas configuradas.
 """
 from __future__ import annotations
 
+import threading
 import time
 import traceback
 from datetime import timedelta
@@ -255,6 +256,22 @@ def score_batch(conn, llm, account: str, limit: int, op_map: dict | None = None)
 # Cuanto se espera despues del cierre antes de calificar. Ver el comentario del WHERE.
 # El corto tiene que cubrir el p99 del ETL (36 s) con margen y NO volver a empujar la
 # alerta fuera de horario; el largo es el mismo silencio con el que se corta la interaccion.
+# CADA CUANTO BARRE LAS ALERTAS, en su propio hilo.
+#
+# EL NUMERO QUE LO PIDE: de los ~33 minutos que tardaba en llegar una alerta de espera
+# larga, **29,6 eran esperando el barrido** (p50 sobre 5 dias de envios reales; p90 71,5;
+# peor 97,6). El ETL solo aporta 2,9. La causa era que `barrer` corria DENTRO del ciclo de
+# scoring, detras de `score_sessions_batch`: un lote son 20 sesiones y una sesion puede
+# tener 167 interacciones, asi que el ciclo --y el barrido con el-- tarda horas. La alerta
+# llegaba tarde por el backlog del scoring, del que no depende en NADA.
+#
+# El negocio lo pidio asi: "las alertas deben ser con lo que vayan llegando, no deben
+# acumularse... yo estimaba un maximo de 15 minutos de diferencia".
+#
+# EFECTO LATERAL QUE IMPORTA: el resumen deja de perder el 17,9% que se caia de
+# `VENTANA_RESUMEN_HORAS` (2 h) mientras el ciclo tardaba entre 2,4 y 3,9 horas.
+ALERTAS_POLL_SEGUNDOS = 60
+
 HOLD_CERRADA = timedelta(minutes=5)
 HOLD_SIN_CIERRE = SILENCIO_MAX
 
@@ -749,13 +766,48 @@ def _emit_stdout(msg: str) -> None:
     print(msg, flush=True)
 
 
+def run_alert_loop(cfg, canal, llm=None, should_stop=None, log=_emit_stdout) -> None:
+    """Barre las alertas a SU ritmo, sin quedar atras del lote de scoring.
+
+    HILO PROPIO Y CONEXION PROPIA. Va aparte porque las dos cosas tienen relojes distintos:
+    el scoring puede tardar horas en un lote y no pasa nada --la nota no caduca--, pero una
+    alerta que llega dos horas tarde ya no sirve para nada.
+
+    ARRANCA DESPUES DEL ADVISORY LOCK, dentro de `run_worker_loop`, asi que hereda el
+    singleton: una sola instancia alerta, igual que una sola scorea.
+
+    NO LANZA NUNCA. `barrer` ya se traga lo suyo; esto ademas cubre que la BASE se caiga, que
+    es lo unico que queda afuera. Un fallo no puede matar el hilo: al ciclo siguiente
+    reintenta.
+    """
+    import psycopg
+
+    from src.alertas import barrer as barrer_alertas
+
+    log(f"[alertas] loop propio cada {ALERTAS_POLL_SEGUNDOS}s")
+    while not (should_stop and should_stop()):
+        try:
+            with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
+                for account in cfg.scoring_accounts:
+                    a = barrer_alertas(conn, account, canal, log=log, llm=llm)
+                    if a["espera_larga"] or a["resumen"] or a["fallos"]:
+                        log(f"[alertas] {account}: espera_larga={a['espera_larga']} "
+                            f"resumen={a['resumen']} fallos={a['fallos']}")
+        except Exception as e:  # noqa: BLE001 - el hilo tiene que sobrevivir a la BD
+            log(f"[alertas] ciclo ROTO: {type(e).__name__}: {e}")
+        # Sueño en tramos de 1 s para que la parada corte enseguida, igual que el scoring.
+        for _ in range(max(1, ALERTAS_POLL_SEGUNDOS)):
+            if should_stop and should_stop():
+                break
+            time.sleep(1)
+
+
 def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     """Loop continuo del contenedor: scorea pendientes por cuenta, duerme, repite."""
     import psycopg
 
     import os
 
-    from src.alertas import barrer as barrer_alertas
     from src.alertas import canal_desde_env
     from src.conversions import refresh_account_conversions
     from src.sessions import refresh_account_sessions
@@ -841,6 +893,14 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     if lock_conn is None:  # se pidió parar mientras esperaba el lock
         return
     emit("[worker] lock de scoring adquirido (instancia única)")
+    # EL BARRIDO DE ALERTAS ARRANCA ACA, DESPUES DEL LOCK, para heredar el singleton: una
+    # sola instancia alerta, igual que una sola scorea. Y en HILO PROPIO porque el scoring y
+    # las alertas tienen relojes distintos -- ver `ALERTAS_POLL_SEGUNDOS`.
+    threading.Thread(
+        target=run_alert_loop, args=(cfg, canal_vip),
+        kwargs={"llm": llm, "should_stop": should_stop, "log": emit},
+        daemon=True, name="alertas-vip",
+    ).start()
     # Migración AUTOMÁTICA a scoring por SESIÓN (una vez, antes de tocar columnas):
     # renombra la tabla vieja a backup y crea la fresca de grano sesión. Idempotente.
     try:
@@ -904,19 +964,6 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
                         rate = (c["evaluated"] / dt * 60) if dt > 0 else 0.0
                         emit(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} "
                              f"err={c['error']} · {dt:.0f}s ({rate:.1f} eval/min)")
-                    # ALERTA DE JUGADOR VIP. Va DESPUES del lote y no antes: el resumen
-                    # sale de la sesion recien calificada, asi que un aviso llega en el
-                    # mismo ciclo en que la charla se cerro. `barrer` no lanza nunca y con
-                    # el canal apagado no hace nada: el scoring es el producto.
-                    # EL `llm` VA para la capa 2 de la espera larga: es la que caza la
-                    # cortesia que el determinista no ve ("Bueno mi bro gracias 🫂").
-                    a = barrer_alertas(conn, account, canal_vip, log=emit, llm=llm)
-                    # SE LOGUEA TAMBIEN CUANDO FALLA. Sin el conteo de fallos, un canal
-                    # caido devolvia los mismos ceros que un dia tranquilo y no escribia
-                    # una sola linea.
-                    if a["espera_larga"] or a["resumen"] or a["fallos"]:
-                        emit(f"[worker] {account}: alertas VIP espera_larga={a['espera_larga']} "
-                             f"resumen={a['resumen']} fallos={a['fallos']}")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
                     for account in cfg.scoring_accounts:

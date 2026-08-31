@@ -228,9 +228,16 @@ def ensure_table(cur) -> None:
     ensure_vip(cur)
 
 
-def ledger_vacio(cur, account: str) -> bool:
-    """No hay rastro de ninguna alerta de esta cuenta: es el PRIMER arranque."""
-    cur.execute("SELECT count(*) FROM alertas_enviadas WHERE account = %s", (account,))
+def ledger_vacio(cur, account: str, tipo: str) -> bool:
+    """No hay rastro de ESTE TIPO de alerta en esta cuenta: es su PRIMER arranque.
+
+    POR TIPO Y NO POR CUENTA, y la diferencia es el dia del despliegue. Mirando la cuenta,
+    una alerta NUEVA encuentra el ledger lleno de otro tipo --207 resumenes-- se saltea la
+    siembra y su primer barrido manda el backlog entero de la ventana. El negocio lo pidio
+    al reves: "las alertas deben ser con lo que vayan llegando, no deben acumularse".
+    """
+    cur.execute("SELECT count(*) FROM alertas_enviadas WHERE account = %s AND tipo = %s",
+                (account, tipo))
     fila = cur.fetchone()
     # Sin fila es lo mismo que sin rastro: se trata como primer arranque, que es el lado
     # seguro -- siembra y no manda.
@@ -810,7 +817,10 @@ def barrer(conn, account: str, canal: Canal,
             # **155 con ventana de 72 h** -- en produccion, poner el token dispararia el
             # backlog entero de un saque y el canal nace quemado. Un canal de alertas
             # arranca en AHORA: la primera pasada SIEMBRA el ledger sin mandar nada.
-            primera = ledger_vacio(cur, account) if ledger_vacio_ is None else ledger_vacio_
+            # UNA POR TIPO: cada alerta arranca en AHORA por su cuenta.
+            primera = {t: (ledger_vacio(cur, account, t) if ledger_vacio_ is None
+                           else ledger_vacio_)
+                       for t in ("espera_larga", "resumen")}
         conn.commit()
 
         # ESPERA LARGA. Va PRIMERO: es la unica de las dos que alguien puede querer accionar
@@ -828,7 +838,7 @@ def barrer(conn, account: str, canal: Canal,
                 conn.commit()
                 if not nueva:
                     continue
-                if primera:
+                if primera["espera_larga"]:
                     hecho["sembrados"] += 1
                     continue
                 estado = canal.enviar(mensaje_espera_larga(c))
@@ -855,7 +865,7 @@ def barrer(conn, account: str, canal: Canal,
                 conn.commit()
                 if not nueva:
                     continue
-                if primera:
+                if primera["resumen"]:
                     hecho["sembrados"] += 1
                     continue
                 estado = canal.enviar(mensaje_resumen(r))
@@ -869,9 +879,11 @@ def barrer(conn, account: str, canal: Canal,
                         desmarcar(cur, account, "resumen", clave_resumen(r["interaccion_id"]))
                     conn.commit()
                 time.sleep(THROTTLE_SEGUNDOS)
-        if primera and hecho["sembrados"]:
-            decir(f"[alertas] {account}: PRIMER arranque, {hecho['sembrados']} del backlog "
-                  f"quedan marcados SIN enviar. Desde el proximo ciclo se avisa lo nuevo.")
+        if any(primera.values()) and hecho["sembrados"]:
+            sembrados = [t for t, v in primera.items() if v]
+            decir(f"[alertas] {account}: PRIMER arranque de {'/'.join(sembrados)}, "
+                  f"{hecho['sembrados']} del backlog quedan marcados SIN enviar. "
+                  f"Desde el proximo ciclo se avisa lo nuevo.")
     except Exception as e:  # noqa: BLE001 - el scoring es el producto, la alerta es el aviso
         hecho["fallos"] += 1
         decir(f"[alertas] barrido {account} ROTO: {type(e).__name__}: {e}")

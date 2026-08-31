@@ -458,9 +458,9 @@ def test_el_PRIMER_barrido_siembra_el_ledger_y_NO_manda(monkeypatch):
 
 def test_saber_si_el_ledger_esta_vacio():
     cur = _FakeCursor(rows=[(0,)])
-    assert alertas.ledger_vacio(cur, "sistemas") is True
+    assert alertas.ledger_vacio(cur, "sistemas", "resumen") is True
     cur2 = _FakeCursor(rows=[(31,)])
-    assert alertas.ledger_vacio(cur2, "sistemas") is False
+    assert alertas.ledger_vacio(cur2, "sistemas", "resumen") is False
 
 
 # --- SOLO LO DE AHORA -------------------------------------------------------
@@ -1213,3 +1213,45 @@ def test_lo_que_el_cliente_dijo_DESPUES_de_que_le_contestaron_no_cuenta():
     c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
     assert alertas.merece_alerta_de_espera(c) is False
 
+
+
+# --- EL LEDGER SE SIEMBRA POR TIPO, NO POR CUENTA (2026-08-31) --------------
+#
+# PEDIDO DEL NEGOCIO: "las alertas deben ser con lo que vayan llegando, no deben
+# acumularse, las que se envian son por el realtime".
+#
+# `ledger_vacio` miraba la CUENTA. Con 207 filas de `resumen` ya escritas, un tipo NUEVO
+# --la espera larga-- encuentra el ledger "no vacio", se saltea la siembra y su primer
+# barrido manda el backlog de 24 h de una. Medido sobre 7 dias: 2,7 alertas por dia de
+# promedio y hasta 5 en la peor ventana de 24 h. No es una tormenta, pero es historia, y el
+# negocio quiere lo que llega.
+#
+# Mirandolo por (cuenta, TIPO), cada alerta nueva arranca en AHORA: siembra y no manda.
+
+def test_el_ledger_vacio_se_pregunta_por_tipo():
+    cur = _FakeCursor(rows=[(207,)], cols=("count",))
+    alertas.ledger_vacio(cur, "sistemas", "espera_larga")
+    assert cur.params[-1] == ("sistemas", "espera_larga")
+    assert "tipo" in cur.sql[-1]
+
+
+def test_un_tipo_NUEVO_siembra_aunque_la_cuenta_ya_tenga_ledger(monkeypatch):
+    """El caso exacto del despliegue: 207 resumenes escritos y CERO esperas largas."""
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
+    cols, filas = _mensajes_de_una_espera()
+
+    class _ConCuenta(_FakeCursor):
+        def execute(self, sql, params=None):
+            super().execute(sql, params)
+            texto = " ".join(str(sql).split())
+            if "SELECT count(*) FROM alertas_enviadas" in texto:
+                # la cuenta tiene resumenes, pero NINGUNA espera larga
+                self._rows = [(0,)] if params and params[1] == "espera_larga" else [(207,)]
+                self.rowcount = 1
+
+    cur = _ConCuenta(rows=filas, cols=cols, para="espera_larga")
+    r = alertas.barrer(_ConCuenta.__mro__ and _ConnFalsa(cur), "sistemas",
+                       alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ))
+    assert r["espera_larga"] == 0 and r["sembrados"] >= 1, r
