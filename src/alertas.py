@@ -65,13 +65,18 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import httpx
 
+from src.cola_de_cortesia import decidir_con_el_modelo, necesita_el_modelo
+from src.horario import TZ as TZ_EC
+from src.interacciones import SILENCIO_MAX
 from src.horario import espera_efectiva
+from src.signals import client_sin_motivo
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +110,19 @@ VENTANA_CHARLA_HORAS = 24
 # el canal; si marcara la mitad no distinguiria nada.
 UMBRAL_ESPERA_LARGA_SEGUNDOS = 300
 MARCA_ESPERA_LARGA = "⏳"
+
+# EL TOPE. Pasado esto no hubo una espera: hubo otra conversacion. CASO REAL
+# (`carlosvilla0105`): "Muchas gracias" y la "respuesta" 1.105 minutos despues -- el jugador
+# volvio a escribir al dia siguiente. Es `interacciones.SILENCIO_MAX`, el mismo umbral con
+# el que se corta la interaccion, y se importa de alli para no tener dos definiciones.
+TOPE_ESPERA_SEGUNDOS = SILENCIO_MAX.total_seconds()
+
+# LA VENTANA DE LA CONSULTA, ancha A PROPOSITO. Es la leccion del 17,9%: `_RESUMEN_SQL` mira
+# 2 h y el 2026-08-31 se midio que 15 de 84 resumenes NUNCA salieron, porque el ciclo del
+# worker tardo entre 2,4 y 3,9 horas y la fila se cayo de la ventana antes de que el barrido
+# pasara. Sin error y sin log. Lo que impide el duplicado es el LEDGER, no una ventana
+# angosta; la ventana solo acota el scan.
+VENTANA_ESPERA_LARGA_HORAS = 24
 
 _SIN_DATO = "N/D"
 
@@ -220,6 +238,16 @@ def ledger_vacio(cur, account: str) -> bool:
     return not fila or fila[0] == 0
 
 
+def clave_espera_larga(ticket_id: str, cliente_at: datetime) -> str:
+    """El EPISODIO de espera, no el ticket.
+
+    Si la clave fuera solo el ticket, el jugador que vuelve a esperar mañana en la misma
+    conversacion no alertaria NUNCA otra vez. El instante del mensaje del cliente es lo que
+    distingue una espera de la siguiente.
+    """
+    return f"{ticket_id}:{cliente_at.isoformat()}"
+
+
 def clave_resumen(interaccion_id: str) -> str:
     """La INTERACCION. Un re-scoreo masivo --como el de v22-- no puede volver a avisar de
     una charla de hace un mes.
@@ -267,6 +295,68 @@ def ahora_de_la_base(cur) -> datetime:
 # LA CONSULTA VIVE ACA Y NO EN src/queries.py: aquel modulo es el del TABLERO y pasa por
 # `_rows_as_dicts`, que censura. Esta alimenta un canal interno y devuelve metadatos, no
 # texto de chat.
+
+# LA ESPERA LARGA NO PASA POR `conversation_scores`, Y ESA ES LA GRACIA. Pedido del negocio:
+# "no necesitamos todo para esta alerta... solo necesitamos el inicio y la primera respuesta
+# en si, no es necesario mandar la calificacion". Los dos datos viven en `messages`, asi que
+# esta alerta NO espera a que la sesion sea elegible ni a que el worker llegue a calificarla.
+# MEDIDO sobre 30 dias, cuanto tarda en poder saberse:
+#     por el resumen ...... p50 122 min (sesion de 1 interaccion) a 61 h (sesion de 20+),
+#                           y ademas el 17,9% no sale nunca
+#     por `messages` ...... p50 2,9 min desde que el ETL captura la RESPUESTA (p90 57 min)
+#
+# EL PAR ES (mensaje del cliente -> mensaje del negocio que le sigue). `LEAD` sobre la
+# ventana del ticket: se alerta solo cuando la respuesta YA EXISTE, asi que el hecho esta
+# cerrado y no se acusa a nadie de estar haciendo esperar a alguien ahora mismo.
+#
+# LAS NOTAS QUEDAN AFUERA (`is_note`). Una nota es interna: contarla como respuesta al
+# cliente es el bug que `sin_respuesta.hubo_respuesta_del_negocio` ya documenta.
+_ESPERA_LARGA_SQL = """
+WITH vip AS (
+    SELECT m.ticket_id, m.created_at, m.from_me, m.body, m.media_type,
+           lead(m.created_at) OVER w AS sig_at,
+           lead(m.from_me)    OVER w AS sig_from_me
+      FROM messages m
+      JOIN tickets t     ON t.id = m.ticket_id
+      JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
+     WHERE v.es_vip
+       AND t.account = %(account)s
+       AND NOT coalesce(t.is_group, false)
+       AND coalesce(m.is_note, false) = false
+       AND m.created_at > now() - make_interval(hours => %(ventana_h)s)
+    WINDOW w AS (PARTITION BY m.ticket_id ORDER BY m.created_at)
+)
+SELECT vip.ticket_id::text AS ticket_id,
+       vip.created_at      AS cliente_at,
+       vip.sig_at          AS respuesta_at,
+       vip.body            AS body,
+       vip.media_type      AS media_type,
+       v.username, v.ranking, v.agencia,
+       v.motivo            AS motivo_vip,
+       usr.name            AS operador,
+       ct.name             AS cliente,
+       t.account           AS account
+  FROM vip
+  JOIN tickets t     ON t.id = vip.ticket_id
+  JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
+  LEFT JOIN users usr   ON usr.id = t.user_id
+  LEFT JOIN contacts ct ON ct.id = t.contact_id
+ -- ACA NO HAY JOIN CONTRA EL LEDGER, y es deliberado. El resumen si lo tiene porque su
+ -- clave es un uuid que SQL puede comparar tal cual; la de la espera es
+ -- `{ticket}:{created_at.isoformat()}`, y reproducir en SQL el isoformat de Python
+ -- --microsegundos incluidos-- es una segunda implementacion de la clave que se rompe en
+ -- SILENCIO: si un solo caracter no coincide, el join no matchea, nada se filtra y la
+ -- alerta sale cada 60 segundos. La garantia de idempotencia es `marcar_enviada`, que
+ -- compara la clave que ESCRIBIO Python. El costo de no filtrar aca es traer unas pocas
+ -- filas de mas por ciclo (88 en 30 dias) y descartarlas por PK.
+ WHERE vip.from_me = false
+   AND vip.sig_from_me = true
+   -- El piso en SQL acota el scan; la vara de verdad la pone `merece_alerta_de_espera` con
+   -- `espera_efectiva`, que descuenta la noche y aca no se puede reimplementar sin tener
+   -- dos versiones del contrato.
+   AND vip.sig_at - vip.created_at >= make_interval(secs => %(umbral_s)s)
+"""
+
 
 # EL RESUMEN SALE DE LA SESION YA SCOREADA, que es lo que define "termino la conversacion":
 # `worker.fetch_pending_sessions` trae sesiones CERRADAS sin scorear, y cuando el score se
@@ -318,6 +408,18 @@ WHERE v.es_vip
 def _dicts(cur) -> list[dict]:
     cols = [d.name for d in cur.description]
     return [dict(zip(cols, r)) for r in cur.fetchall()]
+
+
+def candidatos_espera_larga(cur, account: str) -> list[dict]:
+    """Pares (mensaje del cliente, respuesta del negocio) con el piso de espera en bruto.
+
+    Las compuertas finas --la noche, el tope, la cortesia-- las pone
+    `merece_alerta_de_espera` en Python, con las MISMAS funciones que usa la rubrica.
+    """
+    cur.execute(_ESPERA_LARGA_SQL, {"account": account,
+                                    "ventana_h": VENTANA_ESPERA_LARGA_HORAS,
+                                    "umbral_s": UMBRAL_ESPERA_LARGA_SEGUNDOS})
+    return _dicts(cur)
 
 
 def resumenes_pendientes(cur, account: str) -> list[dict]:
@@ -421,6 +523,91 @@ def espera_de_horario(d: dict) -> tuple[float | None, bool]:
     return seg, round(seg) < round(float(bruto))
 
 
+# EL PREFIJO DE UNA NOTA DEL CRM metida del lado del cliente. VISTO EN LA COPIA: un mensaje
+# con `from_me = false` cuyo cuerpo empieza `*Anya Alexandra:*` y sigue con la plantilla de
+# retiro. Alertar por eso seria avisar que el negocio se hizo esperar a si mismo.
+_PREFIJO_NOTA_CRM = re.compile(r"^\s*\*[^*\n]{1,60}:\*")
+
+
+def merece_alerta_de_espera(d: dict, llm=None) -> bool:
+    """El VIP espero de mas por su PRIMERA respuesta, y valia la pena esperarla.
+
+    CUATRO COMPUERTAS, y el orden importa porque las tres primeras son GRATIS:
+
+    1. LAS DOS PUNTAS. Sin la hora del cliente o la de la respuesta no hay espera que
+       medir, y medir a medias es inventar.
+    2. LA NOTA DEL CRM DISFRAZADA DE CLIENTE (`_PREFIJO_NOTA_CRM`).
+    3. EL RELOJ, con `horario.espera_efectiva` -- la MISMA funcion con la que la rubrica
+       califica agilidad, no una resta propia. Entre el umbral y `TOPE_ESPERA_SEGUNDOS`:
+       por debajo no es larga, por encima no es una espera sino otra conversacion.
+    4. QUE EL CLIENTE HUBIERA PEDIDO ALGO, en dos capas como en v24:
+         capa 1  `signals.client_sin_motivo`, determinista y gratis. Sobre los 121
+                 candidatos de 30 dias mata 32 ("Ok", "Gracias", "😑", "Entiendo").
+         capa 2  el modelo, SOLO sobre el residuo que `necesita_el_modelo` deja pasar. Es
+                 lo que caza "Bueno mi bro gracias 🫂" y "Bueno bro", que la capa 1 no ve.
+                 Costo medido en v24: 0,8 inferencias por dia.
+
+    LA POLARIDAD DEL RIESGO, y aca es al reves que en el scoring. Alla ante la duda se
+    PUNTUA para no perder un reclamo; aca ante la duda se ALERTA, porque el negocio eligio
+    priorizar al VIP con el numero a la vista (88 alertas en 30 dias a 5 minutos, contra 8
+    a 15). Un fallo del modelo --sin LLM, timeout, JSON roto-- devuelve None y se alerta.
+
+    UN MEDIA SUELTO ALERTA. Un audio o un comprobante sin texto no se puede leer, pero de
+    un VIP es casi siempre un pedido; `client_sin_motivo` ya trata el adjunto como un
+    planteo y `necesita_el_modelo` no gasta inferencia en el.
+    """
+    desde, hasta = d.get("cliente_at"), d.get("respuesta_at")
+    if desde is None or hasta is None:
+        return False
+    cuerpo = (d.get("body") or "")
+    if _PREFIJO_NOTA_CRM.match(cuerpo):
+        return False
+    efectiva = espera_efectiva(desde, hasta)
+    if efectiva is None:
+        return False
+    seg = efectiva.total_seconds()
+    if not (UMBRAL_ESPERA_LARGA_SEGUNDOS <= seg <= TOPE_ESPERA_SEGUNDOS):
+        return False
+    msg = [{"from_me": False, "is_note": False, "body": cuerpo,
+            "media_type": d.get("media_type") or "chat"}]
+    if client_sin_motivo(msg):
+        return False
+    if llm is not None and necesita_el_modelo(msg):
+        # True = el modelo dice que es cortesia. `False` y `None` alertan igual, pero se
+        # distinguen a proposito: uno es una decision y el otro un fallo que hay que poder
+        # contar (misma regla que `cola_de_cortesia.decidir_con_el_modelo`).
+        if decidir_con_el_modelo(msg, d.get("ultimo_del_negocio"), llm) is True:
+            return False
+    return True
+
+
+def segundos_de_espera(d: dict) -> float | None:
+    """La espera DE HORARIO entre el mensaje del cliente y su primera respuesta."""
+    efectiva = espera_efectiva(d.get("cliente_at"), d.get("respuesta_at"))
+    return None if efectiva is None else efectiva.total_seconds()
+
+
+def mensaje_espera_larga(d: dict) -> str:
+    """La alerta de espera larga. Lleva CUANTO espero y QUIEN respondio, que es lo que
+    pidio el negocio, y las dos horas para que se pueda auditar sin abrir el chat.
+
+    SIN EL TEXTO DEL CHAT, igual que el resumen: el cuerpo llevaria cedulas y numeros de
+    cuenta a un grupo de Telegram donde nadie los tapa.
+    """
+    return "\n".join([
+        f"{MARCA_ESPERA_LARGA} <b>VIP esperó {duracion(segundos_de_espera(d))}"
+        f" por respuesta</b>",
+        "",
+        f"👤 <b>{_esc(d.get('username') or _SIN_DATO)}</b>"
+        f"  <code>#{_esc(d.get('ranking') or '?')}</code>  {_esc(d.get('agencia') or _SIN_DATO)}",
+        _buscar_en(d),
+        f"🧑‍💼 respondió {_quien(d.get('operador'))}",
+        f"🕐 Escribió {_hora_ec(d.get('cliente_at'))}"
+        f" · le respondieron {_hora_ec(d.get('respuesta_at'))}",
+        f"⭐ VIP por {_esc(d.get('motivo_vip') or _SIN_DATO)}",
+    ])
+
+
 def espera_larga(d: dict) -> bool:
     """Se marca la espera larga? Pide DOS cosas, y la primera es la que protege.
 
@@ -435,6 +622,13 @@ def espera_larga(d: dict) -> bool:
         return False
     seg, _ = espera_de_horario(d)
     return seg is not None and seg >= UMBRAL_ESPERA_LARGA_SEGUNDOS
+
+
+def _hora_ec(cuando) -> str:
+    """La hora local de Ecuador, que es donde trabaja el que lee la alerta."""
+    if not isinstance(cuando, datetime):
+        return _SIN_DATO
+    return cuando.astimezone(TZ_EC).strftime("%H:%M")
 
 
 def _estrellas(v) -> str:
@@ -502,8 +696,11 @@ def mensaje_resumen(d: dict) -> str:
 
 def barrer(conn, account: str, canal: Canal,
            ahora: datetime | None = None,
-           log=None, ledger_vacio_=None) -> dict:
-    """Un ciclo de alertas de UNA cuenta. Devuelve `{"resumen": n, ...}`.
+           log=None, ledger_vacio_=None, llm=None) -> dict:
+    """Un ciclo de alertas de UNA cuenta. Devuelve `{"espera_larga": n, "resumen": n, ...}`.
+
+    `llm` es OPCIONAL y solo lo usa la capa 2 de la espera larga. Sin el, la compuerta
+    de cortesia se queda con la capa determinista: alerta de mas, nunca de menos.
 
     EL ORDEN ES: marcar primero, mandar despues. Al reves, un fallo de red despues del
     envio dejaria la alerta sin rastro y el proximo barrido --sesenta segundos mas tarde--
@@ -517,7 +714,7 @@ def barrer(conn, account: str, canal: Canal,
     # ciclo fallaban, esto daba {resumen:0}, que es lo MISMO que devuelve un dia tranquilo.
     # El worker solo loguea cuando hay algo, asi que un canal caido se veia identico a que
     # no hubiera pasado nada.
-    hecho = {"resumen": 0, "fallos": 0, "sembrados": 0}
+    hecho = {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
     # El worker escribe con timestamp por `emit`; el `logger` de la libreria sale por
     # stderr sin hora ni nombre y en un log de contenedor mezclado con uvicorn no se
     # rastrea. Con el `log` inyectado la falla aparece en la misma corriente que el resto.
@@ -537,6 +734,36 @@ def barrer(conn, account: str, canal: Canal,
             # arranca en AHORA: la primera pasada SIEMBRA el ledger sin mandar nada.
             primera = ledger_vacio(cur, account) if ledger_vacio_ is None else ledger_vacio_
         conn.commit()
+
+        # ESPERA LARGA. Va PRIMERO: es la unica de las dos que alguien puede querer accionar
+        # el mismo dia, y no depende del scoring, asi que sale aunque el worker este
+        # arrastrando backlog.
+        if canal.configurado:
+            with conn.cursor() as cur:
+                candidatos = candidatos_espera_larga(cur, account)
+            for c in candidatos:
+                if not merece_alerta_de_espera(c, llm):
+                    continue
+                clave = clave_espera_larga(c["ticket_id"], c["cliente_at"])
+                with conn.cursor() as cur:
+                    nueva = marcar_enviada(cur, account, "espera_larga", clave)
+                conn.commit()
+                if not nueva:
+                    continue
+                if primera:
+                    hecho["sembrados"] += 1
+                    continue
+                estado = canal.enviar(mensaje_espera_larga(c))
+                if estado == OK:
+                    hecho["espera_larga"] += 1
+                else:
+                    hecho["fallos"] += 1
+                    decir(f"[alertas] {account} espera_larga {clave}: {estado}")
+                if estado == REINTENTAR:
+                    with conn.cursor() as cur:
+                        desmarcar(cur, account, "espera_larga", clave)
+                    conn.commit()
+                time.sleep(THROTTLE_SEGUNDOS)
 
         # NO MIRA EL HORARIO: una conversacion que cerro 23:50 se avisa igual. El resumen
         # no pide que nadie entre a atender, asi que llegar de noche no molesta.

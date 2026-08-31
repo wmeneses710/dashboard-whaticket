@@ -908,12 +908,14 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
                     # sale de la sesion recien calificada, asi que un aviso llega en el
                     # mismo ciclo en que la charla se cerro. `barrer` no lanza nunca y con
                     # el canal apagado no hace nada: el scoring es el producto.
-                    a = barrer_alertas(conn, account, canal_vip, log=emit)
+                    # EL `llm` VA para la capa 2 de la espera larga: es la que caza la
+                    # cortesia que el determinista no ve ("Bueno mi bro gracias 🫂").
+                    a = barrer_alertas(conn, account, canal_vip, log=emit, llm=llm)
                     # SE LOGUEA TAMBIEN CUANDO FALLA. Sin el conteo de fallos, un canal
                     # caido devolvia los mismos ceros que un dia tranquilo y no escribia
                     # una sola linea.
-                    if a["resumen"] or a["fallos"]:
-                        emit(f"[worker] {account}: alertas VIP "
+                    if a["espera_larga"] or a["resumen"] or a["fallos"]:
+                        emit(f"[worker] {account}: alertas VIP espera_larga={a['espera_larga']} "
                              f"resumen={a['resumen']} fallos={a['fallos']}")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:

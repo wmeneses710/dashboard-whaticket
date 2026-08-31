@@ -233,7 +233,7 @@ def test_el_barrido_no_manda_nada_si_el_canal_esta_apagado(monkeypatch):
     conn = _ConnFalsa(cur)
     r = alertas.barrer(conn, "sistemas", alertas.Canal("", ""),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert r == {"resumen": 0, "fallos": 0, "sembrados": 0}
+    assert r == {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
     assert llamadas == [], "un canal apagado no tiene que pegarle a la red"
     assert not any("INSERT INTO alertas_enviadas" in s for s in cur.sql), \
         "y tampoco puede marcar como enviada una alerta que nunca salio"
@@ -592,13 +592,15 @@ def test_la_alerta_de_ESPERA_ya_no_existe():
         "132 deberian dispararse en 30 dias y llegaban 3.")
 
 
-def test_el_barrido_solo_devuelve_lo_del_RESUMEN():
-    """La forma del retorno la lee `worker.py` para loguear. Sin la clave `espera` no puede
-    quedar un `a['espera']` colgado del otro lado."""
+def test_el_barrido_NO_devuelve_la_clave_de_la_alerta_EN_VIVO():
+    """La forma del retorno la lee `worker.py` para loguear. La clave `espera` --la alerta
+    en vivo, borrada-- no puede quedar colgada del otro lado; `espera_larga` es otra cosa
+    y esa SI va."""
     cur = _FakeCursor()
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert set(r) == {"resumen", "fallos", "sembrados"}
+    assert set(r) == {"espera_larga", "resumen", "fallos", "sembrados"}
+    assert "espera" not in r
 
 
 def test_el_barrido_NUNCA_escribe_una_fila_de_espera(monkeypatch):
@@ -720,3 +722,193 @@ def test_la_consulta_TRAE_la_hora_en_que_escribio_el_cliente():
     ALIAS y no el nombre crudo: `conversation_created_at` ya aparecia en el WHERE de la
     ventana de la charla, asi que buscarlo a secas pasa sin que la columna se SELECCIONE."""
     assert "AS conversation_created_at" in alertas._RESUMEN_SQL
+
+
+# --- LA ALERTA RAPIDA DE ESPERA LARGA (2026-08-31) --------------------------
+#
+# NO ES LA QUE SE BORRO. Aquella preguntaba "¿esta esperando AHORA?" y no podia llegar a
+# tiempo. Esta pregunta "¿espero de mas?" DESPUES de que el operador ya respondio: el hecho
+# esta cerrado y el numero medido.
+#
+# POR QUE NO ESPERA AL SCORE, que es lo que la hace util. Salio del negocio: "solo
+# necesitamos el inicio y la primera respuesta en si, no es necesario mandar la
+# calificacion". Los dos datos estan en `messages`, asi que NO depende de que la sesion sea
+# elegible ni de que el worker llegue a calificarla. MEDIDO sobre 30 dias:
+#     por el resumen ..... p50 122 min (sesion de 1) a 61 h (sesion de 20+), y 17,9% NUNCA
+#     leyendo messages ... p50 2,9 min desde que el ETL captura la respuesta
+#
+# EL UMBRAL ES 5 MINUTOS, decision del negocio con el numero a la vista: a 5 min son 88
+# alertas en 30 dias (2,9/dia) y a 15 serian 8. Textual: "no porque estos son jugadores vip,
+# hay que darle prioridad si esperan mucho hay que alertar, 5 esta bien".
+#
+# LA VENTANA DE LA CONSULTA ES ANCHA A PROPOSITO, y es la leccion del 17,9%: cuando el
+# productor tarda mas que la ventana, la ventana deja de proteger y empieza a BORRAR filas
+# en silencio. Lo que evita el duplicado es el ledger, no una ventana angosta.
+
+def _espera(**kw):
+    base = {"ticket_id": "tkt-1", "username": "u", "ranking": 1, "agencia": "A",
+            "motivo_vip": "M", "operador": "Andree", "cliente": "Juan Pérez",
+            "account": "sistemas", "media_type": "chat", "body": "Una recarga por favor",
+            "cliente_at": datetime(2026, 8, 28, 14, 0, tzinfo=TZ),
+            "respuesta_at": datetime(2026, 8, 28, 14, 12, tzinfo=TZ)}
+    return {**base, **kw}
+
+
+def test_el_umbral_de_la_alerta_rapida_es_el_de_los_5_minutos_del_negocio():
+    assert alertas.UMBRAL_ESPERA_LARGA_SEGUNDOS == 300
+
+
+def test_una_espera_de_12_min_con_un_pedido_real_ALERTA():
+    assert alertas.merece_alerta_de_espera(_espera()) is True
+
+
+def test_una_espera_CORTA_no_alerta():
+    assert alertas.merece_alerta_de_espera(_espera(
+        respuesta_at=datetime(2026, 8, 28, 14, 3, tzinfo=TZ))) is False
+
+
+def test_un_GRACIAS_no_alerta_por_mas_que_tarden(): 
+    """CAPA 1, `client_sin_motivo`: el cliente no pidio nada, asi que no estaba esperando.
+    De los 121 candidatos de 30 dias, esta compuerta mata 32."""
+    assert alertas.merece_alerta_de_espera(_espera(body="Ok gracias")) is False
+
+
+def test_la_NOCHE_no_cuenta_como_espera():
+    """`espera_efectiva`, la misma funcion de la rubrica. Escribio 23:58 y le contestaron
+    06:02: el reloj de pared dice 6 h 4 min y de horario son CUATRO minutos --dos antes de
+    cerrar y dos despues de abrir--, asi que no llega al umbral. Sin esto, cada mañana al
+    abrir el turno seria una tormenta de alertas por gente que durmio."""
+    assert alertas.merece_alerta_de_espera(_espera(
+        cliente_at=datetime(2026, 8, 28, 23, 58, tzinfo=TZ),
+        respuesta_at=datetime(2026, 8, 29, 6, 2, tzinfo=TZ))) is False
+
+
+def test_pero_la_espera_que_CRUZA_la_noche_y_igual_es_larga_SI_alerta():
+    """Control negativo del test de arriba: si no fuera por el umbral y la resta, el de
+    arriba pasaria por cualquier motivo. Escribio 23:50 y le contestaron 06:02: doce
+    minutos de horario, y esos doce SI valen."""
+    assert alertas.merece_alerta_de_espera(_espera(
+        cliente_at=datetime(2026, 8, 28, 23, 50, tzinfo=TZ),
+        respuesta_at=datetime(2026, 8, 29, 6, 2, tzinfo=TZ))) is True
+
+
+def test_una_espera_de_mas_de_6_HORAS_no_es_una_espera_sino_OTRA_conversacion():
+    """CASO REAL (`carlosvilla0105`): "Muchas gracias" y la "respuesta" 1.105 minutos
+    despues. Eso no es que lo hayan hecho esperar 18 horas: es que volvio a escribir al dia
+    siguiente. El tope es `SILENCIO_MAX`, el mismo con el que se corta la interaccion."""
+    assert alertas.merece_alerta_de_espera(_espera(
+        body="Una recarga por favor",
+        cliente_at=datetime(2026, 8, 28, 7, 0, tzinfo=TZ),
+        respuesta_at=datetime(2026, 8, 28, 20, 0, tzinfo=TZ))) is False
+
+
+def test_la_PLANTILLA_DEL_OPERADOR_del_lado_del_cliente_no_alerta():
+    """VISTO EN LA COPIA: un mensaje con `from_me = false` cuyo cuerpo es
+    `*Anya Alexandra:* *Para procesar tu retiro*...`. El CRM lo metio del lado del cliente.
+    Alertar por eso es avisar que el negocio se hizo esperar a si mismo."""
+    assert alertas.merece_alerta_de_espera(_espera(
+        body="*Anya Alexandra:*\n*Para procesar tu retiro*, por favor completa los datos")) is False
+
+
+def test_sin_las_DOS_puntas_no_se_alerta():
+    """Sin una de las dos horas no hay espera que medir, y medir a medias es inventar."""
+    assert alertas.merece_alerta_de_espera(_espera(cliente_at=None)) is False
+    assert alertas.merece_alerta_de_espera(_espera(respuesta_at=None)) is False
+
+
+def test_el_mensaje_dice_CUANTO_espero_y_QUIEN_respondio():
+    t = alertas.mensaje_espera_larga(_espera())
+    assert t.startswith(alertas.MARCA_ESPERA_LARGA)
+    assert "12 min" in t
+    assert "Andree" in t
+    assert '"Juan Pérez"' in t and "sistemas" in t, "con que abrirlo en el tablero"
+
+
+def test_el_mensaje_NO_lleva_el_texto_del_chat_tampoco_aca():
+    """Misma regla que el resumen: el cuerpo llevaria cedulas y cuentas a un grupo donde
+    nadie las tapa."""
+    t = alertas.mensaje_espera_larga(_espera(
+        body="mi cedula es 1712345678 y la cuenta 2205232155"))
+    assert "1712345678" not in t and "2205232155" not in t
+
+
+def test_la_clave_del_ledger_es_el_EPISODIO_no_el_ticket():
+    """Si fuera solo el ticket, el mismo jugador no volveria a alertar nunca."""
+    a = datetime(2026, 8, 28, 14, 0, tzinfo=TZ)
+    b = datetime(2026, 8, 29, 14, 0, tzinfo=TZ)
+    assert alertas.clave_espera_larga("tkt-1", a) != alertas.clave_espera_larga("tkt-1", b)
+    assert alertas.clave_espera_larga("tkt-1", a) == alertas.clave_espera_larga("tkt-1", a)
+
+
+def test_la_consulta_de_espera_larga_TRAE_lo_que_el_mensaje_necesita():
+    sql = alertas._ESPERA_LARGA_SQL
+    for col in ("AS cliente_at", "AS respuesta_at", "AS operador", "AS cliente",
+                "AS account", "AS ticket_id", "AS body", "AS media_type"):
+        assert col in sql, col
+    assert "make_interval(hours => %(ventana_h)s)" in sql
+    assert "es_vip" in sql
+
+
+def test_el_barrido_manda_la_espera_larga_y_la_MARCA(monkeypatch):
+    """La marca va ANTES del envio: un fallo de red despues de mandar dejaria la alerta sin
+    rastro y el proximo barrido --sesenta segundos mas tarde-- la repetiria."""
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
+    cols = ("ticket_id", "cliente_at", "respuesta_at", "body", "media_type", "username",
+            "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
+    fila = ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ),
+            datetime(2026, 8, 26, 14, 12, tzinfo=TZ), "Una recarga por favor", "chat",
+            "u", 1, "A", "M", "Andree", "Juan", "sistemas")
+    cur = _FakeCursor(rows=[fila], cols=cols)
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ), ledger_vacio_=False)
+    assert r["espera_larga"] == 1
+    escrito = [p for p in cur.params if isinstance(p, tuple) and len(p) == 3]
+    assert ("sistemas", "espera_larga", "tkt-1:2026-08-26T14:00:00-05:00") in escrito
+
+
+def test_el_barrido_NO_repite_una_espera_ya_avisada(monkeypatch):
+    """`marcar_enviada` devuelve False cuando la clave ya estaba: ese es el guardian, no el
+    SQL. Sin el, el mismo aviso saldria una vez por minuto."""
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 200, "text": ""})())
+    cols = ("ticket_id", "cliente_at", "respuesta_at", "body", "media_type", "username",
+            "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
+    fila = ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ),
+            datetime(2026, 8, 26, 14, 12, tzinfo=TZ), "Una recarga por favor", "chat",
+            "u", 1, "A", "M", "Andree", "Juan", "sistemas")
+
+    class _YaEstaba(_FakeCursor):
+        def execute(self, sql, params=None):
+            super().execute(sql, params)
+            if "INSERT INTO alertas_enviadas" in " ".join(str(sql).split()):
+                self.rowcount = 0      # ON CONFLICT DO NOTHING: no inserto
+
+    cur = _YaEstaba(rows=[fila], cols=cols)
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ), ledger_vacio_=False)
+    assert r["espera_larga"] == 0
+
+
+def test_el_PRIMER_arranque_tampoco_replica_esperas(monkeypatch):
+    """Con la ventana de 24 h, encender el bot en una base sin ledger mandaria el backlog
+    del dia entero de un saque. La siembra tapa eso: marca y no manda."""
+    llamadas = []
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: llamadas.append(a))
+    cols = ("ticket_id", "cliente_at", "respuesta_at", "body", "media_type", "username",
+            "ranking", "agencia", "motivo_vip", "operador", "cliente", "account")
+    fila = ("tkt-1", datetime(2026, 8, 26, 14, 0, tzinfo=TZ),
+            datetime(2026, 8, 26, 14, 12, tzinfo=TZ), "Una recarga por favor", "chat",
+            "u", 1, "A", "M", "Andree", "Juan", "sistemas")
+    cur = _FakeCursor(rows=[fila], cols=cols)
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 8, 26, 15, 0, tzinfo=TZ), ledger_vacio_=True)
+    assert r["espera_larga"] == 0 and r["sembrados"] >= 1
+    assert llamadas == []
+
+
+def test_el_tope_es_SILENCIO_MAX_y_no_una_copia():
+    """Si alguien mueve el silencio con el que se corta la interaccion, el tope de la
+    espera tiene que moverse solo. Dos numeros iguales escritos en dos lados divergen."""
+    from src.interacciones import SILENCIO_MAX
+    assert alertas.TOPE_ESPERA_SEGUNDOS == SILENCIO_MAX.total_seconds()
