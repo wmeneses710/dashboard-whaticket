@@ -315,6 +315,12 @@ _ESPERA_LARGA_SQL = """
 SELECT t.id::text  AS ticket_id,
        m.created_at, m.from_me, m.body, m.media_type,
        coalesce(m.is_note, false) AS is_note,
+       -- QUIEN ESCRIBIO ESTE MENSAJE, que no es lo mismo que quien tiene el ticket
+       -- asignado hoy. `messages.user_id` viene en 1.725 de los 1.728 mensajes del
+       -- negocio de 7 dias y es la unica fuente que describe el MENSAJE, no el envase.
+       -- (SIN el signo de porcentaje en el comentario: psycopg parsea el SQL entero
+       -- buscando placeholders y uno suelto revienta con 'incomplete placeholder'.)
+       autor.name AS autor,
        v.username, v.ranking, v.agencia,
        v.motivo    AS motivo_vip,
        usr.name    AS operador,
@@ -324,6 +330,7 @@ SELECT t.id::text  AS ticket_id,
   JOIN tickets t     ON t.id = m.ticket_id
   JOIN vip_players v ON v.contact_id = t.contact_id::text AND v.account = t.account
   LEFT JOIN users usr   ON usr.id = t.user_id
+  LEFT JOIN users autor ON autor.id = m.user_id
   LEFT JOIN contacts ct ON ct.id = t.contact_id
  WHERE v.es_vip
    AND t.account = %(account)s
@@ -575,9 +582,31 @@ def esperas_de_apertura(mensajes: list[dict], ticket: dict) -> list[dict]:
         inicio, primera_op, _ = tiempos_de(frag)
         if inicio is None:
             continue
+        # QUIEN CONTESTO ES EL AUTOR DE ESE MENSAJE, no el asignado al ticket. El bug lo
+        # destapo leer los 15 transcripts de la evaluacion: `tickets.user_id` daba OTRA
+        # persona en 11 de 15 (decia "Andree" y habia contestado Alejandra; decia "Alex" y
+        # fue Salome Ramirez). Equivocarse en la PERSONA, en el grupo donde lee gerencia,
+        # es el peor falso positivo que puede tener este canal.
+        # Se busca sobre `reales`: la nota `*Asignado automaticamente* a X` la escribe el
+        # CRM y nombrar a X seria cobrarle una respuesta que no dio.
+        autor = next((m.get("autor") for m in reales
+                      if m.get("from_me") and m["created_at"] == primera_op), None)
+        # TODO LO QUE EL CLIENTE DIJO MIENTRAS ESPERABA, no solo con lo que abrio. El tramo
+        # se corta en la PRIMERA RESPUESTA: lo que diga despues ya no es espera, y dejarlo
+        # entrar convertiria cualquier charla larga en una alerta.
+        hasta = primera_op or reales[-1]["created_at"]
+        del_cliente = [{"from_me": False, "is_note": False,
+                        "body": m.get("body") or "",
+                        "media_type": m.get("media_type") or "chat"}
+                       for m in reales
+                       if not m.get("from_me") and m["created_at"] <= hasta]
         out.append({**ticket,
                     "cliente_at": inicio,
                     "respuesta_at": primera_op,
+                    # Sin `messages.user_id` (3 de 1.728) se cae al del ticket: quedarse
+                    # mudo es peor que dar el mejor nombre que tenemos.
+                    "operador": autor or ticket.get("operador"),
+                    "cliente_msgs": del_cliente,
                     "body": reales[0].get("body") or "",
                     "media_type": reales[0].get("media_type") or "chat"})
     return out
@@ -594,7 +623,11 @@ def merece_alerta_de_espera(d: dict, llm=None) -> bool:
     3. EL RELOJ, con `horario.espera_efectiva` -- la MISMA funcion con la que la rubrica
        califica agilidad, no una resta propia. Entre el umbral y `TOPE_ESPERA_SEGUNDOS`:
        por debajo no es larga, por encima no es una espera sino otra conversacion.
-    4. QUE EL CLIENTE HUBIERA PEDIDO ALGO, en dos capas como en v24:
+    4. QUE EL CLIENTE HUBIERA PEDIDO ALGO **EN TODO LO QUE DIJO MIENTRAS ESPERABA**,
+       no solo con lo que abrio. Mirar el primer mensaje se comia el peor caso de los
+       7 dias: el VIP #2 abrio con "Buenas", siguió con un reclamo de una apuesta mas
+       comprobante, insistio dos veces y espero 1 h 18 min -- y la alerta no salia.
+       Dos capas, como en v24:
          capa 1  `signals.client_sin_motivo`, determinista y gratis. Sobre los 121
                  candidatos de 30 dias mata 32 ("Ok", "Gracias", "😑", "Entiendo").
          capa 2  el modelo, SOLO sobre el residuo que `necesita_el_modelo` deja pasar. Es
@@ -613,8 +646,14 @@ def merece_alerta_de_espera(d: dict, llm=None) -> bool:
     desde, hasta = d.get("cliente_at"), d.get("respuesta_at")
     if desde is None or hasta is None:
         return False
-    cuerpo = (d.get("body") or "")
-    if _PREFIJO_NOTA_CRM.match(cuerpo):
+    # LA PLANTILLA SE SACA DE LA LISTA, NO MATA LA INTERACCION. Si al lado de la plantilla
+    # mal clasificada hay un pedido real del cliente, ese pedido vale. Sin mensajes reales
+    # despues del filtro, no hubo cliente: no se alerta.
+    msg = [m for m in (d.get("cliente_msgs")
+                       or [{"from_me": False, "is_note": False, "body": d.get("body") or "",
+                            "media_type": d.get("media_type") or "chat"}])
+           if not _PREFIJO_NOTA_CRM.match(m.get("body") or "")]
+    if not msg:
         return False
     efectiva = espera_efectiva(desde, hasta)
     if efectiva is None:
@@ -622,8 +661,6 @@ def merece_alerta_de_espera(d: dict, llm=None) -> bool:
     seg = efectiva.total_seconds()
     if not (UMBRAL_ESPERA_LARGA_SEGUNDOS <= seg <= TOPE_ESPERA_SEGUNDOS):
         return False
-    msg = [{"from_me": False, "is_note": False, "body": cuerpo,
-            "media_type": d.get("media_type") or "chat"}]
     if client_sin_motivo(msg):
         return False
     if llm is not None and necesita_el_modelo(msg):

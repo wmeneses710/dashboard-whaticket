@@ -1038,3 +1038,153 @@ def test_el_candidato_arrastra_los_datos_del_ticket_para_el_mensaje():
     c = alertas.esperas_de_apertura([_m(0), _m(12, from_me=True, body="va")], fila)[0]
     for k, v in fila.items():
         assert c[k] == v
+
+
+# --- QUIEN RESPONDIO ES EL QUE RESPONDIO (2026-08-31) -----------------------
+#
+# EL BUG, encontrado leyendo los 15 transcripts reales de la evaluacion: la alerta nombraba
+# al operador ASIGNADO AL TICKET (`tickets.user_id` -> `usr.name`), no al que contesto esa
+# interaccion. **En 11 de 15 era otra persona.** Casos reales: la alerta decia "Andree" y
+# habia contestado Alejandra; decia "Alex" y fue Salome Ramirez; decia "Miguel" y fue Mario.
+#
+# ES EL PEOR FALSO POSITIVO POSIBLE en este canal: no se equivoca en el numero, se equivoca
+# en la PERSONA, y el mensaje va a un grupo donde lee gerencia. El negocio lo dijo asi:
+# "cuida los falsos positivos porque eso es grave y me puede meter en problemas".
+#
+# EL DATO CORRECTO ES `messages.user_id` DE LA PRIMERA RESPUESTA. Poblado en el 99,8% de los
+# mensajes del negocio (1.725 de 1.728 en 7 dias de VIP), y es mas preciso que las dos
+# fuentes que ya divergian el 2026-08-27 (`users.name` del ticket y `cs.user_name` del
+# scoring): no describe el envase ni el momento del scoreo, describe QUIEN ESCRIBIO ESE
+# MENSAJE. Si falta, se cae al del ticket antes que quedarse mudo.
+
+def test_nombra_a_QUIEN_CONTESTO_y_no_al_asignado_al_ticket():
+    """El ticket esta asignado a Andree; la primera respuesta la escribio Alejandra. El caso
+    real `0989947928`, el retiro de $300 que espero 1 h 14 min."""
+    msgs = [
+        {"created_at": datetime(2026, 8, 25, 12, 11, tzinfo=TZ), "from_me": False,
+         "body": "Hola un retiro por favor", "is_note": False, "media_type": "chat",
+         "autor": None},
+        {"created_at": datetime(2026, 8, 25, 13, 26, tzinfo=TZ), "from_me": True,
+         "body": "Buenas tardes", "is_note": False, "media_type": "chat",
+         "autor": "Alejandra"},
+    ]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1", "operador": "Andree"})[0]
+    assert c["operador"] == "Alejandra"
+    assert "Alejandra" in alertas.mensaje_espera_larga(c)
+    assert "Andree" not in alertas.mensaje_espera_larga(c)
+
+
+def test_sin_autor_en_el_mensaje_cae_al_operador_del_ticket():
+    """`messages.user_id` viene NULL en el 0,2%. Quedarse mudo es peor que decir el del
+    ticket: la alerta sigue sirviendo y el nombre es el mejor que tenemos."""
+    msgs = [
+        {"created_at": datetime(2026, 8, 25, 12, 11, tzinfo=TZ), "from_me": False,
+         "body": "Hola un retiro por favor", "is_note": False, "media_type": "chat"},
+        {"created_at": datetime(2026, 8, 25, 13, 26, tzinfo=TZ), "from_me": True,
+         "body": "Buenas tardes", "is_note": False, "media_type": "chat", "autor": None},
+    ]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1", "operador": "Andree"})[0]
+    assert c["operador"] == "Andree"
+
+
+def test_la_NOTA_no_cuenta_como_primera_respuesta_para_nombrar():
+    """`*Asignado automáticamente* a X` la escribe el CRM, no X. Nombrar a esa persona es
+    cobrarle una respuesta que no dio."""
+    msgs = [
+        {"created_at": datetime(2026, 8, 25, 12, 11, tzinfo=TZ), "from_me": False,
+         "body": "Una recarga", "is_note": False, "media_type": "chat"},
+        {"created_at": datetime(2026, 8, 25, 12, 11, 1, tzinfo=TZ), "from_me": True,
+         "body": "*Asignado automáticamente* a Gabriela", "is_note": True,
+         "media_type": None, "autor": "Gabriela"},
+        {"created_at": datetime(2026, 8, 25, 12, 20, tzinfo=TZ), "from_me": True,
+         "body": "Buenas", "is_note": False, "media_type": "chat", "autor": "Mario"},
+    ]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1", "operador": "Andree"})[0]
+    assert c["operador"] == "Mario"
+
+
+def test_la_consulta_TRAE_el_autor_de_cada_mensaje():
+    assert "AS autor" in alertas._ESPERA_LARGA_SQL
+    assert "autor.id = m.user_id" in alertas._ESPERA_LARGA_SQL
+
+
+# --- LA CORTESIA SE JUZGA SOBRE TODO LO QUE DIJO EL CLIENTE (2026-08-31) ----
+#
+# FALSO NEGATIVO ENCONTRADO EN LA EVALUACION, y era el peor de los 7 dias. El VIP #2 del
+# ranking escribio:
+#     12:02:39  "Buenas"
+#     12:02:53  "Realice una apuesta de tenis"
+#     12:02:57  "Pero el tenista se retiró"
+#     12:03:05  "Entonces ahi me devuelven lo apostado"
+#     12:03:08  "Pero en qué tiempo"
+#     12:05:29  (imagen de la apuesta)
+#     12:07:53  "Holaaaa"
+#     12:10:36  "Buenasssss"
+#     13:21:27  Gabriela responde        -> 1 h 18 min
+# La alerta NO salia, porque la compuerta de cortesia miraba SOLO el primer mensaje y el
+# primero era "Buenas". Un reclamo con comprobante y dos insistencias quedaba mudo.
+#
+# `signals.client_sin_motivo` RECIBE UNA LISTA justamente para esto: decide sobre todo lo
+# que el cliente planteo, no sobre su saludo. Se le pasan todos los mensajes hasta la
+# primera respuesta -- que es el tramo en el que el cliente estuvo esperando.
+#
+# Sobre 7 dias esto recupera 3 de los 4 falsos negativos por cortesia. El que queda afuera
+# es un "?" solo, y afuera esta bien: el propio operador contesto "Me indica de mejor
+# manera su solicitud".
+
+def _cli(minuto, body, media="chat"):
+    return {"created_at": datetime(2026, 8, 28, 14, minuto, tzinfo=TZ), "from_me": False,
+            "body": body, "is_note": False, "media_type": media}
+
+
+def test_un_SALUDO_seguido_de_un_reclamo_SI_alerta():
+    """El caso del VIP #2. Lo que decide es el reclamo, no con que abrio."""
+    msgs = [_cli(0, "Buenas"), _cli(1, "Realice una apuesta y el tenista se retiró"),
+            _cli(2, "Entonces ahi me devuelven lo apostado"),
+            {"created_at": datetime(2026, 8, 28, 15, 18, tzinfo=TZ), "from_me": True,
+             "body": "Agradecemos tu espera", "is_note": False, "media_type": "chat",
+             "autor": "Gabriela"}]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
+    assert alertas.merece_alerta_de_espera(c) is True
+
+
+def test_un_saludo_SOLO_sigue_sin_alertar():
+    """Control negativo del test de arriba: si recuperara todo, no estaria filtrando nada.
+    Un "Buenas" y nada mas no es alguien esperando por algo."""
+    msgs = [_cli(0, "Buenas"),
+            {"created_at": datetime(2026, 8, 28, 14, 30, tzinfo=TZ), "from_me": True,
+             "body": "Buenas tardes", "is_note": False, "media_type": "chat",
+             "autor": "Gabriela"}]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
+    assert alertas.merece_alerta_de_espera(c) is False
+
+
+def test_lo_que_el_cliente_dijo_DESPUES_de_que_le_contestaron_no_cuenta():
+    """El tramo que importa es hasta la PRIMERA respuesta: lo de despues ya no es espera, y
+    dejarlo entrar convertiria cualquier charla larga en una alerta."""
+    msgs = [_cli(0, "Buenas"),
+            {"created_at": datetime(2026, 8, 28, 14, 30, tzinfo=TZ), "from_me": True,
+             "body": "Buenas tardes", "is_note": False, "media_type": "chat",
+             "autor": "Gabriela"},
+            _cli(40, "necesito una recarga urgente")]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
+    assert alertas.merece_alerta_de_espera(c) is False
+
+
+def test_la_PLANTILLA_del_operador_no_tapa_al_cliente_de_verdad():
+    """Si al lado de la plantilla mal clasificada hay un pedido real del cliente, se alerta:
+    el guard saca la plantilla, no la interaccion entera."""
+    msgs = [_cli(0, "*Anya Alexandra:*\n*Para procesar tu retiro* completa los datos"),
+            _cli(1, "Monto 300 banco pichincha"),
+            {"created_at": datetime(2026, 8, 28, 14, 20, tzinfo=TZ), "from_me": True,
+             "body": "va", "is_note": False, "media_type": "chat", "autor": "Andree"}]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
+    assert alertas.merece_alerta_de_espera(c) is True
+
+
+def test_la_plantilla_SOLA_sigue_sin_alertar():
+    msgs = [_cli(0, "*Anya Alexandra:*\n*Para procesar tu retiro* completa los datos"),
+            {"created_at": datetime(2026, 8, 28, 14, 20, tzinfo=TZ), "from_me": True,
+             "body": "va", "is_note": False, "media_type": "chat", "autor": "Andree"}]
+    c = alertas.esperas_de_apertura(msgs, {"ticket_id": "tkt-1"})[0]
+    assert alertas.merece_alerta_de_espera(c) is False
