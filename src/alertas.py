@@ -65,7 +65,6 @@ from __future__ import annotations
 
 import html
 import logging
-import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -419,10 +418,6 @@ def candidatos_espera_larga(cur, account: str, ahora: datetime | None = None) ->
         "lookback_h": VENTANA_ESPERA_LARGA_HORAS + SILENCIO_MAX.total_seconds() / 3600,
     })
     filas = _dicts(cur)
-    # EL PADRON SE PIDE A LA BASE y ademas se le suma lo que se vea en el lote: la consulta
-    # cubre a quien no escribio en la ventana, y el lote cubre una firma nueva que todavia
-    # no llego al padron.
-    firmas = firmas_conocidas(cur) | firmas_del_negocio(filas)
     por_ticket: dict[str, tuple[dict, list[dict]]] = {}
     for f in filas:
         tk = f["ticket_id"]
@@ -432,7 +427,7 @@ def candidatos_espera_larga(cur, account: str, ahora: datetime | None = None) ->
     corte = (ahora or datetime.now(tz=TZ_EC)) - timedelta(hours=VENTANA_ESPERA_LARGA_HORAS)
     out = []
     for ticket, mensajes in por_ticket.values():
-        for c in esperas_de_apertura(mensajes, ticket, firmas):
+        for c in esperas_de_apertura(mensajes, ticket):
             if c["cliente_at"] >= corte:
                 out.append(c)
     return out
@@ -539,82 +534,7 @@ def espera_de_horario(d: dict) -> tuple[float | None, bool]:
     return seg, round(seg) < round(float(bruto))
 
 
-# LA FIRMA CON LA QUE EL CRM ENCABEZA UN MENSAJE: `*Nombre:*` al principio.
-#
-# EL PATRON SOLO NO ALCANZA PARA DECIDIR, y por poco cuesta caro. Sobre 30 dias hay 1.818
-# mensajes con `from_me = false` que empiezan asi, y son DOS cosas distintas:
-#    400  la firma del NEGOCIO mal clasificada por el CRM ("*Anya Alexandra:* *Para procesar
-#         tu retiro*..."). Alertar por eso avisa que el negocio se hizo esperar a si mismo.
-#  1.418  NO son nuestras, y ahi adentro esta el CLIENTE LLENANDO LA FICHA:
-#           "*Nombre de Agencia:* AGCOX *Banco:* Pichincha *Cuenta:* Ahorros..."   (138)
-#           "*Monto:* $1000 *Nombre completo: Joseph Delgado *Cedula: ..."         (129)
-#         Eso es un pedido de RETIRO, el mas explicito que hay. Perderlo seria castigar al
-#         cliente por ser claro. (El resto son agencias que firman con su propio agente.)
-#
-# En el universo VIP de 30 dias los 107 casos son TODOS del negocio, asi que el patron ancho
-# no hacia daño HOY -- pero por suerte de la poblacion. El dia que un VIP mande la ficha con
-# asteriscos se pierde su retiro en silencio, y por eso se discrimina por DATO y no por
-# lexico: `firmas_del_negocio`.
-_FIRMA_RE = re.compile(r"^\s*\*([^*\n]{1,60}):\*")
-
-
-# DE DONDE SALE EL PADRON DE FIRMAS. Dos fuentes unidas, porque ninguna sola alcanza:
-#     39  `users.name` -- el padron. Tiene a los que no escribieron en la ventana; aprender
-#         las firmas SOLO del lote fue una regresion real: Anya Alexandra no aparecia
-#         firmando en 7 dias de VIP y su plantilla de retiro --el caso que este guard existe
-#         para tapar-- volvia a alertar.
-#     28  las firmas vistas en mensajes `from_me` -- cazan al que el CRM firma con un nombre
-#         distinto al de `users` (la divergencia del 2026-08-27: `users.name` dice 'Ramirez'
-#         y la firma dice 'Deninson').
-#     43  la union. Es UNA consulta por barrido.
-_FIRMAS_SQL = """
-SELECT DISTINCT lower(substring(m.body from '^\s*\*([^*\n]{1,60}):\*')) AS firma
-  FROM messages m
- WHERE m.from_me AND NOT coalesce(m.is_note, false)
-   AND m.body ~ '^\s*\*[^*\n]{1,60}:\*'
-   AND m.created_at > now() - make_interval(days => %(dias)s)
-UNION
-SELECT lower(u.name) FROM users u WHERE u.name IS NOT NULL AND u.name <> ''
-"""
-
-DIAS_DE_FIRMAS = 60
-
-
-def firmas_conocidas(cur, dias: int = DIAS_DE_FIRMAS) -> set[str]:
-    """El padron de firmas del negocio, normalizado."""
-    cur.execute(_FIRMAS_SQL, {"dias": dias})
-    return {f[0].strip().lower() for f in cur.fetchall()
-            if f and f[0] and f[0].strip()}
-
-
-def firmas_del_negocio(mensajes: list[dict]) -> set[str]:
-    """Las firmas que el CRM le pone al NEGOCIO, sacadas de sus propios mensajes.
-
-    Se calculan del MISMO lote que ya se trajo, asi que no cuestan una consulta y se
-    recalibran solas cuando entra una persona nueva. Son 28 distintas en 60 dias.
-    """
-    out = set()
-    for m in mensajes:
-        if not m.get("from_me") or m.get("is_note"):
-            continue
-        g = _FIRMA_RE.match(m.get("body") or "")
-        if g:
-            out.add(g.group(1).strip().lower())
-    return out
-
-
-def _es_del_negocio(cuerpo: str, firmas: set[str]) -> bool:
-    """El mensaje viene firmado por alguien del negocio: el CRM lo puso del lado del cliente.
-
-    SIN FIRMAS CONOCIDAS NO DESCARTA NADA. Es la misma polaridad que el resto de la alerta:
-    ante la duda no se pierde el pedido.
-    """
-    g = _FIRMA_RE.match(cuerpo or "")
-    return bool(g) and g.group(1).strip().lower() in firmas
-
-
-def esperas_de_apertura(mensajes: list[dict], ticket: dict,
-                        firmas: set[str] | None = None) -> list[dict]:
+def esperas_de_apertura(mensajes: list[dict], ticket: dict) -> list[dict]:
     """Un candidato POR INTERACCION: (arranque del cliente, primera respuesta del operador).
 
     CORRECCION DEL NEGOCIO (2026-08-31), y cambia la unidad de medida: *"si se guarda un
@@ -648,7 +568,6 @@ def esperas_de_apertura(mensajes: list[dict], ticket: dict,
     se borro por imposible, y afirmar abandono mirando un solo ticket es el falso positivo
     que ya nos comimos una vez.
     """
-    firmas = firmas_del_negocio(mensajes) if firmas is None else firmas
     out = []
     for frag in partir_en_interacciones(mensajes):
         reales = [m for m in frag if not m.get("is_note")]
@@ -676,7 +595,6 @@ def esperas_de_apertura(mensajes: list[dict], ticket: dict,
                        for m in reales
                        if not m.get("from_me") and m["created_at"] <= hasta]
         out.append({**ticket,
-                    "firmas_del_negocio": firmas,
                     "cliente_at": inicio,
                     "respuesta_at": primera_op,
                     # Sin `messages.user_id` (3 de 1.728) se cae al del ticket: quedarse
@@ -691,16 +609,14 @@ def esperas_de_apertura(mensajes: list[dict], ticket: dict,
 def merece_alerta_de_espera(d: dict, llm=None) -> bool:
     """El VIP espero de mas por su PRIMERA respuesta, y valia la pena esperarla.
 
-    CUATRO COMPUERTAS, y el orden importa porque las tres primeras son GRATIS:
+    TRES COMPUERTAS, y el orden importa porque las dos primeras son GRATIS:
 
     1. LAS DOS PUNTAS. Sin la hora del cliente o la de la respuesta no hay espera que
        medir, y medir a medias es inventar.
-    2. EL MENSAJE DEL NEGOCIO DISFRAZADO DE CLIENTE (`_es_del_negocio`), que se saca de la
-       lista sin tirar la interaccion.
-    3. EL RELOJ, con `horario.espera_efectiva` -- la MISMA funcion con la que la rubrica
+    2. EL RELOJ, con `horario.espera_efectiva` -- la MISMA funcion con la que la rubrica
        califica agilidad, no una resta propia. Entre el umbral y `TOPE_ESPERA_SEGUNDOS`:
        por debajo no es larga, por encima no es una espera sino otra conversacion.
-    4. QUE EL CLIENTE HUBIERA PEDIDO ALGO **EN TODO LO QUE DIJO MIENTRAS ESPERABA**,
+    3. QUE EL CLIENTE HUBIERA PEDIDO ALGO **EN TODO LO QUE DIJO MIENTRAS ESPERABA**,
        no solo con lo que abrio. Mirar el primer mensaje se comia el peor caso de los
        7 dias: el VIP #2 abrio con "Buenas", siguió con un reclamo de una apuesta mas
        comprobante, insistio dos veces y espero 1 h 18 min -- y la alerta no salia.
@@ -723,16 +639,9 @@ def merece_alerta_de_espera(d: dict, llm=None) -> bool:
     desde, hasta = d.get("cliente_at"), d.get("respuesta_at")
     if desde is None or hasta is None:
         return False
-    # LA PLANTILLA DEL NEGOCIO SE SACA DE LA LISTA, NO MATA LA INTERACCION. Si al lado de
-    # la plantilla mal clasificada hay un pedido real del cliente, ese pedido vale. Sin
-    # mensajes reales despues del filtro, no hubo cliente: no se alerta.
-    msg = [m for m in (d.get("cliente_msgs")
-                       or [{"from_me": False, "is_note": False, "body": d.get("body") or "",
-                            "media_type": d.get("media_type") or "chat"}])
-           if not _es_del_negocio(m.get("body") or "",
-                                  d.get("firmas_del_negocio") or set())]
-    if not msg:
-        return False
+    msg = d.get("cliente_msgs") or [
+        {"from_me": False, "is_note": False, "body": d.get("body") or "",
+         "media_type": d.get("media_type") or "chat"}]
     efectiva = espera_efectiva(desde, hasta)
     if efectiva is None:
         return False
