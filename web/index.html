@@ -328,6 +328,9 @@
   /* El numero del manual adelante: el supervisor los conoce por numero ("el 9 otra vez"). */
   .ecod { display:inline-block; min-width:2.4em; margin-right:.5em; font-weight:700; opacity:.72; font-variant-numeric:tabular-nums; }
   .oks { margin-top:16px; } .ok { font-size:12px; color:var(--r-buena); background:color-mix(in srgb, var(--r-buena) 12%, transparent); padding:7px 11px; border-radius:8px; margin-top:6px; }
+  /* NUNCA con el color de `--r-buena`: esto vive debajo de "Recomendación" y nombra lo que
+     FALTA trabajar. Pintado de verde, una nota deficiente parecia felicitar al operador. */
+  .foco { font-size:12px; color:var(--muted); background:color-mix(in srgb, var(--faint) 12%, transparent); padding:7px 11px; border-radius:8px; }
   .rec { margin-top:16px; } .recbody { font-size:12.5px; background:color-mix(in srgb, var(--faint) 12%, transparent); padding:8px 11px; border-radius:8px; }
   .metagrid { display:grid; grid-template-columns:1fr 1fr; gap:9px 16px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
   .metagrid .m { font-size:11.5px; } .metagrid .m span { color:var(--faint); } .metagrid .m b { font-weight:640; }
@@ -984,9 +987,9 @@
               <div class="recbody">{{ dimRecom(modal.detail.dimensions) }}</div>
               <!-- A que buena practica del manual apunta. Es lo que vuelve el coaching
                    contable en el idioma de ATC. -->
-              <div class="ok" v-if="dimPractica(modal.detail.dimensions)" style="margin-top:6px"
+              <div class="foco" v-if="dimPractica(modal.detail.dimensions)" style="margin-top:6px"
                    :title="dimPractica(modal.detail.dimensions).texto">
-                <b class="ecod">{{ dimPractica(modal.detail.dimensions).codigo }}</b>{{ dimPractica(modal.detail.dimensions).chip || dimPractica(modal.detail.dimensions).texto }}</div></div>
+                <b class="ecod">{{ dimPractica(modal.detail.dimensions).codigo }}</b>{{ dimPractica(modal.detail.dimensions).foco || dimPractica(modal.detail.dimensions).texto }}</div></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
             <div class="est">★ estimada por LLM — no es un dato de la plataforma.</div>
           </div>
@@ -1851,8 +1854,12 @@ createApp({
       const cod = dims && dims.recomendacion_practica;
       if (!cod) return null;
       const p = catalogo.practicas[cod];
-      return p ? { codigo:p.codigo, chip:p.chip, texto:p.texto }
-               : { codigo:cod, chip:"", texto:"" };
+      // EL FOCO, NO EL CHIP. El chip esta en PASADO ("cumplió los tiempos") porque es para
+      // reconocer un logro; aca estamos debajo de "Recomendación", que es lo que FALTA. El
+      // negocio lo vio el 2026-09-01: "sale B10 cumplió con los tiempos cuando sale
+      // deficiente en ese sentido". Fallback al chip para filas viejas del catalogo.
+      return p ? { codigo:p.codigo, foco:p.foco || p.chip, texto:p.texto }
+               : { codigo:cod, foco:"", texto:"" };
     }
     // LOS DOS CASOS QUE ANTES ERAN UN SKIP y ahora llevan nota. Sin esto un supervisor ve una
     // fila de 1 estrella sin motivo y no puede saber por que -- y el `skip_reason` ya no esta,

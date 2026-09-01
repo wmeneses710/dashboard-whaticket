@@ -128,3 +128,56 @@ def test_R3RECARGA_no_se_describe_como_la_carga_en_curso():
     assert "en curso" not in RESPUESTAS_RAPIDAS["R3RECARGA"].lower()
     assert "en curso" in RESPUESTAS_RAPIDAS["R1SOLICITUDDECARGA"].lower() or \
            "proceso" in RESPUESTAS_RAPIDAS["R1SOLICITUDDECARGA"].lower()
+
+
+# --- UNA PRACTICA TIENE DOS CARAS (2026-09-01) ------------------------------
+#
+# BUG REPORTADO POR EL NEGOCIO: *"sale B10 cumplió con los tiempos cuando sale deficiente
+# en ese sentido"*. En el detalle de una nota de 2 estrellas por tardar, debajo del titulo
+# **Recomendacion**, aparecia un chip VERDE (`class="ok"`, color `--r-buena`) que decia
+# "B10 cumplió los tiempos". La rubrica lo castigaba por lento y la pantalla lo felicitaba
+# por rapido, en la misma tarjeta.
+#
+# LA CAUSA: `PRACTICAS` se escribio como "el espejo positivo, para aciertos[]", asi que sus
+# `chip` estan en PASADO -- son logros ("cumplió los tiempos", "leyó todo antes de
+# responder"). Pero `catalogo_coaching` usa el MISMO codigo para decir a que practica APUNTA
+# un consejo, que es lo contrario: lo que falta trabajar. Un solo texto para los dos usos no
+# alcanza, porque el sentido se invierte.
+#
+# `foco` es la otra cara: la practica en INFINITIVO, que es como se nombra un objetivo.
+
+def test_toda_practica_tiene_las_DOS_caras():
+    from src.catalogo_atc import PRACTICAS
+    for p in PRACTICAS:
+        assert p.chip, p.codigo
+        assert p.foco, f"{p.codigo} no tiene la forma de FOCO y se mostraria en pasado"
+        assert p.chip != p.foco, f"{p.codigo}: el logro y el foco no pueden ser el mismo texto"
+
+
+def test_el_foco_NO_esta_en_pasado_y_el_logro_SI():
+    """La prueba que ataja el bug: un objetivo no se enuncia como algo ya cumplido.
+
+    En español la tilde en la última sílaba marca el pretérito de tercera persona
+    ('cumplió', 'leyó', 'aplicó'). Un `foco` con esa forma es exactamente el defecto.
+    """
+    import re
+    pasado = re.compile(r"\b\w*[áéíóú]\b", re.IGNORECASE)
+    for p in PRACTICAS:
+        assert not pasado.search(p.foco), \
+            f"{p.codigo}: el foco '{p.foco}' está en pasado y se lee como un logro"
+    assert any(pasado.search(p.chip) for p in PRACTICAS), \
+        "los chips SI son logros en pasado: si esto falla, se cambió la cara equivocada"
+
+
+def test_B10_es_el_caso_que_lo_destapo():
+    porcodigo = {p.codigo: p for p in PRACTICAS}
+    assert porcodigo["B10"].chip == "cumplió los tiempos"
+    assert porcodigo["B10"].foco == "cumplir los tiempos"
+
+
+def test_el_catalogo_que_ve_el_tablero_expone_el_foco():
+    """Sin esto el front no tiene con que reemplazarlo y sigue pintando el pasado."""
+    from src.app import catalogo
+    c = catalogo()
+    b10 = next(p for p in c["practicas"] if p["codigo"] == "B10")
+    assert b10["foco"] == "cumplir los tiempos"

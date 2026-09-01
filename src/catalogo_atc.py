@@ -45,12 +45,25 @@ class Falta:
 
 @dataclass(frozen=True)
 class Practica:
-    """Una buena practica del manual: el espejo positivo, para `aciertos[]`."""
+    """Una buena practica del manual. TIENE DOS CARAS y las dos hacen falta.
+
+    `chip` es el LOGRO, en pasado: "cumplió los tiempos". Es para `aciertos[]`, donde se
+    reconoce lo que la persona YA hizo bien.
+
+    `foco` es el OBJETIVO, en infinitivo: "cumplir los tiempos". Es para el coaching, que
+    apunta a la practica que FALTA trabajar.
+
+    UN SOLO TEXTO NO ALCANZA, y costo un bug reportado por el negocio el 2026-09-01: en una
+    nota de 2 estrellas por tardar, debajo de **Recomendacion**, salia un chip verde que
+    decia "B10 cumplió los tiempos". La rubrica lo castigaba por lento y la pantalla lo
+    felicitaba por rapido, en la misma tarjeta. El sentido se invierte segun el contexto.
+    """
 
     codigo: str
-    chip: str
-    texto: str
-    senal: str | None = None
+    chip: str                  # el LOGRO, en pasado -- para `aciertos[]`
+    texto: str                 # VERBATIM del manual -- no editar
+    senal: str | None = None   # funcion determinista que ya lo detecta, si existe
+    foco: str = ""             # el OBJETIVO, en infinitivo -- para el coaching
 
 
 # --- LOS DOCE ERRORES CRITICOS ----------------------------------------------------
@@ -106,31 +119,43 @@ ERRORES: tuple[Falta, ...] = (
 # de ellos, y son las que el supervisor reconoce.
 PRACTICAS: tuple[Practica, ...] = (
     Practica("B01", "leyó todo antes de responder",
-             "Leer y analizar completamente cada mensaje antes de responder."),
+             "Leer y analizar completamente cada mensaje antes de responder.",
+             foco="leer todo antes de responder"),
     Practica("B02", "respondió claro y ordenado",
-             "Responder de forma clara, directa y ordenada."),
+             "Responder de forma clara, directa y ordenada.",
+             foco="responder claro y ordenado"),
     Practica("B03", "tono cordial y empático",
-             "Mantener un tono cordial, profesional y empático en todo momento."),
+             "Mantener un tono cordial, profesional y empático en todo momento.",
+             foco="sostener el tono cordial"),
     Practica("B04", "usó el nombre del cliente",
-             "Usar el nombre del cliente o su seudónimo cuando sea apropiado."),
+             "Usar el nombre del cliente o su seudónimo cuando sea apropiado.",
+             foco="usar el nombre del cliente"),
     Practica("B05", "verificó el dato sensible",
-             "Verificar dos veces cualquier dato sensible antes de proceder."),
+             "Verificar dos veces cualquier dato sensible antes de proceder.",
+             foco="verificar el dato sensible"),
     Practica("B06", "documentó con nota interna",
-             "Documentar todas las acciones con notas internas claras."),
+             "Documentar todas las acciones con notas internas claras.",
+             foco="documentar con nota interna"),
     Practica("B07", "usó la respuesta rápida correcta",
-             "Utilizar las respuestas rápidas correctas sin modificar su contenido."),
+             "Utilizar las respuestas rápidas correctas sin modificar su contenido.",
+             foco="usar la respuesta rápida correcta"),
     Practica("B08", "aplicó las etiquetas",
-             "Aplicar etiquetas adecuadas y mantenerlas actualizadas."),
+             "Aplicar etiquetas adecuadas y mantenerlas actualizadas.",
+             foco="aplicar las etiquetas"),
     Practica("B09", "avisó la transferencia",
-             "Informar al cliente cuando su caso será transferido."),
+             "Informar al cliente cuando su caso será transferido.",
+             foco="avisar la transferencia"),
     Practica("B10", "cumplió los tiempos",
              "Cumplir con los tiempos de respuesta establecidos.",
-             senal="espera <= AGIL"),
+             senal="espera <= AGIL",
+             foco="cumplir los tiempos"),
     Practica("B11", "mantuvo el control emocional",
-             "Mantener siempre el control emocional."),
+             "Mantener siempre el control emocional.",
+             foco="mantener el control emocional"),
     Practica("B12", "cerró bien el chat",
              "Cerrar cada chat de forma correcta y profesional.",
-             senal="operator_asked_and_waited"),
+             senal="operator_asked_and_waited",
+             foco="cerrar bien el chat"),
 )
 
 # --- LAS RESPUESTAS RAPIDAS -------------------------------------------------------

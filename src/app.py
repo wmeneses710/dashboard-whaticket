@@ -209,8 +209,10 @@ def catalogo() -> dict:
     return {
         "errores": [{"codigo": f.codigo, "chip": f.chip, "texto": f.texto,
                      "detalle": f.detalle} for f in ERRORES],
-        "practicas": [{"codigo": p.codigo, "chip": p.chip, "texto": p.texto}
-                      for p in PRACTICAS],
+        # `foco` ademas de `chip`: el coaching apunta a lo que FALTA, y el chip esta en
+        # pasado. Ver la docstring de `Practica`.
+        "practicas": [{"codigo": p.codigo, "chip": p.chip, "texto": p.texto,
+                       "foco": p.foco} for p in PRACTICAS],
         "respuestas_rapidas": RESPUESTAS_RAPIDAS,
     }
 
