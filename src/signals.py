@@ -112,11 +112,33 @@ _ACREDITA_SINTAXIS_RE = re.compile(
     # "ya fue realizada/procesada/acreditada" -- el hueco de la copula `fue`
     r"|\bya\s+fue\s+(realizad|procesad|acreditad|cargad|abonad)[oa]"
     # "ya tienes tu recarga"
-    r"|\bya\s+(tienes|tiene|ten[eé]s)\s+(tu|su)\s+(recarga|carga|saldo)\b",
+    r"|\bya\s+(tienes|tiene|ten[eé]s)\s+(tu|su)\s+(recarga|carga|saldo)\b"
+    # QUINTO HUECO (2026-09-01): la MISMA sintaxis SIN el "ya". Los patrones de arriba
+    # anclan en el adverbio, y el adverbio es opcional en el idioma: "esta lista su
+    # recarga" dice exactamente lo mismo que "ya esta lista su recarga" y no matcheaba.
+    #   "Esta lista su recarga"      -> copula + atributo + sujeto, sin "ya"
+    #   "Su recarga esta lista"      -> sujeto + copula + atributo, sin "ya"
+    #   "Lista su recarga, estimado" -> con la copula elidida, que es como se habla
+    # `esta\b` es deliberado: sin el borde, "estara lista su recarga" (futuro) entraria.
+    r"|\b(est[aá]|qued[oó])\b\s+(list[oa]s?)\s+(su|tu|el|la)\s+(recarga|carga|saldo)\b"
+    r"|^\s*list[oa]s?\s+(su|tu|el|la)\s+(recarga|carga|saldo)\b"
+    r"|\b(su|tu|el|la)\s+(recarga|carga|saldo)\s+(est[aá]|qued[oó])\b\s+list[oa]"
+    # "su recarga ha quedado exitosa": `_ACREDITA_SALDO_RE` pide `recarga exitosa`
+    # ADYACENTE, y el participio compuesto mete dos palabras en el medio.
+    r"|\b(su|tu|la)\s+(recarga|carga)\s+(ha\s+)?qued[oó]\s+exitos[oa]"
+    r"|\b(su|tu|la)\s+(recarga|carga)\s+ha\s+quedado\s+exitos[oa]",
     re.IGNORECASE)
 
 # Un "listo" seco confirma; un "listo" seguido de otra instruccion, no.
-_LISTO_RE = re.compile(r"^\s*listo\b", re.IGNORECASE)
+#
+# LA COPULA ES OPCIONAL (2026-09-01). El patron viejo aceptaba "Listo" pelado y rechazaba
+# "Esta listo", que es la misma frase con el verbo escrito. Una incoherencia de forma, no de
+# significado: si "Listo" alcanza para confirmar, "Esta listo" alcanza igual. Medido sobre
+# las 4.148 interacciones de `deposito`: 58 mensajes dicen "esta listo" y NINGUNO de los 40
+# giros distintos del corpus con `list[oa]` es un falso positivo -- no existe "esta listo su
+# comprobante" ni "cuando este listo". El tope de 3 palabras y el corte por fin de oracion
+# (no por coma) siguen siendo los que frenan "Listo, enviame tu usuario para...".
+_LISTO_RE = re.compile(r"^\s*(ya\s+)?(est[aá]\s+)?list[oa]\b", re.IGNORECASE)
 # La negacion invalida la frase entera.
 _NEGACION_RE = re.compile(
     r"\b(no|aun no|a[uú]n no|todav[ií]a no|nunca)\b", re.IGNORECASE)
@@ -166,8 +188,13 @@ def _frases(body: str) -> list[str]:
 
     La coma es justamente donde vive el falso positivo: "Listo, enviame tu usuario"
     sigue siendo una sola idea y no confirma nada.
+
+    La apertura `¡¿` se descarta: es signo de la frase, no contenido. Al no ser un corte,
+    quedaba PEGADA al inicio ("¡Esta listo") y rompia todo patron anclado en `^` -- por eso
+    "¡Esta listo!" no confirmaba y "Esta listo." si, con el mismo texto adentro.
     """
-    return [f.strip() for f in re.split(r"[.!?\n]+", body or "") if f.strip()]
+    return [t for f in re.split(r"[.!?\n]+", body or "")
+            if (t := f.strip().lstrip("¡¿ \t"))]
 
 
 def operator_acreditacion(messages: list[dict]) -> bool:

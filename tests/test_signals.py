@@ -178,6 +178,46 @@ def test_listo_solo_cuenta_si_es_un_acuse_seco():
                 "el saldo bono")]) is False
 
 
+def test_la_copula_es_OPCIONAL_en_el_listo_seco():
+    """QUINTO HUECO (2026-09-01): "Listo" confirmaba y "Esta listo" no, con el mismo texto.
+
+    Una incoherencia de forma. Y no era menor: de las 111 interacciones de `deposito` que
+    usan esta familia de frases, 101 son de UNA operadora, y su promedio caia de 3,75 a
+    2,82 solo por escribir el verbo. La rubrica no la estaba midiendo a ella: no le entendia.
+    """
+    for texto in ("Esta listo", "¡Esta listo!", "Ya esta listo", "Esta lista"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+    # El tope de 3 palabras sigue siendo el freno.
+    assert operator_acreditacion([_agent("Esta listo el formulario, completelo")]) is False
+    assert operator_acreditacion([_agent("¿Esta listo para jugar?")]) is False
+
+
+def test_acreditacion_con_sujeto_y_SIN_el_adverbio_ya():
+    """El "ya" es opcional en el idioma: "esta lista su recarga" dice lo mismo."""
+    for texto in ("Esta lista su recarga", "Su recarga esta lista",
+                  "Lista su recarga estimado", "Cesar, su carga esta lista",
+                  "Ya esta listo el saldo bro", "¡Su recarga ha quedado exitosa!",
+                  "Su recarga quedo exitosa"):
+        assert operator_acreditacion([_agent(texto)]) is True, texto
+
+
+def test_el_futuro_y_el_acuse_frenan_al_listo_con_sujeto():
+    """El hueco se abrio SIN abrir la puerta del acuse: es lo unico que importa acá."""
+    for texto in ("En breve estara lista su recarga",
+                  "Su recarga estara lista en unos minutos",
+                  "Todavia no esta lista su recarga",
+                  "Aun no esta lista su recarga",
+                  "Ya esta su recarga en proceso",
+                  "Cuando este listo le aviso"):
+        assert operator_acreditacion([_agent(texto)]) is False, texto
+
+
+def test_la_apertura_de_exclamacion_no_rompe_los_patrones_anclados():
+    """`¡` no es un corte de frase, asi que quedaba PEGADA al inicio y mataba el `^`."""
+    assert operator_acreditacion([_agent("¡Listo amiga!")]) is True
+    assert operator_acreditacion([_agent("¡Lista su recarga!")]) is True
+
+
 def test_el_acuse_NO_es_acreditacion():
     for texto in ("Estamos verificando tu comprobante. Tu recarga se reflejará en breve.",
                   "🔜 Tu solicitud de recarga está siendo procesada",
