@@ -78,6 +78,9 @@ class Turno:
     respuesta_at: datetime | None
     es_pedido: bool     # el bloque exige respuesta (ver es_pedido)
     en_horario: bool    # el pedido entro dentro del horario de operacion
+    # SI EL BLOQUE TRAIA UN ADJUNTO REAL. Es lo unico que autoriza a la nota a hablar de
+    # "la operacion" y "el comprobante": sin adjunto no hay transaccion que confirmar.
+    con_comprobante: bool = False
 
     @property
     def espera(self) -> timedelta | None:
@@ -192,6 +195,8 @@ def turnos_de_agilidad(messages: list[dict]) -> list[Turno]:
             respuesta_at=respuesta,
             es_pedido=es_pedido(bloque),
             en_horario=_en_horario(inicio),
+            con_comprobante=any(is_real_media(m.get("media_type"))
+                                for m in bloque if _es_real(m)),
         ))
     return out
 
@@ -262,10 +267,20 @@ def calificar_agilidad(messages: list[dict]) -> Agilidad:
         return Agilidad(
             stars=1, label="mala", turnos_pedido=len(pedidos), peor_espera=peor,
             sin_respuesta=len(abandonados),
+            # LA SEGUNDA MITAD SOLO SI ES CIERTA. Era una cadena FIJA, y en una charla sin
+            # transaccion afirmaba dos hechos que nadie verifico: que habia una operacion
+            # que confirmar y un comprobante que enviar. CASO `8f2ac860`, traido por el
+            # negocio: una invitacion a una CAPACITACION -- sin dinero de por medio-- salio
+            # con "el operador tampoco confirmó la operación ni envió el comprobante". La
+            # estrella estaba bien (el agente quedo sin respuesta); el texto, no. Un
+            # supervisor que lee eso, abre la charla y no encuentra transaccion deja de
+            # creerle al sistema entero, y tiene razon.
             rationale=f"{plural(len(abandonados), 'pedido')} del agente "
-                      f"{'quedó' if len(abandonados) == 1 else 'quedaron'} sin respuesta, "
-                      "y en esa interacción el operador tampoco confirmó la operación "
-                      "ni envió el comprobante.",
+                      f"{'quedó' if len(abandonados) == 1 else 'quedaron'} sin respuesta"
+                      + (", y en esa interacción el operador tampoco confirmó la operación "
+                         "ni envió el comprobante."
+                         if any(t.con_comprobante for t in abandonados)
+                         else ": se cerró la conversación sin contestarle."),
         )
     if peor is None:
         # Todos los pedidos quedaron sin respuesta PERO el operador ya habia confirmado:

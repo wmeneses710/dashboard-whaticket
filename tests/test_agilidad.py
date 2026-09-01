@@ -538,3 +538,48 @@ def test_el_rationale_del_1_no_habla_de_TODA_la_conversacion():
     bajo = r.rationale.lower()
     assert "toda la conversación" not in bajo and "toda la conversacion" not in bajo
     assert "interacc" in bajo or "esa" in bajo, r.rationale
+
+
+# --- LA NOTA NO PUEDE INVENTAR UNA TRANSACCION (2026-09-01) -----------------
+#
+# BUG REPORTADO POR EL NEGOCIO sobre la interaccion `8f2ac860`: la operadora invito a un
+# agente a una CAPACITACION ("te esperamos a la capacitación para ser Agente de Sorti365,
+# hora 9:00 am, link meet.google.com/..."), el agente dijo "no puedo ingresar", ella pidio
+# el nombre, el agente respondio "no soy majo soy lenin" y nadie le contesto en 2 horas.
+#
+# La estrella esta BIEN: el agente quedo sin respuesta y sin poder entrar. Lo que estaba mal
+# era el texto, que decia *"el operador tampoco confirmó la operación ni envió el
+# comprobante"* -- en una conversacion donde no hubo dinero, ni operacion, ni comprobante
+# que enviar. Era una cadena FIJA pegada al final, sin mirar el bloque.
+#
+# Es el mismo defecto de `signals.operator_acreditacion`: afirmar un hecho que nadie
+# verifico. Un supervisor que lee eso, abre la charla y no encuentra ninguna transaccion
+# deja de creerle al sistema entero -- y con razon.
+
+def test_sin_comprobante_la_nota_NO_habla_de_comprobante():
+    """El agente escribio, nadie le contesto, y no hubo transaccion en el medio."""
+    msgs = [
+        _op(0, "Buen día, te esperamos a la capacitación. Hora: 9:00 am"),
+        _cli(37, "Hola no puedo ingresar"),
+        _op(39, "Estimado, ¿con qué nombre se está intentando conectar?"),
+        _cli(45, "No soy majo soy lenin"),
+    ]
+    a = calificar_agilidad(msgs)
+    assert a.stars == 1, "la estrella no cambia: el pedido quedó sin respuesta"
+    assert "sin respuesta" in a.rationale
+    for inventado in ("comprobante", "operación", "operacion"):
+        assert inventado not in a.rationale.lower(), \
+            f"la nota afirma '{inventado}' en una charla que no tuvo transacción"
+
+
+def test_CON_comprobante_la_nota_SI_lo_reclama():
+    """Cuando el agente si mandó el comprobante, exigir la confirmación es correcto."""
+    msgs = [
+        _cli(0, "", media="image"),
+        _op(1, "Recibido"),
+        _cli(30, "", media="image"),
+    ]
+    a = calificar_agilidad(msgs)
+    assert a.stars == 1
+    assert "comprobante" in a.rationale, \
+        "acá sí hubo comprobante: reclamar la confirmación es lo correcto"
