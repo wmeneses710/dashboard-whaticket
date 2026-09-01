@@ -249,7 +249,8 @@ def test_score_sessions_batch_cuenta_y_no_aborta_por_una_excepcion(monkeypatch):
 
     monkeypatch.setattr(worker, "score_session_and_store", fake_score)
     counts = score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
-    assert counts == {"evaluated": 1, "skipped": 1, "error": 1, "seen": 3}
+    assert counts == {"evaluated": 1, "skipped": 1, "error": 1, "sin_pendientes": 0,
+                      "seen": 3}
 
 
 def test_run_worker_loop_no_scorea_si_otra_instancia_tiene_el_lock(monkeypatch):
@@ -1453,7 +1454,8 @@ def test_si_el_registrador_falla_el_lote_SIGUE(monkeypatch):
 
     monkeypatch.setattr(worker, "score_session_and_store", fake_score)
     counts = score_sessions_batch(_CtxConn(), llm=None, account="datos", limit=10, op_map={})
-    assert counts == {"evaluated": 2, "skipped": 0, "error": 1, "seen": 3}
+    assert counts == {"evaluated": 2, "skipped": 0, "error": 1, "sin_pendientes": 0,
+                      "seen": 3}
 
 
 # --- EL BARRIDO DE ALERTAS TIENE SU PROPIA CADENCIA (2026-08-31) ------------
@@ -1956,3 +1958,72 @@ def test_el_silencio_se_mide_sobre_mensajes_REALES_no_sobre_notas():
              "body": "*Asignado automáticamente* a Andree"}]
     ahora = base + timedelta(hours=6, minutes=30)
     assert len(worker.interacciones_pendientes([frag], "s", {}, ahora=ahora)) == 1
+
+
+# --- EL RESCORE PARCIAL NO RESCOREABA NADA (2026-09-01) ---------------------
+#
+# BUG DE PRODUCCION, visto en el log a los pocos minutos del primer `--aplicar`:
+#
+#     [worker] error sesion 67678a05-2245-4342-8ec4-1e3279bfc862 (datos): KeyError: None
+#       File "/app/src/worker.py", line 849, in score_sessions_batch
+#         counts[eval_status] += 1
+#
+# `PENDING_SESSIONS_SQL` tiene una rama que levanta la sesion cuando `rescore_pedido_at >
+# scored_at`. Pero `interacciones_pendientes` decide que recalificar mirando SOLO
+# `ya_calificadas`, que venia de `_notas_de_la_sesion` y no sabia nada del pedido: veia una
+# interaccion con `scored_at >= fin` y la saltaba. El `for` no iteraba nunca, la funcion
+# devolvia su `(None, None, None)` inicial y `counts[None]` reventaba.
+#
+# EL CRASH ERA LO DE MENOS. `rescore_pedido_at` seguia mayor que `scored_at`, asi que la
+# sesion volvia a salir pendiente el ciclo siguiente y volvia a fallar: 118 sesiones girando
+# para siempre sin recalificar una sola fila. La cola de rescore era un no-op con ruido.
+#
+# Se arregla en el ORIGEN: una fila con rescore pedido no entra en `ya_calificadas`, asi que
+# `interacciones_pendientes` la trata como si no tuviera nota. Es la misma condicion de
+# "servida" que documenta `scripts/pedir_rescore.py` (`scored_at >= rescore_pedido_at`),
+# escrita una sola vez del lado del worker.
+
+def test_una_fila_con_rescore_pedido_NO_cuenta_como_ya_calificada():
+    from src.worker import _notas_de_la_sesion
+    cur = _FakeCursor(rows=[])
+    _notas_de_la_sesion(cur, "s1")
+    sql = " ".join(str(cur.executed[0][0]).split())
+    assert "rescore_pedido_at IS NULL OR rescore_pedido_at <= scored_at" in sql
+
+
+def test_la_interaccion_con_rescore_pedido_vuelve_a_la_cola():
+    """El efecto de lo anterior, del lado de `interacciones_pendientes`: si la fila no esta
+    en `ya_calificadas`, se recalifica aunque tenga nota en la base."""
+    from src.worker import interacciones_pendientes
+    ini = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
+    frag = [{"created_at": ini, "from_me": False, "is_note": False, "body": "hola"},
+            {"created_at": ini + timedelta(seconds=30), "from_me": True, "is_note": True,
+             "body": "*resuelto*"}]
+    iid = worker.interaccion_id_de("s1", ini)
+    ahora = ini + timedelta(hours=2)
+    # servida: tiene nota posterior al fin -> no se toca
+    ya = {iid: ini + timedelta(minutes=5)}
+    assert interacciones_pendientes([frag], "s1", ya, ahora=ahora) == []
+    # con rescore pedido `_notas_de_la_sesion` NO la devuelve -> vuelve a la cola
+    assert len(interacciones_pendientes([frag], "s1", {}, ahora=ahora)) == 1
+
+
+def test_una_sesion_SIN_NADA_PENDIENTE_no_tumba_el_lote():
+    """La segunda mitad del bug: `(None, None, None)` es un no-op legitimo, no un error.
+
+    Pasa cuando la sesion sale pendiente por `end_at` pero todas sus interacciones siguen
+    ABIERTAS (sin evento terminal y sin `SILENCIO_MAX`). Existia desde antes del rescore;
+    el rescore solo lo volvio constante. Se cuenta aparte para que se VEA: si esto crece,
+    algo esta levantando sesiones que no tienen trabajo.
+    """
+    from src import worker
+    conn = _CtxConn()
+    pendientes = [{"session_id": "s1"}, {"session_id": "s2"}]
+    worker.fetch_pending_sessions = lambda cur, account, limit: pendientes
+    worker.build_operator_map = lambda cur: {}
+    worker.build_lineas_map = lambda cur: {}
+    worker.score_session_and_store = lambda *a, **k: (None, None, None)
+    c = worker.score_sessions_batch(conn, None, "datos", 10)
+    assert c["error"] == 0
+    assert c["sin_pendientes"] == 2
+    assert c["seen"] == 2

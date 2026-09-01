@@ -450,9 +450,25 @@ def score_session_and_store(conn, sess: dict, llm, op_map: dict,
 
 
 def _notas_de_la_sesion(cur, session_id) -> dict:
-    """`interaccion_id -> scored_at` de lo que ya tiene nota en esta sesion."""
+    """`interaccion_id -> scored_at` de lo que ya tiene nota Y NO tiene rescore pedido.
+
+    LA FILA CON RESCORE PEDIDO SE OMITE A PROPOSITO, y es el corazon del rescore parcial:
+    `interacciones_pendientes` decide que recalificar mirando este dict, asi que sacarla de
+    aca es exactamente decirle "esta no tiene nota, calificala de nuevo".
+
+    SIN ESTO EL RESCORE ERA UN NO-OP CON RUIDO (bug de produccion 2026-09-01, `KeyError:
+    None` en el primer `--aplicar`). `PENDING_SESSIONS_SQL` levantaba la sesion por la rama
+    del pedido, esta funcion devolvia la interaccion como ya calificada, el bucle de
+    `score_session_and_store` no iteraba nunca y la sesion volvia a salir pendiente el ciclo
+    siguiente. Para siempre, sin recalificar una sola fila.
+
+    La condicion es la MISMA que documenta `scripts/pedir_rescore.py` ("queda servida cuando
+    `scored_at >= rescore_pedido_at`"), escrita una sola vez del lado del worker.
+    """
     cur.execute("SELECT interaccion_id::text, scored_at FROM conversation_scores "
-                "WHERE session_id = %s", (session_id,))
+                "WHERE session_id = %s "
+                "AND (rescore_pedido_at IS NULL OR rescore_pedido_at <= scored_at)",
+                (session_id,))
     return {f[0]: f[1] for f in cur.fetchall()}
 
 
@@ -841,12 +857,19 @@ def score_sessions_batch(conn, llm, account: str, limit: int, op_map: dict | Non
             lineas = build_lineas_map(cur)
     with conn.cursor() as cur:
         pending = fetch_pending_sessions(cur, account, limit)
-    counts = {"evaluated": 0, "skipped": 0, "error": 0, "seen": len(pending)}
+    counts = {"evaluated": 0, "skipped": 0, "error": 0, "sin_pendientes": 0,
+              "seen": len(pending)}
     for sess in pending:
         try:
             eval_status, _, _ = score_session_and_store(conn, sess, llm, op_map,
                                                         recommender, lineas=lineas)
-            counts[eval_status] += 1
+            # `None` es el retorno inicial de `score_session_and_store`: la sesion salio
+            # pendiente pero no tenia NINGUNA interaccion para calificar. Es un no-op
+            # legitimo -- pasa cuando todas siguen abiertas (sin evento terminal y sin
+            # `SILENCIO_MAX`) -- y hasta el 2026-09-01 reventaba el lote con `KeyError:
+            # None`. Se cuenta aparte en vez de tragarse: si esto crece, algo esta
+            # levantando sesiones que no tienen trabajo, y eso hay que poder verlo.
+            counts["sin_pendientes" if eval_status is None else eval_status] += 1
         except Exception as e:  # noqa: BLE001 - no abortar el lote por una sesion
             # rollback: si el fallo fue DB-side, la txn queda abortada y cascadearia
             # al resto del lote (InFailedSqlTransaction) sin este reset.
@@ -1104,8 +1127,10 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
                     seen += c["seen"]
                     if c["seen"]:
                         rate = (c["evaluated"] / dt * 60) if dt > 0 else 0.0
+                        vacias = (f" vacias={c['sin_pendientes']}"
+                                  if c.get("sin_pendientes") else "")
                         emit(f"[worker] {account}: eval={c['evaluated']} skip={c['skipped']} "
-                             f"err={c['error']} · {dt:.0f}s ({rate:.1f} eval/min)")
+                             f"err={c['error']}{vacias} · {dt:.0f}s ({rate:.1f} eval/min)")
                 # Pase de conversión (determinista): cada ~30min, no cada ciclo.
                 if time.time() - last_conv >= _CONV_REFRESH_SECONDS:
                     for account in cfg.scoring_accounts:
