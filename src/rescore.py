@@ -95,3 +95,33 @@ def clasificar(cur, ids: list[str]) -> dict[str, list[str]]:
         pendientes = [i for i in pendientes if i not in encontrados]
     out["sin_match"] = pendientes
     return out
+
+
+# --- EL ESTADO DE LA COLA -------------------------------------------------------------
+#
+# SOLO LECTURA, y eso es la mitad del punto. Antes, la unica forma de contar lo pendiente
+# era correr `--deshacer` en seco: un `--aplicar` de mas ahi borra la cola entera. Preguntar
+# como va algo no puede compartir comando con destruirlo.
+#
+# `pendientes` es EXACTAMENTE lo que el worker todavia debe: la misma condicion de "servida"
+# (`scored_at >= rescore_pedido_at`) que lee `worker._notas_de_la_sesion`. Si ese numero no
+# baja entre dos corridas, la cola no esta avanzando -- y eso es un bug, no una espera.
+_ESTADO_SQL = """
+SELECT count(*) FILTER (WHERE rescore_pedido_at > scored_at),
+       count(DISTINCT conversation_id) FILTER (WHERE rescore_pedido_at > scored_at),
+       count(*) FILTER (WHERE rescore_pedido_at <= scored_at),
+       count(DISTINCT conversation_id) FILTER (WHERE rescore_pedido_at <= scored_at),
+       max(scored_at) FILTER (WHERE rescore_pedido_at <= scored_at),
+       max(rescore_pedido_at)
+  FROM conversation_scores
+ WHERE rescore_pedido_at IS NOT NULL
+"""
+
+
+def estado(cur) -> dict:
+    """Cuanto falta y cuanto se hizo de los rescores pedidos. No escribe nada."""
+    cur.execute(_ESTADO_SQL)
+    f = cur.fetchone() or (0, 0, 0, 0, None, None)
+    return {"pendientes": f[0], "pendientes_sesiones": f[1],
+            "servidas": f[2], "servidas_sesiones": f[3],
+            "ultima_servida": f[4], "ultimo_pedido": f[5]}

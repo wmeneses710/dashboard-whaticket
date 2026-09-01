@@ -144,3 +144,38 @@ def test_la_condicion_compara_como_TEXTO_y_no_como_uuid():
     como `sin_match`."""
     cond, _ = rescore.condicion_por_ids(["aaaaaaaa-0000-4000-8000-000000000001"])
     assert "::text" in cond and "::uuid" not in cond
+
+
+# --- COMO SABER SI LA COLA ESTA AVANZANDO (2026-09-01) ----------------------
+#
+# Faltaba, y la ausencia era un footgun: la unica forma de contar lo que quedaba pendiente
+# era correr `--deshacer` en seco, y un `--aplicar` de mas ahi BORRA la cola entera. Pedir
+# el estado de algo no puede compartir comando con destruirlo.
+
+def test_el_estado_es_de_SOLO_LECTURA():
+    """Nada de esto puede escribir. Es la razon de existir del comando."""
+    junto = " ".join(rescore._ESTADO_SQL.upper().split())
+    for peligro in ("UPDATE", "DELETE", "INSERT", "TRUNCATE", "DROP"):
+        assert peligro not in junto, peligro
+
+
+def test_el_estado_separa_lo_PENDIENTE_de_lo_ya_SERVIDO():
+    """`scored_at >= rescore_pedido_at` es la condicion de servida, la misma que lee el
+    worker en `_notas_de_la_sesion`. Si `pendientes` no baja, la cola no esta corriendo."""
+    class _Cur:
+        def execute(self, sql, params=None):
+            self.sql = sql
+
+        def fetchone(self):
+            return (7, 3, 254, 115, "2026-09-01T16:00:00", "2026-09-01T15:00:00")
+    r = rescore.estado(_Cur())
+    assert r["pendientes"] == 7 and r["pendientes_sesiones"] == 3
+    assert r["servidas"] == 254 and r["servidas_sesiones"] == 115
+    assert r["ultima_servida"] == "2026-09-01T16:00:00"
+
+
+def test_pedir_el_estado_y_pedir_el_borrado_JUNTOS_se_rechaza():
+    """Y se rechaza ANTES de conectarse: si llegara a la base, ya seria tarde."""
+    from scripts import pedir_rescore
+    assert pedir_rescore.main(["--estado", "--aplicar"]) == 2
+    assert pedir_rescore.main(["--estado", "--deshacer"]) == 2

@@ -50,7 +50,7 @@ import sys
 import psycopg
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from src.rescore import clasificar, condicion_por_ids, parse_uuids  # noqa: E402
+from src.rescore import clasificar, condicion_por_ids, estado, parse_uuids  # noqa: E402
 
 # Sin condicion no se marca NADA. Un `WHERE true` accidental encola la tabla entera y eso
 # es exactamente el rescore de 369 dias que este script viene a evitar.
@@ -95,9 +95,18 @@ def main(argv=None) -> int:
     ap.add_argument("--aplicar", action="store_true", help="escribe (sin esto, solo cuenta)")
     ap.add_argument("--deshacer", action="store_true",
                     help="borra los pedidos que todavia NO fueron servidos")
+    ap.add_argument("--estado", action="store_true",
+                    help="cuanto falta de la cola. SOLO LECTURA, no escribe nunca")
     ap.add_argument("--dsn", default=os.environ.get("DATABASE_URL"))
     a = ap.parse_args(argv)
 
+    # ANTES DE CONECTARSE: si una consulta de estado llegara a la base con un flag de
+    # escritura pegado, ya seria tarde. Preguntar como va la cola no comparte comando con
+    # borrarla, y el parser lo hace cumplir.
+    if a.estado and (a.aplicar or a.deshacer):
+        print("--estado es de solo lectura: no se combina con --aplicar ni --deshacer.",
+              file=sys.stderr)
+        return 2
     if not a.dsn:
         print("falta DATABASE_URL (o --dsn)", file=sys.stderr)
         return 2
@@ -106,6 +115,20 @@ def main(argv=None) -> int:
     if por_ids and a.condicion:
         print("elegí una cosa: o la lista de ids, o la condicion.", file=sys.stderr)
         return 2
+
+    if a.estado:
+        with psycopg.connect(a.dsn, connect_timeout=8) as conn, conn.cursor() as cur:
+            r = estado(cur)
+        print(f"  PENDIENTES ....... {r['pendientes']:>5} filas  "
+              f"({r['pendientes_sesiones']} sesiones)   <- lo que el worker todavia debe")
+        print(f"  ya rescoreadas ... {r['servidas']:>5} filas  "
+              f"({r['servidas_sesiones']} sesiones)")
+        print(f"  ultimo pedido .... {r['ultimo_pedido']}")
+        print(f"  ultima servida ... {r['ultima_servida']}")
+        if r["pendientes"]:
+            print("\nCorrelo de nuevo en un rato: si PENDIENTES no baja, la cola no esta "
+                  "avanzando y eso es un bug, no una espera.")
+        return 0
 
     params, ids = None, []
     if a.deshacer:
