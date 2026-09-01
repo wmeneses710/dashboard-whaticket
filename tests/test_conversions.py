@@ -65,9 +65,11 @@ def test_refresh_upsert_determinista_scopeado_por_cuenta(monkeypatch):
     # señal de depósito determinista (comprobante+recarga), sin LLM
     assert "%(re)s" in query and params["re"] == conv.RECHARGE_PATTERN
     assert params["account"] == "sistemas" and params["qids"] == ["q1", "q2"]
-    # attention viene del SCORE DE SESION (determinista, sin LLM): LEFT JOIN a
-    # conversation_scores por la conversación de ENTRADA + upsert de attention.
-    assert "conversation_scores cs" in query
+    # attention viene del SCORE (determinista, sin LLM) de la conversación de ENTRADA.
+    # Ya NO se joinea `conversation_scores` directo: desde el cambio de grano tiene una
+    # fila por INTERACCION y multiplicaba el upsert (ver el test de cardinalidad abajo).
+    assert "score_de_entrada cs" in query
+    assert "FROM conversation_scores" in query
     assert "cs.conversation_id = fc.first_conversation_id" in query
     assert "cs.atencion" in query
     # COALESCE: no pisar un attention bueno con NULL cuando la sesion aun no tiene score
@@ -83,3 +85,45 @@ def test_refresh_upsert_determinista_scopeado_por_cuenta(monkeypatch):
     assert "returned = EXCLUDED.returned" in query
     assert "return_session_id = EXCLUDED.return_session_id" in query
     assert "coalesce(spc.n_sessions, 0) > 1" in query
+
+
+# --- EL GRANO CAMBIO Y ESTA CONSULTA NO SE ENTERO (2026-09-01) --------------
+#
+# BUG DE PRODUCCION:
+#
+#     [worker] conversión datos error: CardinalityViolation: ON CONFLICT DO UPDATE
+#     command cannot affect row a second time
+#
+# El upsert tiene `ON CONFLICT (account, contact_id)`, y `conversation_scores` dejo de ser
+# UNA fila por conversacion el 2026-08-27: ahora es una POR INTERACCION. El
+# `LEFT JOIN conversation_scores ON conversation_id = first_conversation_id` abria cada
+# contacto en tantas filas como interacciones tuviera su conversacion de entrada, y
+# Postgres rechaza el comando entero cuando dos filas de la MISMA sentencia chocan en la
+# clave del conflicto.
+#
+# MEDIDO sobre la copia: **526 conversaciones tienen mas de una nota**, la peor 167, y en
+# total generan **5.462 filas duplicadas**. No fallo antes porque hace falta que la
+# conversacion de ENTRADA de alguien junte una segunda interaccion calificada; el pase de
+# conversion corre cada ~30 min y el backlog fue llegando.
+#
+# `first_op`, en la misma consulta, ya resolvia exactamente esto con `DISTINCT ON`. La
+# leccion es de [[probar-la-costura]]: cambiar el grano de una tabla obliga a revisar a
+# TODOS los que la leen, no solo a los que la escriben.
+
+def test_el_join_con_los_scores_NO_puede_multiplicar_filas():
+    """Cualquier lectura de `conversation_scores` acá tiene que venir deduplicada."""
+    from src.conversions import _REFRESH_SQL
+    sql = " ".join(_REFRESH_SQL.split())
+    assert "ON CONFLICT (account, contact_id)" in sql
+    # el join directo es el bug: tiene que pasar por un CTE con DISTINCT ON
+    assert "LEFT JOIN conversation_scores" not in sql, \
+        "join directo a conversation_scores: multiplica filas por interacción"
+    assert "DISTINCT ON (conversation_id) conversation_id, atencion" in sql
+
+
+def test_el_score_elegido_es_DETERMINISTA():
+    """Sin un orden total, dos corridas eligen atenciones distintas para el mismo contacto
+    y el tablero cambia solo. `interaccion_id` desempata."""
+    from src.conversions import _REFRESH_SQL
+    sql = " ".join(_REFRESH_SQL.split())
+    assert "ORDER BY conversation_id, (atencion IS NULL), interaccion_ini, interaccion_id" in sql

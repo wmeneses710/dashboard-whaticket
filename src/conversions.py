@@ -115,6 +115,22 @@ sessions_per_contact AS (
     JOIN tickets t ON t.id = cs.ticket_id
    WHERE cs.account = %(account)s AND t.contact_id IS NOT NULL
    GROUP BY t.contact_id::text
+),
+-- UNA SOLA NOTA POR CONVERSACION. `conversation_scores` es una fila por INTERACCION desde
+-- el 2026-08-27, asi que el join directo abria cada contacto en tantas filas como
+-- interacciones tuviera su conversacion de entrada y el upsert moria con
+-- CardinalityViolation ("cannot affect row a second time"). MEDIDO sobre la copia: 526
+-- conversaciones con mas de una nota, la peor con 167, 5.462 filas duplicadas en total.
+--
+-- SE ELIGE LA DE ENTRADA, que es la que describe `attention`: el merito de la conversion
+-- es del PRIMER operador (ver `first_op`, que resuelve lo mismo con este mismo patron).
+-- Una nota CON valor le gana a una en NULL --si no, la fila de entrada sin `atencion`
+-- tapaba a la siguiente que si la tenia-- y `interaccion_id` cierra el orden: sin un orden
+-- TOTAL, dos corridas eligen distinto y el tablero cambia solo.
+score_de_entrada AS (
+  SELECT DISTINCT ON (conversation_id) conversation_id, atencion
+    FROM conversation_scores
+   ORDER BY conversation_id, (atencion IS NULL), interaccion_ini, interaccion_id
 )
 SELECT %(account)s, fc.contact_id, fc.first_at, fc.first_conversation_id,
        fo.user_id, fc.channel, 'jugador', coalesce(pd.deposited, false), cs.atencion,
@@ -122,7 +138,7 @@ SELECT %(account)s, fc.contact_id, fc.first_at, fc.first_conversation_id,
   FROM first_conv fc
   LEFT JOIN first_op fo ON fo.conversation_id = fc.first_conversation_id
   LEFT JOIN person_deposit pd ON pd.contact_id = fc.contact_id
-  LEFT JOIN conversation_scores cs ON cs.conversation_id = fc.first_conversation_id
+  LEFT JOIN score_de_entrada cs ON cs.conversation_id = fc.first_conversation_id
   LEFT JOIN sessions_per_contact spc ON spc.contact_id = fc.contact_id
 ON CONFLICT (account, contact_id) DO UPDATE
    SET deposited = EXCLUDED.deposited, user_id = EXCLUDED.user_id,
