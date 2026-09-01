@@ -263,3 +263,78 @@ def test_retiro_el_reloj_arranca_en_el_PRIMER_pedido_de_la_ventana():
     r = calificar_retiro(msgs)
     assert r is not None
     assert r.espera is not None and 9.5 <= r.espera.total_seconds() / 60 <= 10.5, r.espera
+
+
+# --- CAPA 2: no se exige la prueba de algo que NO OCURRIO (2026-09-01) -------
+#
+# `entrega is None` bajaba a 2 estrellas con "nunca envió el comprobante del retiro"
+# DANDO POR SENTADO que habia una entrega que hacer. No siempre la hay:
+#
+#     "El pago queda pendiente para mañana 🍀a partir de las 6am"  -> la plata no salio
+#     "No cuenta con el saldo a retirar"                           -> no hubo retiro
+#
+# En los dos el operador hizo lo correcto (avisar por que) y cobraba 2 estrellas. Es la
+# misma regla que rige la acreditacion: un patron no puede probar una ausencia, y menos la
+# ausencia de una OBLIGACION. La medicion, los tres grupos y por que no se espeja el
+# `_RECHAZO_RE` de `deposito.py` estan en `src/entrega_dudosa.py`.
+
+class _LLMFalso:
+    def __init__(self, respuesta):
+        self.respuesta = respuesta
+        self.llamadas = 0
+
+    def chat_json(self, system, user, schema=None):
+        self.llamadas += 1
+        if isinstance(self.respuesta, Exception):
+            raise self.respuesta
+        return self.respuesta
+
+
+NO_SE_PUDO = "No cuenta con el saldo a retirar"
+
+
+def _sin_comprobante():
+    return [_cli(0, FORMULARIO), _op(1, ACUSE), _op(2, NO_SE_PUDO)]
+
+
+def test_SIN_llm_la_nota_de_retiro_es_la_de_hoy():
+    r = calificar_retiro(_sin_comprobante())
+    assert r.stars == 2 and "nunca envió el comprobante" in r.rationale
+
+
+def test_el_modelo_absuelve_cuando_el_retiro_NO_se_podia_hacer():
+    llm = _LLMFalso({"no_se_podia": True, "frase": NO_SE_PUDO})
+    r = calificar_retiro(_sin_comprobante(), llm=llm)
+    assert llm.llamadas == 1
+    assert r.stars >= 3, "avisar por qué no se puede es hacer bien el trabajo"
+    assert "nunca envió el comprobante" not in r.rationale
+
+
+def test_al_modelo_NO_se_le_pregunta_si_el_comprobante_EXISTE():
+    """EL GUARD ESTRUCTURAL, y lo trajo la medicion. Un caso real del control decia "no
+    corresponde el titular con el numero de cuenta" Y ADEMAS mandaba el comprobante, tarde.
+    Absolverlo seria perdonar una demora real. Donde hay entrega no se pregunta nada."""
+    llm = _LLMFalso({"no_se_podia": True, "frase": NO_SE_PUDO})
+    msgs = [_cli(0, FORMULARIO), _op(1, ACUSE), _op(2, NO_SE_PUDO), _comprobante_op(3)]
+    r = calificar_retiro(msgs, llm=llm)
+    assert llm.llamadas == 0
+    assert "nunca envió el comprobante" not in r.rationale
+
+
+def test_si_el_modelo_dice_que_SI_se_podia_la_nota_no_se_mueve():
+    llm = _LLMFalso({"no_se_podia": False, "frase": ""})
+    r = calificar_retiro(_sin_comprobante(), llm=llm)
+    assert r.stars == 2 and "nunca envió el comprobante" in r.rationale
+
+
+def test_una_cita_INVENTADA_no_absuelve_ningun_retiro():
+    """Un perdón falso le afirma al negocio que no había nada que entregar."""
+    llm = _LLMFalso({"no_se_podia": True, "frase": "el retiro fue rechazado por el banco"})
+    r = calificar_retiro(_sin_comprobante(), llm=llm)
+    assert r.stars == 2 and "nunca envió el comprobante" in r.rationale
+
+
+def test_una_inferencia_que_falla_deja_el_retiro_como_hoy():
+    for fallo in (RuntimeError("timeout"), ValueError("json roto")):
+        r = calificar_retiro(_sin_comprobante(), llm=_LLMFalso(fallo))
+        assert r.stars == 2 and "nunca envió el comprobante" in r.rationale

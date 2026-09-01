@@ -2027,3 +2027,25 @@ def test_una_sesion_SIN_NADA_PENDIENTE_no_tumba_el_lote():
     assert c["error"] == 0
     assert c["sin_pendientes"] == 2
     assert c["seen"] == 2
+
+
+# --- EL AGENTE TAMBIEN TIENE CAPA 2 (2026-09-01) ---------------------------
+#
+# La ruta de agente llamaba a `score_deposito`/`score_retiro` SIN `llm=`, asi que sus 852
+# depositos no tenian la verificacion que si tenia el jugador -- y 14 estaban acusados de
+# "nunca le confirmó", justo la familia que la capa 2 existe para revisar.
+#
+# NO CONTRADICE el "AGENTE: SIEMPRE determinista, SIN LLM" de esa misma rama. Esa regla
+# prohibe el PASE DE SCORING con la vara comercial del jugador (uplift, empujo/pasivo), que
+# topaba el 94% de las sesiones de agente en 3 estrellas. La capa 2 no pone ninguna nota:
+# contesta un hecho con cita verificable y solo puede ABSOLVER.
+
+def test_la_ruta_de_AGENTE_le_pasa_el_llm_a_las_rubricas():
+    import inspect
+    from src import worker as w
+    src = inspect.getsource(w._score_interaccion_y_persiste)
+    dep = [l for l in src.splitlines() if "score_deposito(" in l or 'segmento="agente"' in l]
+    assert any("llm=llm" in l for l in dep), \
+        "el deposito de agente se queda sin capa 2"
+    ret = [l for l in src.splitlines() if "score_retiro(" in l or "segmento=\"agente\"" in l]
+    assert any("llm=llm" in l for l in ret), "el retiro de agente se queda sin capa 2"

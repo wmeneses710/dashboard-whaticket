@@ -222,7 +222,7 @@ def score_by_motivo(
     elif motivo == "retiro":
         from src.retiro import score_retiro
 
-        determinista = score_retiro(target_messages, cierre_at, lineas)
+        determinista = score_retiro(target_messages, cierre_at, lineas, llm=llm)
     elif motivo == "registro":
         from src.registro import score_registro
 

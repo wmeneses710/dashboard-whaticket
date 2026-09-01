@@ -36,6 +36,7 @@ from src.interacciones import interaccion_de
 from src.operators import inicio_del_reloj
 from src.rubrics import formato_espera
 from src.catalogo_coaching import consejo_de
+from src.entrega_dudosa import necesita_revisar, no_se_podia_segun_el_modelo
 from src.scorer import ScoreResult
 from src.signals import (
     _is_operator,
@@ -132,7 +133,7 @@ def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
 
 
 def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None,
-                     segmento: str = "jugador") -> Retiro | None:
+                     segmento: str = "jugador", llm=None) -> Retiro | None:
     """Nota determinista de la sesion. None si no es una transaccion de retiro.
 
     `lineas`: mapa de nuestras lineas (src/redireccion.build_lineas_map), para reconocer la
@@ -213,6 +214,23 @@ def calificar_retiro(messages: list[dict], cierre_at=None, lineas=None,
             "para verificar a qué agencia pertenece.",
             aviso, None, algo_mas, True)
     if entrega is None:
+        # CAPA 2. "Nunca envió el comprobante" da por sentado que HABIA una entrega que
+        # hacer, y el patron no puede probar eso: "no cuenta con el saldo a retirar" o "el
+        # pago queda pendiente para mañana" son retiros que NO OCURRIERON, donde exigir la
+        # prueba es exigir el respaldo de algo que no paso. Se le pregunta al modelo SOLO
+        # aca -- nunca cuando el comprobante existe, porque ahi un rechazo en el medio de
+        # la charla no perdona la demora (caso medido, ver `entrega_dudosa`).
+        # Un fallo devuelve None y la nota queda como hoy: la capa 2 solo puede ABSOLVER.
+        if llm is not None and necesita_revisar(reales) \
+                and no_se_podia_segun_el_modelo(reales, llm) is True:
+            rapido = espera is not None and espera <= RESPUESTA_TOPE
+            return Retiro(
+                4 if rapido else 3, "buena" if rapido else "aceptable",
+                "El retiro no se podía hacer y se lo informó"
+                + (f" en {_mins(espera)}." if rapido
+                   else f", pero tardó {_mins(espera)} en decírselo. "
+                        f"El objetivo son {_mins(RESPUESTA_TOPE)}."),
+                espera, None, algo_mas)
         return Retiro(
             2, "deficiente",
             f"Respondió en {_mins(espera)}, pero nunca envió el comprobante del "
@@ -265,13 +283,17 @@ def _situacion(r: Retiro) -> str | None:
 
 
 def score_retiro(messages: list[dict], cierre_at=None, lineas=None,
-                 segmento: str = "jugador") -> ScoreResult | None:
-    """La nota como ScoreResult, lista para build_score_record. SIN LLM.
+                 segmento: str = "jugador", llm=None) -> ScoreResult | None:
+    """La nota como ScoreResult, lista para build_score_record.
+
+    `llm` es OPCIONAL y solo alimenta la capa 2 (`entrega_dudosa`): sin el, la nota es la
+    de siempre. El modelo no elige la estrella; solo puede desmentir una OBLIGACION que el
+    patron dio por supuesta.
 
     None cuando no es una transaccion: una consulta sobre retiros se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca correspondio.
     """
-    r = calificar_retiro(messages, cierre_at, lineas, segmento)
+    r = calificar_retiro(messages, cierre_at, lineas, segmento, llm=llm)
     if r is None:
         return None
     _consejo = consejo_de("retiro", _situacion(r) or "")

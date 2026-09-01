@@ -632,11 +632,17 @@ def _score_interaccion_y_persiste(conn, sess: dict, msgs: list[dict],
             # agente (ver el relevo en src/deposito.py y src/retiro.py).
             motivo_ag = motivo_de_agente(msgs)
             if motivo_ag == "deposito":
+                # EL `llm` VA, y no contradice el "SIN LLM" de arriba. Eso prohibe el
+                # PASE DE SCORING con la vara comercial del jugador, que topaba el 94% de
+                # las sesiones de agente en 3 estrellas. La capa 2 no pone ninguna nota:
+                # contesta un HECHO con cita verificable y SOLO PUEDE ABSOLVER. Sin esto,
+                # los 852 depositos de agente quedaban sin la verificacion que si tiene el
+                # jugador -- 14 de ellos acusados de "nunca le confirmó".
                 score = score_deposito(msgs, sess.get("resolved_at"), lineas,
-                                       segmento="agente")
+                                       segmento="agente", llm=llm)
             elif motivo_ag == "retiro":
                 score = score_retiro(msgs, sess.get("resolved_at"), lineas,
-                                     segmento="agente")
+                                     segmento="agente", llm=llm)
             elif motivo_ag == "info":
                 score = score_info(msgs, sess.get("resolved_at"))
             else:
