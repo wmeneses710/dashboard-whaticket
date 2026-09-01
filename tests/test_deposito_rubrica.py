@@ -335,3 +335,76 @@ def test_sin_cierres_sigue_siendo_UNA_sola_interaccion():
     msgs = [_comprobante(0), _op(1, ACUSE), _op(3, ACREDITA)]
     d = calificar_deposito(msgs)
     assert d.stars == 4, d.rationale
+
+
+# --- CAPA 2: el modelo, SOLO cuando el patron no vio la confirmacion ----------------------
+#
+# `signals.operator_acreditacion` es un patron, y un patron puede probar PRESENCIA pero nunca
+# AUSENCIA. Los 151 depositos que en 20 dias salieron en 2 estrellas por "nunca le confirmo"
+# tienen confirmacion real en 102 (67,5%). El detalle de la medicion, los dos grupos y por que
+# NO es "todo al modelo" estan en `src/acreditacion_dudosa.py`.
+
+class _LLMFalso:
+    def __init__(self, respuesta):
+        self.respuesta = respuesta
+        self.llamadas = 0
+
+    def chat_json(self, system, user, schema=None):
+        self.llamadas += 1
+        if isinstance(self.respuesta, Exception):
+            raise self.respuesta
+        return self.respuesta
+
+
+# "¡Todo listo!" es un hueco REAL del patron al 2026-09-01: `_LISTO_RE` exige que la frase
+# ARRANQUE con "listo" y aca arranca con "Todo". Salio 4 veces en la medicion, siempre de la
+# misma operadora, siempre cobrando 2 estrellas por una recarga que si habia acreditado.
+TODO_LISTO = "¡Todo listo! 🎉"
+
+
+def _con_acuse_y_confirmacion_invisible():
+    return [_cli(0, "hola"), _comprobante(1), _op(2, ACUSE), _op(3, TODO_LISTO)]
+
+
+def test_SIN_llm_la_nota_es_exactamente_la_de_hoy():
+    """La capa 2 es opcional: sin modelo, el comportamiento no se mueve un milimetro."""
+    a = calificar_deposito(_con_acuse_y_confirmacion_invisible())
+    assert a.stars == 2 and "nunca le confirmó" in a.rationale
+
+
+def test_el_modelo_rescata_la_confirmacion_que_el_patron_no_ve():
+    llm = _LLMFalso({"confirmo": True, "frase": "¡Todo listo!"})
+    a = calificar_deposito(_con_acuse_y_confirmacion_invisible(), llm=llm)
+    assert llm.llamadas == 1
+    assert "nunca le confirmó" not in a.rationale
+
+
+def test_al_modelo_NO_se_le_pregunta_si_el_patron_YA_vio_la_confirmacion():
+    """EL GUARD QUE PROTEGE LA JERGA DEL CRM. En el control de 153 casos el modelo negaba 39
+    confirmaciones buenas y 38 eran 'ing'/'ingreso' -- taquigrafia de este CRM que ningun
+    modelo general adivina. Preguntar igual tiraria 1 de cada 4."""
+    llm = _LLMFalso({"confirmo": False, "frase": ""})
+    a = calificar_deposito([_cli(0, "hola"), _comprobante(1), _op(2, ACREDITA)], llm=llm)
+    assert llm.llamadas == 0
+    assert "nunca le confirmó" not in a.rationale
+
+
+def test_una_inferencia_que_falla_deja_la_nota_como_hoy():
+    for fallo in (RuntimeError("timeout"), ValueError("json roto")):
+        llm = _LLMFalso(fallo)
+        a = calificar_deposito(_con_acuse_y_confirmacion_invisible(), llm=llm)
+        assert a.stars == 2 and "nunca le confirmó" in a.rationale
+
+
+def test_una_cita_INVENTADA_no_rescata_a_nadie():
+    """Una tilde falsa le afirma al negocio una confirmacion que nunca existio, y eso es peor
+    que la nota baja que este cambio viene a arreglar."""
+    llm = _LLMFalso({"confirmo": True, "frase": "su recarga ya fue acreditada"})
+    a = calificar_deposito(_con_acuse_y_confirmacion_invisible(), llm=llm)
+    assert a.stars == 2 and "nunca le confirmó" in a.rationale
+
+
+def test_score_deposito_tambien_acepta_el_modelo():
+    llm = _LLMFalso({"confirmo": True, "frase": "¡Todo listo!"})
+    r = score_deposito(_con_acuse_y_confirmacion_invisible(), llm=llm)
+    assert r is not None and "nunca le confirmó" not in r.rating_rationale

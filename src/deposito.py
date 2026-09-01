@@ -42,6 +42,7 @@ from src.operators import inicio_del_reloj
 from src.rubrics import formato_espera
 from src.catalogo_coaching import consejo_de
 from src.scorer import ScoreResult
+from src.acreditacion_dudosa import confirmo_segun_el_modelo, necesita_revisar
 from src.signals import (
     _is_operator,
     is_real_media,
@@ -192,7 +193,7 @@ def interaccion_juzgada(messages: list[dict]) -> list[dict] | None:
 
 
 def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None,
-                       segmento: str = "jugador") -> Deposito | None:
+                       segmento: str = "jugador", llm=None) -> Deposito | None:
     """Nota determinista de la sesion. None si no es una transaccion de deposito.
 
     `lineas`: mapa de nuestras lineas (src/redireccion.build_lineas_map), para reconocer la
@@ -236,6 +237,15 @@ def calificar_deposito(messages: list[dict], cierre_at=None, lineas=None,
     espera = (espera_efectiva(inicio, max(respuesta["created_at"], inicio))
               if respuesta else None)
     acredito = operator_acreditacion(reales)
+    # CAPA 2. `acredito=False` es la UNICA afirmacion de esta rubrica que sostiene una
+    # AUSENCIA, y un patron no puede probar una ausencia: que no matcheo y que no existe no
+    # son la misma frase. De los 151 depositos que en 20 dias cobraron 2 estrellas por esto,
+    # 102 (67,5%) SI tenian la confirmacion. Se le pregunta al modelo solo aca -- nunca
+    # cuando el patron ya vio la confirmacion, porque ahi el patron sabe la jerga del CRM
+    # ("ing") que el modelo desconoce. La medicion completa esta en `acreditacion_dudosa`.
+    # Un fallo devuelve None y la nota queda como hoy: la capa 2 solo puede ABSOLVER.
+    if not acredito and llm is not None and necesita_revisar(reales):
+        acredito = confirmo_segun_el_modelo(reales, llm) is True
     # EL AGENTE ESTA RELEVADO DE LA PREGUNTA DE CIERRE, textual en el manual: "En
     # conversaciones con agentes, y debido a que muchos no responden despues de recibir la
     # informacion, el operador PUEDE cerrar el chat cuando el caso haya sido resuelto".
@@ -377,14 +387,18 @@ def _situacion(d: Deposito) -> str | None:
 
 
 def score_deposito(messages: list[dict], cierre_at=None, lineas=None,
-                   segmento: str = "jugador") -> ScoreResult | None:
-    """La nota como ScoreResult, lista para build_score_record. SIN LLM.
+                   segmento: str = "jugador", llm=None) -> ScoreResult | None:
+    """La nota como ScoreResult, lista para build_score_record.
+
+    `llm` es OPCIONAL y solo alimenta la capa 2 de acreditacion (`acreditacion_dudosa`): sin
+    el, la nota es exactamente la de siempre. La rubrica sigue siendo determinista; el modelo
+    no elige la estrella, solo puede desmentir una AUSENCIA que el patron no puede probar.
 
     None cuando la sesion no es una transaccion de deposito: ahi decide el caller
     (hoy, el pase con LLM), porque una consulta sobre recargas se juzga por si el
     cliente entendio la respuesta, no por un comprobante que nunca existio.
     """
-    d = calificar_deposito(messages, cierre_at, lineas, segmento)
+    d = calificar_deposito(messages, cierre_at, lineas, segmento, llm=llm)
     if d is None:
         return None
     _consejo = consejo_de("deposito", _situacion(d) or "")

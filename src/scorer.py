@@ -218,7 +218,7 @@ def score_by_motivo(
     if motivo == "deposito":
         from src.deposito import score_deposito
 
-        determinista = score_deposito(target_messages, cierre_at, lineas)
+        determinista = score_deposito(target_messages, cierre_at, lineas, llm=llm)
     elif motivo == "retiro":
         from src.retiro import score_retiro
 
