@@ -151,7 +151,15 @@ _NEGACION_RE = re.compile(
 _FUTURO_RE = re.compile(
     # `ahorita`/`ahora mismo`: el futuro inmediato mas ecuatoriano de todos, y faltaba.
     r"\b(en breve|en un momento|en unos minutos|ya mismo|enseguida|en seguida"
-    r"|ahorita|ahora mismo)\b",
+    r"|ahorita|ahora mismo)\b"
+    # LA SUBORDINADA DE FINALIDAD, que es futuro sin decir "futuro". Encontrada el
+    # 2026-09-01 contrastando el patron contra gemma4:12b sobre 153 depositos que el patron
+    # SI da por confirmados: 39 desacuerdos, 38 eran jerga del CRM y este era el unico
+    # falso positivo REAL. "Debe esperar que culmine el torneo para que se acrediten las
+    # ganancias" -> `_ACREDITA_FUERTE_RE` lee el subjuntivo `acrediten` como un hecho.
+    # Se acota a los verbos del movimiento de dinero: un "para que se" pelado tambien
+    # tacharia "Ya esta listo, para que se divierta". 1 sola ocurrencia en todo el corpus.
+    r"|\bpara\s+que\s+se\s+(acredit|reflej|carg|abon|ingres)",
     re.IGNORECASE)
 
 # LA PROMESA EN PRIMERA PERSONA. "Ya le cargo" es "yo lo cargo, ahora", no "esta cargado", y

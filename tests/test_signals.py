@@ -218,6 +218,22 @@ def test_la_apertura_de_exclamacion_no_rompe_los_patrones_anclados():
     assert operator_acreditacion([_agent("¡Lista su recarga!")]) is True
 
 
+def test_la_subordinada_de_finalidad_no_es_una_acreditacion():
+    """El unico falso positivo REAL del patron en 153 depositos de control (2026-09-01).
+
+    Lo encontro el contraste contra gemma4:12b: de 39 desacuerdos, 38 eran jerga del CRM
+    ("ing") donde el patron tenia razon, y este era el unico donde la tenia el modelo.
+    `_ACREDITA_FUERTE_RE` matchea `acredit\w*` y lee el subjuntivo como un hecho consumado.
+    """
+    assert operator_acreditacion([_agent(
+        "Estimado, debe esperar que culmine el torneo para que se acrediten las "
+        "ganancias")]) is False
+    # No se tacha cualquier "para que se": se acota a los verbos del movimiento de dinero,
+    # porque un "para que se" pelado mataria una confirmacion de verdad.
+    assert operator_acreditacion(
+        [_agent("Ya fue acreditada su recarga para que se divierta")]) is True
+
+
 def test_el_acuse_NO_es_acreditacion():
     for texto in ("Estamos verificando tu comprobante. Tu recarga se reflejará en breve.",
                   "🔜 Tu solicitud de recarga está siendo procesada",
