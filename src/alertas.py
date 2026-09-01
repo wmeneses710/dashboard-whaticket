@@ -67,7 +67,7 @@ import html
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -376,7 +376,11 @@ SELECT cs.interaccion_id::text AS interaccion_id,
        -- `contacts.number` y el operador: por el `username` del CASINO no se puede
        -- buscar. Y la cuenta dice cual de los dos tableros abrir.
        ct.name          AS cliente,
-       cs.account       AS account
+       cs.account       AS account,
+       -- PARA QUEDARSE CON LA DE RECIEN. Sin estas dos, dos interacciones del mismo
+       -- ticket calificadas en el mismo lote salen como dos mensajes seguidos.
+       t.id::text       AS ticket_id,
+       cs.interaccion_fin AS interaccion_fin
 FROM conversation_scores cs
 JOIN tickets t      ON t.id = cs.ticket_id
 LEFT JOIN contacts ct ON ct.id = t.contact_id
@@ -440,6 +444,53 @@ def candidatos_espera_larga(cur, account: str, ahora: datetime | None = None) ->
             if c["cliente_at"] >= corte:
                 out.append(c)
     return out
+
+
+_EPOCA = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _que_tan_reciente(d: dict):
+    """Clave de orden TOTAL: sin fin cuenta como la mas vieja, y el id desempata.
+
+    El desempate no es cosmetico: sin el, dos barridos que reciben las mismas filas en
+    distinto orden silencian interacciones distintas, y una alerta se pierde de a ratos.
+    """
+    fin = d.get("interaccion_fin")
+    return (fin is not None, fin or _EPOCA, str(d.get("interaccion_id")))
+
+
+def solo_la_ultima_por_ticket(pendientes: list[dict]) -> tuple[list[dict], list[dict]]:
+    """`(las que se mandan, las que se callan)`. Una alerta por ticket: la de recien.
+
+    PEDIDO DEL NEGOCIO, textual: *"debe ser alerta de la interaccion, no me interesa la
+    anterior, quiero que me alerte de la de recien"*.
+
+    POR QUE HACE FALTA. Hay una fila POR INTERACCION y el scoring viene atrasado, asi que
+    dos interacciones del mismo ticket nacen calificadas en el MISMO lote. MEDIDO sobre las
+    195 alertas del ledger: de 194 pares consecutivos, **126 llegan a menos de 2 minutos y
+    100 de esas son del MISMO TICKET**. No es un defecto del envio --el loop dispara entre
+    0,4 y 1,3 min de que existe la nota-- sino de que un VIP se mueve todo el dia.
+
+    LO QUE CUESTA, y se decidio pagarlo: de las 103 alertas que esto suprime, **17 eran de
+    2 estrellas o menos**. El negocio: *"que igual luego hay que revisar esas 2*, porque no
+    todas estan bien clasificadas"*.
+
+    SIN `ticket_id` NO SE AGRUPA. Ante la duda no se calla a nadie: perder un aviso por una
+    columna vacia es peor que mandar uno de mas.
+    """
+    por_ticket: dict = {}
+    for d in pendientes:
+        t = d.get("ticket_id")
+        if t is not None:
+            por_ticket.setdefault(t, []).append(d)
+    ganan = {str(max(fs, key=_que_tan_reciente).get("interaccion_id"))
+             for fs in por_ticket.values() if len(fs) > 1}
+    hermanas = {t for t, fs in por_ticket.items() if len(fs) > 1}
+    manda, calla = [], []
+    for d in pendientes:
+        sola = d.get("ticket_id") not in hermanas
+        (manda if sola or str(d.get("interaccion_id")) in ganan else calla).append(d)
+    return manda, calla
 
 
 def resumenes_pendientes(cur, account: str) -> list[dict]:
@@ -801,7 +852,8 @@ def barrer(conn, account: str, canal: Canal,
     # ciclo fallaban, esto daba {resumen:0}, que es lo MISMO que devuelve un dia tranquilo.
     # El worker solo loguea cuando hay algo, asi que un canal caido se veia identico a que
     # no hubiera pasado nada.
-    hecho = {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
+    hecho = {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0,
+             "silenciadas": 0}
     # El worker escribe con timestamp por `emit`; el `logger` de la libreria sale por
     # stderr sin hora ni nombre y en un log de contenedor mezclado con uvicorn no se
     # rastrea. Con el `log` inyectado la falla aparece en la misma corriente que el resto.
@@ -860,12 +912,19 @@ def barrer(conn, account: str, canal: Canal,
         if canal.configurado:
             with conn.cursor() as cur:
                 pendientes = resumenes_pendientes(cur, account)
-            for r in pendientes:
+            pendientes, calladas = solo_la_ultima_por_ticket(pendientes)
+            # LAS CALLADAS SE MARCAN IGUAL. Silenciar sin marcar las devuelve al proximo
+            # barrido y salen solas sesenta segundos despues: el mismo ruido, con retraso.
+            silencio = {str(c["interaccion_id"]) for c in calladas}
+            for r in pendientes + calladas:
                 with conn.cursor() as cur:
                     nueva = marcar_enviada(cur, account, "resumen",
                                            clave_resumen(r["interaccion_id"]))
                 conn.commit()
                 if not nueva:
+                    continue
+                if str(r["interaccion_id"]) in silencio:
+                    hecho["silenciadas"] += 1
                     continue
                 if primera["resumen"]:
                     hecho["sembrados"] += 1

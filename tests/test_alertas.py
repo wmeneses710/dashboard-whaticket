@@ -252,7 +252,8 @@ def test_el_barrido_no_manda_nada_si_el_canal_esta_apagado(monkeypatch):
     conn = _ConnFalsa(cur)
     r = alertas.barrer(conn, "sistemas", alertas.Canal("", ""),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert r == {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0}
+    assert r == {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0,
+                 "silenciadas": 0}
     assert llamadas == [], "un canal apagado no tiene que pegarle a la red"
     assert not any("INSERT INTO alertas_enviadas" in s for s in cur.sql), \
         "y tampoco puede marcar como enviada una alerta que nunca salio"
@@ -618,7 +619,7 @@ def test_el_barrido_NO_devuelve_la_clave_de_la_alerta_EN_VIVO():
     cur = _FakeCursor()
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert set(r) == {"espera_larga", "resumen", "fallos", "sembrados"}
+    assert set(r) == {"espera_larga", "resumen", "fallos", "sembrados", "silenciadas"}
     assert "espera" not in r
 
 
@@ -1279,3 +1280,104 @@ def test_los_parametros_de_make_interval_son_ENTEROS():
         for k, v in (p or {}).items():
             if k.endswith("_h") or k.endswith("_s") or k == "dias":
                 assert isinstance(v, int), f"{k}={v!r} ({type(v).__name__}) rompe make_interval"
+
+
+# --- UNA ALERTA POR TICKET, LA DE RECIEN (2026-09-01) -----------------------
+#
+# PEDIDO DEL NEGOCIO, textual: *"debe ser alerta de la interaccion, no me interesa la
+# anterior, quiero que me alerte de la de recien"*.
+#
+# QUE PASABA. `resumenes_pendientes` devuelve una fila POR INTERACCION, y el scoring viene
+# atrasado, asi que dos interacciones del mismo ticket nacen calificadas en el MISMO lote y
+# salian como dos mensajes seguidos. MEDIDO sobre las 195 alertas del ledger: de 194 pares
+# consecutivos, **126 llegan a menos de 2 minutos** y **100 de esas 126 son del MISMO
+# TICKET**. No es un defecto del envio -- el loop dispara entre 0,4 y 1,3 min de que existe
+# la nota-- sino de que un VIP se mueve todo el dia y sus interacciones se apilan.
+#
+# LO QUE CUESTA, dicho antes de hacerlo: de las 103 alertas que esto suprime, **17 eran de
+# 2 estrellas o menos**. El negocio lo decidio igual y con razon explicita: *"que igual
+# luego hay que revisar esas 2*, porque no todas estan bien clasificadas"*.
+#
+# SE MARCAN EN EL LEDGER IGUAL. Silenciar sin marcar las devuelve al proximo barrido y
+# entonces salen solas sesenta segundos despues: el mismo ruido, con retraso.
+
+def _pend(iid, ticket, fin, stars=4):
+    return {"interaccion_id": iid, "ticket_id": ticket, "interaccion_fin": fin,
+            "stars": stars}
+
+
+def test_dos_interacciones_del_MISMO_ticket_dejan_solo_la_ultima():
+    a = _pend("i1", "T1", datetime(2026, 9, 1, 10, 0, tzinfo=TZ))
+    b = _pend("i2", "T1", datetime(2026, 9, 1, 10, 30, tzinfo=TZ))
+    manda, calla = alertas.solo_la_ultima_por_ticket([a, b])
+    assert [d["interaccion_id"] for d in manda] == ["i2"]
+    assert [d["interaccion_id"] for d in calla] == ["i1"]
+
+
+def test_el_orden_de_llegada_NO_cambia_cual_se_manda():
+    a = _pend("i1", "T1", datetime(2026, 9, 1, 10, 0, tzinfo=TZ))
+    b = _pend("i2", "T1", datetime(2026, 9, 1, 10, 30, tzinfo=TZ))
+    for entrada in ([a, b], [b, a]):
+        manda, _ = alertas.solo_la_ultima_por_ticket(entrada)
+        assert [d["interaccion_id"] for d in manda] == ["i2"], entrada
+
+
+def test_tickets_DISTINTOS_no_se_tapan_entre_si():
+    a = _pend("i1", "T1", datetime(2026, 9, 1, 10, 0, tzinfo=TZ))
+    b = _pend("i2", "T2", datetime(2026, 9, 1, 10, 30, tzinfo=TZ))
+    manda, calla = alertas.solo_la_ultima_por_ticket([a, b])
+    assert len(manda) == 2 and calla == []
+
+
+def test_sin_ticket_id_NO_se_agrupa_y_no_se_silencia_a_nadie():
+    """Ante la duda no se calla: perder una alerta es peor que repetirla."""
+    a = _pend("i1", None, datetime(2026, 9, 1, 10, 0, tzinfo=TZ))
+    b = _pend("i2", None, datetime(2026, 9, 1, 10, 30, tzinfo=TZ))
+    manda, calla = alertas.solo_la_ultima_por_ticket([a, b])
+    assert len(manda) == 2 and calla == []
+
+
+def test_una_interaccion_SIN_fin_no_revienta_y_cuenta_como_la_mas_vieja():
+    a = _pend("i1", "T1", None)
+    b = _pend("i2", "T1", datetime(2026, 9, 1, 10, 0, tzinfo=TZ))
+    manda, calla = alertas.solo_la_ultima_por_ticket([a, b])
+    assert [d["interaccion_id"] for d in manda] == ["i2"]
+    assert [d["interaccion_id"] for d in calla] == ["i1"]
+
+
+def test_dos_SIN_fin_del_mismo_ticket_se_desempatan_igual_siempre():
+    a, b = _pend("i1", "T1", None), _pend("i2", "T1", None)
+    uno = alertas.solo_la_ultima_por_ticket([a, b])[0][0]["interaccion_id"]
+    otro = alertas.solo_la_ultima_por_ticket([b, a])[0][0]["interaccion_id"]
+    assert uno == otro
+
+
+def test_la_anterior_se_silencia_AUNQUE_sea_de_2_estrellas():
+    """Decision explicita del negocio, no un descuido: las 2 estrellas viejas no llegan."""
+    mala = _pend("i1", "T1", datetime(2026, 9, 1, 10, 0, tzinfo=TZ), stars=2)
+    buena = _pend("i2", "T1", datetime(2026, 9, 1, 10, 30, tzinfo=TZ), stars=5)
+    manda, calla = alertas.solo_la_ultima_por_ticket([mala, buena])
+    assert [d["interaccion_id"] for d in manda] == ["i2"]
+    assert [d["interaccion_id"] for d in calla] == ["i1"]
+
+
+_COLS_CON_TICKET = _COLS_RESUMEN + ("ticket_id", "interaccion_fin")
+
+
+def test_barrer_manda_UNA_sola_del_ticket_pero_MARCA_las_dos(monkeypatch):
+    enviados = []
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: (
+        enviados.append(k.get("json") or a), type("R", (), {"status_code": 200, "text": ""})())[1])
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    filas = [("i1", "s1", "u", "1", "A", "M", "Op", "deposito", 4, 10, 20,
+              "T1", datetime(2026, 9, 1, 10, 0, tzinfo=TZ)),
+             ("i2", "s1", "u", "1", "A", "M", "Op", "promo", 5, 10, 20,
+              "T1", datetime(2026, 9, 1, 10, 30, tzinfo=TZ))]
+    cur = _FakeCursor(rows=filas, cols=_COLS_CON_TICKET)
+    cur.rowcount = 1
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
+                       ahora=datetime(2026, 9, 1, 11, 0, tzinfo=TZ), ledger_vacio_=False)
+    assert r["resumen"] == 1, "solo la de recien se manda"
+    assert r["silenciadas"] == 1, "y la anterior se cuenta, no desaparece del reporte"
+    marcas = [s for s in cur.sql if "INSERT INTO alertas_enviadas" in s]
+    assert len(marcas) == 2, "pero las DOS quedan marcadas o vuelven el proximo barrido"

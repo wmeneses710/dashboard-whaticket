@@ -945,9 +945,15 @@ def run_alert_loop(cfg, canal, llm=None, should_stop=None, log=_emit_stdout) -> 
                 for account in cfg.scoring_accounts:
                     cuenta_en_curso = account
                     a = barrer_alertas(conn, account, canal, log=log, llm=llm)
-                    if a["espera_larga"] or a["resumen"] or a["fallos"]:
+                    if a["espera_larga"] or a["resumen"] or a["fallos"] \
+                            or a.get("silenciadas"):
+                        # `silenciadas` se muestra para que el filtro de "una por ticket"
+                        # no sea invisible: si crece mucho, es que el scoring viene
+                        # atrasado y las hermanas se apilan en el mismo barrido.
+                        callado = (f" silenciadas={a['silenciadas']}"
+                                   if a.get("silenciadas") else "")
                         log(f"[alertas] {account}: espera_larga={a['espera_larga']} "
-                            f"resumen={a['resumen']} fallos={a['fallos']}")
+                            f"resumen={a['resumen']} fallos={a['fallos']}{callado}")
         except Exception as e:  # noqa: BLE001 - el hilo tiene que sobrevivir a la BD
             log(f"[alertas] ciclo ROTO: {type(e).__name__}: {e}")
             # A LA TABLA `errors`, NO SOLO A STDOUT. Este loop corre en hilo propio: si se
