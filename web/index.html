@@ -331,6 +331,15 @@
   /* NUNCA con el color de `--r-buena`: esto vive debajo de "Recomendación" y nombra lo que
      FALTA trabajar. Pintado de verde, una nota deficiente parecia felicitar al operador. */
   .foco { font-size:12px; color:var(--muted); background:color-mix(in srgb, var(--faint) 12%, transparent); padding:7px 11px; border-radius:8px; }
+  /* Los ids: presentes pero callados. Monoespaciado porque un uuid se compara caracter a
+     caracter, y `user-select:all` para que un clic torpe igual seleccione el id entero. */
+  .ids { margin-top:14px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+  .idchip { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10.5px;
+            color:var(--faint); background:color-mix(in srgb, var(--faint) 8%, transparent);
+            padding:3px 7px; border-radius:6px; cursor:pointer; user-select:all; }
+  .idchip:hover { color:var(--muted); background:color-mix(in srgb, var(--faint) 16%, transparent); }
+  .idchip b { font-weight:600; opacity:.8; margin-right:.45em; user-select:none; }
+  .idok { font-size:10.5px; color:var(--r-buena); }
   .rec { margin-top:16px; } .recbody { font-size:12.5px; background:color-mix(in srgb, var(--faint) 12%, transparent); padding:8px 11px; border-radius:8px; }
   .metagrid { display:grid; grid-template-columns:1fr 1fr; gap:9px 16px; margin-top:18px; padding-top:16px; border-top:1px solid var(--border); }
   .metagrid .m { font-size:11.5px; } .metagrid .m span { color:var(--faint); } .metagrid .m b { font-weight:640; }
@@ -991,6 +1000,17 @@
                    :title="dimPractica(modal.detail.dimensions).texto">
                 <b class="ecod">{{ dimPractica(modal.detail.dimensions).codigo }}</b>{{ dimPractica(modal.detail.dimensions).foco || dimPractica(modal.detail.dimensions).texto }}</div></div>
             <div class="metagrid" v-html="metaGrid(modal.detail)"></div>
+            <!-- LOS IDENTIFICADORES, para poder consultar esta misma fila en la base. El de
+                 la INTERACCION va primero: cada fila del tablero es una interaccion y ese
+                 uuid es la llave de `conversation_scores`. Ademas es un uuid5 determinista
+                 de (sesion, instante de inicio), asi que no cambia entre rescores. -->
+            <div class="ids" v-if="modal.detail">
+              <span v-for="n in nivelesId(modal.detail)" :key="n.clave"
+                    class="idchip" :title="'Copiar el id de '+n.que"
+                    @click="copiarId(n.valor, n.que)">
+                <b>{{ n.que }}</b> {{ n.valor }}</span>
+              <span class="idok" v-if="idCopiado">✓ {{ idCopiado }} copiado</span>
+            </div>
             <div class="est">★ estimada por LLM — no es un dato de la plataforma.</div>
           </div>
         </div>
@@ -1574,6 +1594,22 @@ createApp({
     }
     function closeModal() { modal.open = false; }
 
+    // Los tres niveles, del mas fino al mas grueso. Se omite el que no vino: una fila sin
+    // calificar no tiene `interaccion_id`, y un chip vacio invita a copiar "undefined".
+    const idCopiado = ref("");
+    function nivelesId(d) {
+      return [["interacción", d.interaccion_id], ["sesión", d.session_id],
+              ["ticket", d.ticket_id]]
+        .filter(([, v]) => v)
+        .map(([que, valor]) => ({ que, valor, clave: que + valor }));
+    }
+    // `clipboard` no existe fuera de HTTPS ni en algunos navegadores viejos. Si falla, el
+    // `user-select:all` del CSS deja el id listo para copiar a mano: nunca queda inservible.
+    function copiarId(valor, que) {
+      const ok = () => { idCopiado.value = que; setTimeout(() => (idCopiado.value = ""), 1600); };
+      try { navigator.clipboard.writeText(valor).then(ok, () => {}); } catch (e) { /* nada */ }
+    }
+
     // Drill-down: cohorte de jugadores nuevos de un operador -> sus conversaciones
     // de entrada (respeta los filtros activos + el operador clickeado).
     async function openDrill(op) {
@@ -2135,6 +2171,7 @@ createApp({
       activeChips, isDirty, clearFilter, sinFiltrosNota,
       switchAccount, toggleRating, toggleMotivo, toggleCausa, vistaMotivo,
       toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
+      nivelesId, copiarId, idCopiado,
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,

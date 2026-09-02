@@ -729,3 +729,65 @@ def test_el_modal_no_se_abre_nunca_con_un_id_vacio():
     assert "if (!id)" in cuerpo or "if(!id)" in cuerpo, (
         "openModal no se protege de un id vacio: manda 'undefined' al servidor"
     )
+
+
+_TXT = HTML.read_text(encoding='utf-8')
+
+
+# --- LOS UUID EN EL MODAL (2026-09-02) --------------------------------------
+#
+# PEDIDO DEL NEGOCIO: poder copiar el identificador desde el tablero para consultarlo en la
+# base. Nace de una busqueda real: encontrar una conversacion vista en la UI costo cuatro
+# consultas, porque el contacto estaba guardado con otro nombre ("Mia" para una clienta que
+# se llama Silvia) y no habia ningun id a mano.
+#
+# EL DE LA INTERACCION VA PRIMERO, y no es indistinto: cada fila del tablero ES una
+# interaccion, y ese uuid es la llave de `conversation_scores`. Ademas es un uuid5
+# DETERMINISTA de (session_id, instante de inicio), asi que no cambia entre rescores: el
+# id que alguien anota hoy sigue sirviendo despues de recalificar.
+
+def _fuente_de_niveles() -> str:
+    """El cuerpo de `nivelesId`, que es donde se arma la lista de identificadores."""
+    i = _TXT.index("function nivelesId(")
+    return _TXT[i:_TXT.index("\n    }", i)]
+
+
+def test_el_modal_muestra_los_TRES_niveles():
+    """Ticket, sesión e interacción. Los tres, porque responden preguntas distintas."""
+    assert 'class="ids"' in _TXT
+    cuerpo = _fuente_de_niveles()
+    for campo in ("interaccion_id", "session_id", "ticket_id"):
+        assert f"d.{campo}" in cuerpo, campo
+
+
+def test_el_id_de_la_INTERACCION_va_primero():
+    cuerpo = _fuente_de_niveles()
+    pos = {c: cuerpo.find(f"d.{c}") for c in ("interaccion_id", "session_id", "ticket_id")}
+    assert all(v >= 0 for v in pos.values()), pos
+    assert pos["interaccion_id"] < pos["session_id"] < pos["ticket_id"], pos
+
+
+def test_un_nivel_VACIO_no_se_dibuja():
+    """Una fila sin calificar no tiene `interaccion_id`, y un chip vacío invita a copiar
+    la cadena "undefined" -- que es exactamente el bug de `/api/conversation/undefined`."""
+    assert ".filter(" in _fuente_de_niveles()
+
+
+def test_se_copia_con_un_clic():
+    """Un uuid de 36 caracteres no se transcribe a mano sin equivocarse."""
+    assert "copiarId" in _TXT
+    assert "navigator.clipboard" in _TXT
+
+
+def test_el_bloque_de_ids_NO_se_dibuja_si_no_hay_detalle():
+    ids = _TXT[_TXT.index('class="ids"'):]
+    assert "v-if=" in ids[:ids.index(">")], "sin v-if, una fila sin detalle rompe el modal"
+
+
+def test_lo_que_el_modal_de_ids_usa_esta_EXPUESTO_en_el_setup():
+    """Sin esto el template referencia algo que no existe y el modal rompe EN EL NAVEGADOR,
+    donde ningún test de este archivo lo vería. Se agregó porque pasó exactamente eso."""
+    i = _TXT.rindex("    return {")
+    ret = _TXT[i:_TXT.index("};", i)]
+    for nombre in ("nivelesId", "copiarId", "idCopiado"):
+        assert nombre in ret, f"{nombre} se usa en el template pero no se expone"
