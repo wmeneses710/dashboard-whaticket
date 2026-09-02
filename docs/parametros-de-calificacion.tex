@@ -67,7 +67,7 @@
 \vspace{2cm}
 {\large Versión del scoring: \cod{2026.08-rubricas-v24}\par}
 \vspace{0.4cm}
-{\large 31 de agosto de 2026\par}
+{\large 2 de septiembre de 2026\par}
 \vfill
 \begin{minipage}{0.82\textwidth}
 \small\color{gray70}
@@ -75,6 +75,11 @@ Este documento describe el sistema \textbf{tal como está implementado}. Cada um
 que aparece en él es una constante del código, y se indica el módulo donde vive, para
 que cualquier afirmación se pueda verificar contra la fuente. No describe cómo
 debería funcionar: describe cómo funciona hoy.
+
+\vspace{0.5em}
+La sección \ref{sec:procedencia} indica, para cada parámetro, si proviene del
+\textbf{Manual de Atención al Cliente} --- con el capítulo y la cita --- o de una decisión
+del negocio sin texto normativo. Las citas del manual son textuales.
 \end{minipage}
 \vspace{2cm}
 \end{titlepage}
@@ -296,6 +301,29 @@ entregar el comprobante de la transferencia.
 Tiene la misma rama de \textbf{derivación al agente} con techo en \est{4} y objetivo
 de 5 minutos, por la misma razón del manual.
 
+\paragraph{El retiro que no se podía hacer.} Cuando no hay comprobante, antes de afirmar
+que faltó se verifica si \textbf{existía la obligación de entregarlo}. Un retiro que no
+procede no deja comprobante, y exigirlo penaliza al operador que hizo lo correcto:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cX@{}}
+\toprule
+\textbf{Nota} & \textbf{Condición} \\
+\midrule
+\est{4} & El retiro no se podía hacer y lo informó dentro de los 5 min \\
+\est{3} & Lo informó, pero tardó más de 5 min \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Quién decide que no se podía.} Lo decide el modelo, no un patrón de texto, y se le
+exige la \textbf{frase textual} que lo prueba; si esa frase no aparece en lo que escribió
+el operador, la absolución no se aplica. Solo se consulta cuando no hay comprobante: si el
+comprobante existe, un rechazo mencionado en la charla no perdona la demora en entregarlo.
+Ver \S\ref{sec:ausencia}.
+\end{nota}
+
 \subsection{Registro}
 \emph{Módulo:} \cod{src/registro.py}\quad\emph{Umbral:} \cod{ENTREGA\_AGIL} = 5 min
 
@@ -428,6 +456,14 @@ Para los agentes cuyo motivo no corresponde a depósito, retiro ni información 
 \end{tabularx}
 \end{center}
 
+\begin{nota}
+\textbf{La nota del pedido abandonado solo reclama lo que existió.} Si el bloque del agente
+traía un adjunto, se le reclama además la confirmación y el comprobante; si no lo traía, la
+nota se limita a decir que el pedido quedó sin respuesta. Antes esa segunda mitad era fija y
+llegaba a reclamar un comprobante en conversaciones sin ninguna transacción --- una
+invitación a una capacitación, por ejemplo.
+\end{nota}
+
 \subsection{Sin respuesta y solo cortesía}
 
 \begin{center}
@@ -511,12 +547,237 @@ reinsistió) no reduce la calificación: se limita a \est{3}.
 
 \newpage
 % =====================================================================
+\section{Procedencia de los parámetros}
+\label{sec:procedencia}
+
+Todo umbral de este documento proviene de una de tres fuentes, y la distinción importa:
+un parámetro respaldado por el manual no se discute sin cambiar el manual; uno que nació de
+una decisión operativa puede revisarse cuando el negocio lo considere.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Fuente} & \textbf{Qué significa} \\
+\midrule
+\textbf{Manual} & Está escrito en el Manual de Atención al Cliente. Se cita el capítulo. \\
+\textbf{Negocio} & Decisión del negocio comunicada al equipo, sin texto en el manual. \\
+\textbf{Medición} & Umbral derivado de los datos, para evitar penalizar lo que no se controla. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Parámetros con respaldo en el manual}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Parámetro} & \textbf{Cap.} & \textbf{Texto del manual} \\
+\midrule
+Primera respuesta: 1 min & 04, 06 &
+``la respuesta del operador debe ser inmediata y no superar un tiempo máximo de
+\textbf{1 minuto}'' \\
+\addlinespace
+Espera antes de cerrar: 5 min & 04, 06 &
+``deberá esperar \textbf{5 minutos obligatorios} antes de cerrar el chat'' \\
+\addlinespace
+El cliente no puede quedar\newline con la última palabra & 04, 06 &
+``Es política obligatoria del departamento que \textbf{el último mensaje de la conversación
+sea enviado por el operador}'' \\
+\addlinespace
+Retiro: el comprobante lo\newline envía el operador & 05 &
+``se debe enviar el comprobante de pago al agente o jugador. El chat no debe marcarse como
+resuelto hasta haber cumplido con este paso'' \\
+\addlinespace
+Derivación al agente & 05, 06 &
+``Si un jugador pertenece a un agente, el operador NO debe realizar recargas ni retiros'' \\
+\addlinespace
+Cierre más laxo con agentes & 06 &
+``debido a que muchos no responden después de recibir la información, el operador puede
+cerrar el chat cuando el caso haya sido resuelto'' \\
+\addlinespace
+Los 12 errores críticos\newline y las 12 buenas prácticas & 01 &
+Listas literales; el catálogo del tablero las reproduce textualmente \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Parámetros sin texto en el manual}
+
+Los siguientes umbrales \textbf{no aparecen en el manual}. No significa que estén mal ---
+varios responden a decisiones explícitas del negocio --- pero conviene saber que su
+autoridad no es normativa, y que revisarlos no requiere modificar el manual.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lllX@{}}
+\toprule
+\textbf{Parámetro} & \textbf{Valor} & \textbf{Fuente} & \textbf{Observación} \\
+\midrule
+Horario de atención & 06:00--23:59 & Negocio &
+El manual no declara horario ni zona horaria; solo cortes de procesamiento a medianoche. \\
+\addlinespace
+Preguntar si falta algo & --- & Negocio &
+El manual pide ``disposición para futuras consultas'', que es una afirmación, no una
+pregunta. Afecta al 4,8\,\% de las notas. \\
+\addlinespace
+Confirmar la acreditación & --- & Negocio &
+Para recarga genérica el manual solo exige avisar que el proceso está en curso
+(\cod{/R3Recarga}). La confirmación del saldo se exige de forma explícita únicamente en el
+flujo del jugador nuevo. \\
+\addlinespace
+Retiro: entrega $\le$ 15 y 30 min & 15/30 min & Medición &
+El manual fija el momento (antes de resolver) pero no un plazo en minutos. \\
+\addlinespace
+Depósito: aceptable 5 min & 5 min & Medición &
+El manual solo fija el minuto de primera respuesta. \\
+\addlinespace
+Agilidad: 5 y 15 min & 5/15 min & Medición &
+El error crítico 9 menciona ``los mensajes a los 15 y 30 minutos'' pero sin procedimiento
+correlativo para el caso general. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{El caso de la pregunta de cierre merece atención.} El sistema penaliza no preguntar
+al cliente si necesita algo más, y el manual no contiene esa instrucción en ninguna forma.
+Lo que sí exige, de manera literal y obligatoria, es que \textbf{el último mensaje sea del
+operador} --- requisito que el sistema ya verifica por separado. Si el negocio decide
+alinear el parámetro con el texto, la vía es reemplazar la pregunta por la afirmación de
+disponibilidad; si decide mantenerlo, conviene incorporarlo al manual.
+\end{nota}
+
+\subsection{Reglas del manual que el sistema aún no mide}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Regla} & \textbf{Cap.} & \textbf{Por qué no se mide hoy} \\
+\midrule
+30 min y dos seguimientos\newline cuando se espera un dato & 06 &
+Exige distinguir ``espera un dato del cliente'' de ``abandonó'', que hoy no se detecta. \\
+\addlinespace
+5 min y 10 min para el cliente\newline que deja de responder & 04 &
+Íntimamente ligado a la regla anterior. \\
+\addlinespace
+Verificar monto, hora, banco\newline y titular del comprobante & 05 &
+Requiere leer la imagen del comprobante. Previsto para la plataforma con multimedia. \\
+\addlinespace
+Uso de la respuesta rápida\newline correcta, sin modificarla & 01, 02 &
+El catálogo está construido (\cod{src/catalogo\_plantillas.py}) pero ninguna rúbrica lo
+consume todavía. \\
+\addlinespace
+Límites de recarga\newline (\$50, \$300, \$500) & 05 &
+Exige leer el monto del comprobante. Misma dependencia que la anterior. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Dos contradicciones internas del manual, registradas sin resolver.} El capítulo 05
+admite recargar al jugador de un agente ``en caso de que el jugador exprese que desea que le
+ayudemos'', y el capítulo 06 repite el mismo procedimiento sin esa excepción. Y el capítulo
+04 prohíbe la resolución automática del chat a los 5 minutos para jugadores, mientras que el
+06 la autoriza de hecho para agentes. El sistema sigue la versión más conservadora en ambos
+casos: no penaliza la recarga al jugador de un agente, y aplica el cierre laxo solo al
+segmento agente.
+\end{nota}
+
+\newpage
+% =====================================================================
+\section{Cuando la señal no alcanza: la ausencia}
+\label{sec:ausencia}
+
+Tres notas del sistema afirman que \textbf{algo no ocurrió}: que el operador nunca confirmó
+la acreditación, que nunca envió el comprobante del retiro, que nunca entregó el usuario y
+la clave. Son las afirmaciones más severas de la escala y también las más frágiles, porque
+un patrón de texto \textbf{puede probar una presencia, nunca una ausencia}: que una frase no
+coincida con lo esperado significa ``no la reconocí'', no ``no existe''.
+
+\begin{nota}
+\textbf{La evidencia de que no era una preocupación teórica.} Entre el 11 de agosto y el
+1.\textsuperscript{o} de septiembre de 2026 se corrigieron cinco huecos de vocabulario en la
+detección de acreditación, y los cinco fueron en la \textbf{misma dirección}: ninguno afirmó
+de más una confirmación que no existía; todos afirmaron una ausencia que era falsa. El
+quinto concentró 62 calificaciones de \est{2} en una sola operadora, porque el hueco era su
+plantilla de mensajes.
+\end{nota}
+
+\subsection{Cómo se resuelve}
+
+Cuando el detector determinista no encuentra la señal, la nota ya no se emite directamente:
+se consulta al modelo, que sí entiende el idioma. La consulta está acotada por tres reglas.
+
+\begin{enumerate}
+\item \textbf{Solo se pregunta ante la ausencia.} Si el detector \emph{sí} reconoció la
+señal, no se consulta nada. Este orden protege el vocabulario interno del CRM: la abreviatura
+\cod{ing} significa ``acreditado'' para los operadores, pero no es español y ningún modelo
+general la interpreta correctamente.
+\item \textbf{Se exige la cita textual.} El modelo debe devolver la frase exacta que prueba
+su respuesta, y esa frase se verifica contra lo que escribió el operador. Sin cita
+comprobable no hay absolución.
+\item \textbf{Solo puede absolver.} Ante cualquier fallo --- servicio no disponible, tiempo
+de espera agotado, respuesta mal formada, cita inexistente --- la calificación permanece
+igual. Una consulta que no se completó nunca modifica una nota.
+\end{enumerate}
+
+\subsection{La medición que fijó el diseño}
+
+La alternativa evidente era delegar la decisión completa al modelo. Se descartó por medición,
+no por criterio. Sobre 304 interacciones reales de depósito, en dos grupos:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Xcc@{}}
+\toprule
+& \textbf{Detector} & \textbf{Modelo} \\
+\midrule
+151 acusadas de ``nunca confirmó'' & pierde 102 (67,5\,\%) & contradice en la dirección
+riesgosa: 0 \\
+153 de control, ya reconocidas & 1 falso positivo (0,65\,\%) & descarta 39 (25,5\,\%),
+38 de ellas por jerga \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+El detector conoce el vocabulario del negocio; el modelo conoce el idioma --- reconoce
+``se ecuentra lista su saldo'' con el error de tipeo incluido. Delegar todo al modelo
+habría destruido una de cada cuatro confirmaciones correctas. En las 102 respuestas
+afirmativas, la cita devuelta existía en el texto las 102 veces.
+
+\subsection{Dónde se aplica}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lXc@{}}
+\toprule
+\textbf{Rúbrica} & \textbf{Afirmación verificada} & \textbf{Consultas/día} \\
+\midrule
+Depósito & ``nunca le confirmó que el dinero había entrado'' & 5,7 \\
+Retiro   & ``nunca envió el comprobante'' (¿existía la obligación?) & 1,0 \\
+Registro & ``nunca recibió su usuario y clave'' & 0,7 \emph{(pendiente)} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Por qué el retiro por falta de comprobante es distinto del depósito.} En depósito el
+comprobante lo envía el cliente y la señal es \textbf{textual}; en retiro lo envía el
+operador y la señal es un \textbf{archivo adjunto}. Un adjunto no depende del vocabulario:
+está o no está. Por eso en retiro no se verifica si el operador ``dijo'' algo, sino si
+\emph{existía la obligación de entregar} --- un retiro rechazado o diferido no genera
+comprobante. La rúbrica de registro comparte la anatomía del depósito (señal textual) y su
+verificación queda pendiente de medición.
+\end{nota}
+
+\newpage
+% =====================================================================
 \section{El reloj: qué cuenta como espera}
 
 \subsection{Horario de atención}
 
 Todos los tiempos se miden \textbf{descontando la noche}. El horario es de
-\textbf{06:00 a 23:59} hora de Ecuador (18 horas por día).
+\textbf{06:00 a 23:59} hora de Ecuador (18 horas por día). Este horario proviene de una
+\textbf{decisión del negocio} confirmada el 7 de agosto de 2026: el manual no declara horas
+de atención ni zona horaria en ningún capítulo, solo cortes de procesamiento de
+transacciones a medianoche (ver \S\ref{sec:procedencia}).
 
 \begin{alerta}
 \textbf{Esto no es un detalle.} Un cliente que escribe a las 00:06 y recibe respuesta
@@ -527,7 +788,7 @@ de iniciado el turno. La misma función que descuenta la noche la usan todas las
 
 \subsection{Precisión}
 
-Los tiempos se comparan \textbf{redondeados al segundo}. Los objetivos del manual están
+Los tiempos se comparan \textbf{redondeados al segundo}. Los objetivos están
 expresados en minutos enteros y se comparaban contra marcas de tiempo de WhatsApp con
 milisegundos: dos operadores perdieron dos estrellas por 365 y 312 \emph{milisegundos}.
 
@@ -571,18 +832,20 @@ Este sistema tiene deudas medidas y documentadas. Omitirlas restaría utilidad a
 documento.
 
 \begin{enumerate}
-\item \textbf{El detector de acreditación está calibrado a la plantilla vieja.}
-Un operador que cierra con ``¡Está listo!'' o ``Lista su recarga'' no es reconocido.
-Medido sobre 2.784 depósitos: quien \emph{no} usa esas frases promedia 4,00 y tiene
-4,1\% de notas $\le$ 2; quien las usa promedia 3,04 y tiene \textbf{48,1\%}. Es
-\textbf{11,7 veces} más probable sacar una nota baja por usar la frase propia. No se
-trata de
-la conducta del operador, sino del detector.
+\item \textbf{El detector de acreditación estaba calibrado a una sola plantilla}
+\emph{(corregido el 1.\textsuperscript{o} de septiembre de 2026)}. Un operador que cerraba
+con ``¡Está listo!'' o ``Lista su recarga'' no era reconocido. De las 111 interacciones que
+usan esa familia de frases, \textbf{101 eran de una sola persona} --- porque la plantilla
+era suya --- y su promedio caía de 3,75 a 2,82 únicamente por la redacción elegida. Se
+corrigió el detector y se incorporó la verificación descrita en \S\ref{sec:ausencia}, que
+cierra la familia entera de este defecto en lugar de un caso puntual.
 
 \item \textbf{La quinta estrella es inalcanzable en Facebook.} El requisito de
 preguntar ``¿algo más?'' no discrimina por motivo ni por antigüedad: discrimina por
 \textbf{canal}. Sobre 162 atenciones en Facebook, \textbf{0} lo cumplen, porque las
-respuestas rápidas que contienen esa pregunta no existen en ese canal.
+respuestas rápidas que contienen esa pregunta no existen en ese canal. Se agrega ahora un
+segundo argumento: ese requisito \textbf{tampoco figura en el manual}
+(ver \S\ref{sec:procedencia}).
 
 \item \textbf{El segmento no entra en el scoring.} Un agente --- un vendedor
 profesional --- se califica con la misma vara comercial que un jugador. Existe una
@@ -609,6 +872,9 @@ deliberada, no de una omisión.
 \cod{src/signals.py}       & Señales deterministas sobre el transcript \\
 \cod{src/worker.py}        & Cascada de precedencia y persistencia \\
 \cod{src/deposito.py} \dots & Una rúbrica determinista por motivo \\
+\cod{src/acreditacion\_dudosa.py} & Verifica la ausencia de confirmación (depósito) \\
+\cod{src/entrega\_dudosa.py} & Verifica si existía la obligación de entregar (retiro) \\
+\cod{src/catalogo\_atc.py} & Errores críticos, buenas prácticas y respuestas rápidas \\
 \bottomrule
 \end{tabularx}
 \end{center}
