@@ -20,7 +20,8 @@ se desconectó y regresó más tarde es invisible.
 | `trg_conexiones_operador` (trigger sobre `users`) | `src/desconexiones.py` |
 
 El DDL lo asegura `alertas.ensure_table` vía `desconexiones.asegurar_sin_romper`, que corre
-en cada ciclo del worker (60 s). Las cuatro sentencias son `IF NOT EXISTS` / `OR REPLACE`.
+en cada ciclo del worker (60 s). Las cinco sentencias son re-ejecutables: `IF NOT EXISTS`,
+`OR REPLACE` y un `REVOKE` (revocar algo ya revocado es un no-op).
 
 ### Por qué un trigger y no un poller
 
@@ -45,10 +46,11 @@ hilo de alertas la drena con `Canal.enviar` + `marcar_enviada`. Cola de pendient
 sin mecanismo nuevo: `alertas_enviadas` con `tipo='desconexion'` y `clave` =
 `conexiones_operador.id`, resuelta con un `LEFT JOIN`.
 
-## Los dos modos de falla silenciosa, y cómo se cubren
+## Los cinco modos de falla silenciosa, y cómo se cubren
 
-Son **dos**, en momentos distintos, y confundirlos fue el error de la primera versión de
-este documento.
+Todos comparten la misma forma: **el chequeo obvio da verde y la captura no funciona.**
+Los cinco se encontraron de a uno, cada uno después de declarar el anterior "cubierto".
+Cuatro de los cinco se reprodujeron contra base real antes de arreglarlos.
 
 ### 1. En tiempo de deploy: el `CREATE TRIGGER` puede fallar por privilegios
 
@@ -103,9 +105,69 @@ nuevo — y su ausencia es invisible. `DEFINER` deja la garantía dentro del obj
 schema que venga antes en el path del invocador secuestra la resolución de nombres y corre
 código con los privilegios del dueño. `pg_temp` va último.
 
-No se hace `REVOKE EXECUTE FROM PUBLIC`: una función de trigger invocada directamente falla
-con *"trigger functions can only be called as triggers"*, así que no hay camino de escalada,
-y el `REVOKE` rompería la invariante de que toda sentencia del DDL sea idempotente.
+### 3. `EXECUTE` es PUBLIC: envenenamiento del log de auditoría
+
+Una versión anterior de este documento afirmaba que *"no hay camino de escalada"*, porque
+una función `RETURNS trigger` no se puede invocar directamente. **La premisa es cierta y la
+conclusión era falsa.**
+
+`EXECUTE` es `PUBLIC` por defecto (`proacl = NULL`). Con `SECURITY DEFINER`, eso alcanza
+para que cualquier rol dueño de una tabla con columnas compatibles cuelgue esta función como
+trigger de **su** tabla y escriba filas en `conexiones_operador` con los privilegios del
+dueño. No es ejecución arbitraria — es **envenenamiento del log de auditoría**. Severidad
+baja; la afirmación era más absoluta que el hecho.
+
+Reproducido el 2026-09-03 con un rol no-superusuario:
+
+```
+el atacante tiene EXECUTE sobre la funcion: True
+colgo la funcion DEFINER de SU tabla: SI
+fila envenenada: ('FALSA', 'Operador Inventado', 'online', 'offline')
+```
+
+Cerrado con `REVOKE EXECUTE ON FUNCTION registrar_conexion_operador() FROM PUBLIC`. Después
+del fix el intento muere en el `CREATE TRIGGER` con
+`InsufficientPrivilege: permission denied for function`, y 0 filas falsas.
+
+Dos cosas que hubo que verificar antes de aceptar el `REVOKE`:
+
+- **Postgres no re-chequea `EXECUTE` cuando el trigger dispara.** Medido: el rol del ETL con
+  `EXECUTE=False` capturó la fila igual. Si lo re-chequeara, el `REVOKE` habría matado la
+  captura — el privilegio se valida al crear el trigger, no al ejecutarlo.
+- **`REVOKE` es re-ejecutable**: revocar algo ya revocado es un no-op.
+
+> El `REVOKE` se había rechazado antes con el argumento de que *"rompería la invariante de
+> que toda sentencia del DDL sea idempotente"*. Esa invariante estaba escrita como un test de
+> **string** (`"IF NOT EXISTS" in stmt or "OR REPLACE" in stmt`), no como la propiedad real
+> (*se puede volver a correr*). El proxy bloqueó un arreglo de seguridad correcto. El test
+> ahora expresa la propiedad y admite `REVOKE`.
+
+### 4. La invariante de dueños
+
+`SECURITY DEFINER` solo alcanza si el dueño de la función puede escribir la tabla. Y
+**`CREATE TABLE IF NOT EXISTS` es un no-op si la tabla ya existe, sin importar quién la
+creó**: con la tabla creada por otro rol, la función corre como su propio dueño, el `INSERT`
+vuelve a dar *permission denied*, y `prosecdef` sigue diciendo `true` — así que el chequeo de
+`SECURITY DEFINER` no lo detecta.
+
+`asegurar_sin_romper` lo verifica en cada ciclo comparando `pg_proc.proowner` contra
+`pg_class.relowner` de la tabla **y de la secuencia** (el `bigserial` la crea a nombre de
+quien creó la tabla). Si no coinciden: devuelve `False`, lo dice en el log y lo registra en
+`errors`. Verificado cambiando el dueño de la tabla: `True` → `False` → `True`.
+
+Se corrige con `ALTER TABLE conexiones_operador OWNER TO <dueño de la función>`.
+
+### 5. `SAVEPOINT` fuera de una transacción
+
+`SAVEPOINT` solo existe dentro de un bloque de transacción: con `autocommit=True` levanta
+`NoActiveSqlTransaction`, y `asegurar_sin_romper` — cuya razón de ser es no poder romper al
+llamador — rompía al llamador.
+
+No era un bug en producción (`alertas.barrer` usa `conn.commit()`, o sea sin autocommit),
+pero era una mina para el próximo llamador, que habría caído en el `except` ancho de `barrer`
+dejando las alertas en ceros. Lo destapó el propio script de verificación. Ahora si el
+`SAVEPOINT` no se puede tomar, el DDL corre sin red — que es correcto, porque con autocommit
+cada sentencia es su propia transacción y un DDL fallido no arrastra al resto.
 
 ### A dónde va cada fallo
 
@@ -150,6 +212,11 @@ el worker.
 | DDL fallido **con** savepoint | la transacción sobrevive | **OK, `False` + log** |
 | `INSERT` como rol sin privilegios, **SECURITY INVOKER** | 1 fila | **0 — bug** |
 | `INSERT` como rol sin privilegios, **SECURITY DEFINER** | 1 fila | **1** |
+| Colgar la función de la tabla de otro rol, **antes** del `REVOKE` | 0 filas | **1 — envenenado** |
+| Colgar la función de la tabla de otro rol, **después** del `REVOKE` | 0 filas | **0, `InsufficientPrivilege`** |
+| Rol del ETL con `EXECUTE=False` → ¿sigue capturando? | 1 fila | **1** |
+| Dueño de la tabla distinto al de la función | `False` + fila en `errors` | **`False`** |
+| `asegurar_sin_romper` con `autocommit=True` | no levanta | **OK, corre sin savepoint** |
 
 > **La copia con superusuario no es evidencia de que producción funcione.** El rol de
 > `whaticket_copia` es `whaticket`: superusuario **y** dueño de `users`. Es el mejor caso
@@ -165,16 +232,22 @@ completamente muerta. Hay que verificar que **aterriza una fila**.
 SELECT prosecdef AS security_definer, proconfig AS search_path
   FROM pg_proc WHERE proname = 'registrar_conexion_operador';   -- esperado: true, no NULL
 
--- 2. Esta capturando de verdad? (a los ~5 min de arrancar ya deberia haber eventos)
+-- 2. Funcion y tabla comparten dueño? Si no, el trigger existe y NO inserta,
+--    y `prosecdef` de arriba sigue diciendo true.
+SELECT (SELECT proowner FROM pg_proc  WHERE proname = 'registrar_conexion_operador')
+     = (SELECT relowner FROM pg_class WHERE relname = 'conexiones_operador')
+       AS dueno_coincide;                                        -- esperado: true
+
+-- 3. Esta capturando de verdad? (a los ~5 min de arrancar ya deberia haber eventos)
 SELECT count(*) AS eventos, max(detected_at) AS ultimo FROM conexiones_operador;
 
--- 3. Si el punto 2 da 0, revisar el privilegio de DEPLOY (distinto del de ejecucion)
+-- 4. Si el punto 3 da 0, revisar el privilegio de DEPLOY (distinto del de ejecucion)
 SELECT current_user,
        has_table_privilege(current_user, 'users', 'TRIGGER') AS puede_trigger,
        has_schema_privilege(current_user, 'public', 'CREATE') AS puede_funcion;
 ```
 
-Si el punto 3 da `false`, en el log del worker aparece `[desconexiones] captura NO
+Si el punto 4 da `false`, en el log del worker aparece `[desconexiones] captura NO
 aplicada, las alertas siguen (...)`. Se arregla con un `GRANT TRIGGER ON users TO <rol>`
 desde el dueño; no hace falta tocar código.
 

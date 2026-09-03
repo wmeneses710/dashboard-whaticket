@@ -17,13 +17,20 @@ from src import desconexiones
 
 
 class _FakeCursor:
-    """Registra el SQL que le mandan, normalizado a una linea."""
+    """Registra el SQL que le mandan, normalizado a una linea.
 
-    def __init__(self):
+    `dueno_coincide` es la respuesta al chequeo de la invariante de dueños.
+    """
+
+    def __init__(self, dueno_coincide=True):
         self.sql: list[str] = []
+        self._dueno = dueno_coincide
 
     def execute(self, sql, params=None):
         self.sql.append(" ".join(str(sql).split()))
+
+    def fetchone(self):
+        return (self._dueno,)
 
 
 def _ddl() -> str:
@@ -34,14 +41,22 @@ def _ddl() -> str:
 
 # --- la idempotencia --------------------------------------------------------
 
-def test_cada_sentencia_del_DDL_es_idempotente():
+def test_cada_sentencia_del_DDL_se_puede_VOLVER_A_CORRER():
     """`ensure_table` corre en CADA ciclo del worker (cada 60 s). Una sentencia que no
-    tolere volver a correr tumba el ciclo entero, y con el las alertas."""
+    tolere volver a correr tumba el ciclo entero, y con el las alertas.
+
+    LA INVARIANTE ES SEMANTICA, NO UN STRING. La version anterior de este test exigia
+    `IF NOT EXISTS` o `OR REPLACE` literales, y ese proxy fue lo que me hizo RECHAZAR el
+    `REVOKE EXECUTE FROM PUBLIC` --que es re-ejecutable por definicion en SQL-- con el
+    argumento de que "rompia la invariante de idempotencia". El proxy bloqueo un arreglo de
+    seguridad correcto. `REVOKE` entra en la lista porque revocar algo ya revocado es un
+    no-op, no un error."""
     cur = _FakeCursor()
     desconexiones.ensure_table(cur)
+    reejecutable = ("IF NOT EXISTS", "OR REPLACE", "REVOKE")
     for stmt in cur.sql:
-        assert ("IF NOT EXISTS" in stmt) or ("OR REPLACE" in stmt), \
-            f"sentencia no idempotente: {stmt[:120]}"
+        assert any(f in stmt for f in reejecutable), \
+            f"sentencia que no se puede volver a correr: {stmt[:120]}"
 
 
 def test_el_trigger_se_reemplaza_SIN_dejar_una_ventana_sin_trigger():
@@ -136,6 +151,86 @@ def test_la_funcion_fija_el_search_path():
     ddl = _ddl()
     assert "SET search_path" in ddl
     assert "pg_temp" in ddl
+
+
+def test_se_revoca_EXECUTE_a_PUBLIC():
+    """`EXECUTE` es PUBLIC por defecto, y con SECURITY DEFINER eso alcanza para ENVENENAR
+    el log de auditoria. No es ejecucion arbitraria: una funcion `RETURNS trigger` no se
+    puede invocar directo. Pero cualquier rol que sea dueño de una tabla con columnas
+    compatibles puede colgar ESTA funcion como trigger de SU tabla y escribir filas con los
+    privilegios del dueño.
+
+    REPRODUCIDO el 2026-09-03 con un rol no-superusuario:
+        colgo la funcion DEFINER de SU tabla: SI
+        fila envenenada: ('FALSA', 'Operador Inventado', 'online', 'offline')
+
+    El comentario anterior del modulo decia "no hay camino de escalada". Era falso.
+    """
+    assert "REVOKE EXECUTE ON FUNCTION" in _ddl()
+    assert "FROM PUBLIC" in _ddl()
+
+
+def test_sin_transaccion_abierta_NO_levanta(monkeypatch):
+    """`SAVEPOINT` solo existe dentro de un bloque de transaccion: con `autocommit=True`
+    pedirlo levanta NoActiveSqlTransaction. Y esta funcion, cuyo contrato es NO poder romper
+    al llamador, rompia al llamador.
+
+    Hoy el unico llamador es `alertas.barrer`, que usa `conn.commit()` --o sea sin
+    autocommit-- asi que no era un bug en produccion. Pero era una mina: cualquier llamador
+    futuro con autocommit caia en el `except` ancho de `barrer` y las alertas quedaban en
+    ceros. Lo destapo el propio script de verificacion.
+
+    Con autocommit no hay nada que proteger: cada sentencia es su propia transaccion, asi
+    que un DDL fallido no arrastra al resto."""
+    class _SinTransaccion(_FakeCursor):
+        def execute(self, sql, params=None):
+            if "SAVEPOINT" in str(sql):
+                raise RuntimeError("SAVEPOINT can only be used in transaction blocks")
+            super().execute(sql, params)
+
+    cur = _SinTransaccion()
+    assert desconexiones.asegurar_sin_romper(cur, log=lambda m: None) is True
+    assert any("CREATE TABLE IF NOT EXISTS conexiones_operador" in s for s in cur.sql), \
+        "sin savepoint el DDL tiene que correr igual"
+
+
+# --- la invariante de dueños ------------------------------------------------
+
+def test_se_verifica_que_funcion_y_tabla_tengan_el_MISMO_dueno():
+    """SECURITY DEFINER solo alcanza si el dueño de la funcion puede escribir la tabla.
+
+    EL CASO QUE SE ESCAPA: `CREATE TABLE IF NOT EXISTS` es un NO-OP si la tabla ya existe,
+    sin importar QUIEN la creo. Si la tabla la creo otro rol, la funcion corre como su
+    propio dueño y el INSERT vuelve a dar permission denied -- y `prosecdef` seguiria
+    diciendo `true`, asi que el chequeo de SECURITY DEFINER no lo detecta."""
+    cur = _FakeCursor()
+    desconexiones.asegurar_sin_romper(cur)
+    junto = " ".join(cur.sql)
+    assert "proowner" in junto and "relowner" in junto, \
+        "no se verifica que funcion y tabla compartan dueño"
+
+
+def test_dueno_distinto_se_reporta_como_captura_ROTA(monkeypatch):
+    """Con dueños distintos la captura NO funciona, aunque el DDL haya corrido sin error.
+    Tiene que devolver False y dejarlo en `errors`, no en verde."""
+    from src import errores
+
+    visto = {}
+    monkeypatch.setattr(errores, "registrar",
+                        lambda c, e=None, **k: visto.update(component=c, context=k.get("context")))
+    cur = _FakeCursor(dueno_coincide=False)
+    assert desconexiones.asegurar_sin_romper(cur, log=lambda m: None) is False
+    assert visto.get("component") == "arranque"
+
+
+def test_dueno_coincidente_no_reporta_nada(monkeypatch):
+    """El camino feliz no puede ensuciar `errors`: se llenaria una fila cada 60 s."""
+    from src import errores
+
+    llamadas = []
+    monkeypatch.setattr(errores, "registrar", lambda *a, **k: llamadas.append(a))
+    assert desconexiones.asegurar_sin_romper(_FakeCursor(dueno_coincide=True)) is True
+    assert not llamadas
 
 
 # --- la captura no puede apagar las alertas que YA funcionan -----------------

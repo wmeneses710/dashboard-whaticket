@@ -106,10 +106,6 @@ _CREATE_STMTS = (
     # corre codigo con los privilegios del dueño. `pg_temp` va ULTIMO para que una tabla
     # temporaria no pueda sombrear a `conexiones_operador`.
     #
-    # NO se hace REVOKE EXECUTE FROM PUBLIC: una funcion de trigger invocada directamente
-    # falla con "trigger functions can only be called as triggers", asi que no hay camino de
-    # escalada, y el REVOKE romperia la invariante de que TODA sentencia de este DDL sea
-    # idempotente por `IF NOT EXISTS` / `OR REPLACE`.
     """
     CREATE OR REPLACE FUNCTION registrar_conexion_operador() RETURNS trigger
     LANGUAGE plpgsql
@@ -140,7 +136,35 @@ _CREATE_STMTS = (
     FOR EACH ROW
     WHEN (OLD.status IS DISTINCT FROM NEW.status)
     EXECUTE FUNCTION registrar_conexion_operador()""",
+    # EXECUTE ES PUBLIC POR DEFECTO, y con SECURITY DEFINER eso alcanza para ENVENENAR el
+    # log de auditoria. No es ejecucion arbitraria --una funcion `RETURNS trigger` no se
+    # puede invocar directo-- pero cualquier rol dueño de una tabla con columnas compatibles
+    # puede colgar ESTA funcion como trigger de SU tabla y escribir filas con los privilegios
+    # del dueño.
+    #
+    # REPRODUCIDO el 2026-09-03 con un rol no-superusuario:
+    #     colgo la funcion DEFINER de SU tabla: SI
+    #     fila envenenada: ('FALSA', 'Operador Inventado', 'online', 'offline')
+    #
+    # `REVOKE` es re-ejecutable: revocar algo ya revocado es un no-op, no un error. El dueño
+    # conserva EXECUTE siempre, asi que el `CREATE TRIGGER` de `ensure_table` sigue andando,
+    # y Postgres NO re-chequea EXECUTE cuando el trigger dispara (verificado: el rol del ETL
+    # sin EXECUTE igual captura).
+    "REVOKE EXECUTE ON FUNCTION registrar_conexion_operador() FROM PUBLIC",
 )
+
+# LA INVARIANTE DE DUEÑOS. SECURITY DEFINER solo alcanza si el dueño de la funcion puede
+# escribir la tabla. Y `CREATE TABLE IF NOT EXISTS` es un NO-OP si la tabla ya existe, sin
+# importar quien la creo: si la creo otro rol, la funcion corre como su propio dueño, el
+# INSERT vuelve a dar permission denied, y `prosecdef` sigue diciendo `true` -- asi que el
+# chequeo de SECURITY DEFINER NO lo detecta. Se compara tambien la secuencia porque el
+# `bigserial` la crea a nombre de quien creo la tabla.
+_DUENOS_SQL = """
+SELECT (SELECT proowner FROM pg_proc  WHERE proname = 'registrar_conexion_operador')
+     = (SELECT relowner FROM pg_class WHERE relname = 'conexiones_operador')
+   AND (SELECT proowner FROM pg_proc  WHERE proname = 'registrar_conexion_operador')
+     = (SELECT relowner FROM pg_class WHERE relname = 'conexiones_operador_id_seq')
+"""
 
 
 def ensure_table(cur) -> None:
@@ -152,6 +176,32 @@ def ensure_table(cur) -> None:
     """
     for stmt in _CREATE_STMTS:
         cur.execute(stmt)
+
+
+def _a_la_bitacora(exc: BaseException | None, context: dict) -> None:
+    """Deja el fallo en la tabla `errors`, no solo en el log. NUNCA levanta.
+
+    A LA TABLA Y NO SOLO A STDOUT: es el mismo argumento que ya esta escrito en el loop de
+    alertas de `worker.py` -- stdout de un contenedor se pierde en el redeploy y `errors`
+    sobrevive. Y acá pesa doble porque `errors` LA COMPARTE EL ETL, que es justamente quien
+    puede otorgar el privilegio o alinear el dueño que falta.
+
+    `arranque` es el componente del vocabulario acordado para migraciones y config, y va SIN
+    `account` porque nada de esto es de una cuenta puntual (regla 6). `errores._escribir`
+    abre su PROPIA conexion, asi que esto es seguro incluso con la transaccion del llamador
+    recien abortada, y su limitador (5 por ventana de 60 s) evita que un fallo que se repite
+    en cada ciclo inunde la tabla.
+
+    El try NO es de mas: `errores.registrar` promete no levantar, pero esto no puede depender
+    de esa promesa -- si algun dia rompe, se lleva puesto el manejo del fallo original y con
+    el las alertas. Misma cautela que `worker._registrar_fallo` del lado del llamador.
+    """
+    try:
+        from src import errores
+
+        errores.registrar("arranque", exc, context=context)
+    except Exception:  # noqa: BLE001 - una bitacora rota no puede abortar la guarda
+        pass
 
 
 def asegurar_sin_romper(cur, log=None) -> bool:
@@ -178,11 +228,33 @@ def asegurar_sin_romper(cur, log=None) -> bool:
     misma razon que existe `errores.estado`: degradar callado ya costo caro dos veces acá.
     """
     decir = log or (lambda m: logger.warning("%s", m))
-    cur.execute(f"SAVEPOINT {_SAVEPOINT}")
+
+    # `SAVEPOINT` SOLO EXISTE DENTRO DE UN BLOQUE DE TRANSACCION. Con `autocommit=True`
+    # pedirlo levanta NoActiveSqlTransaction, y esta funcion --cuyo contrato es NO poder
+    # romper al llamador-- rompia al llamador. Hoy el unico llamador es `alertas.barrer`, que
+    # usa `conn.commit()`, asi que no era un bug en produccion; era una mina para el
+    # proximo. Con autocommit no hay nada que proteger: cada sentencia es su propia
+    # transaccion y un DDL fallido no arrastra al resto.
+    protegido = True
+    try:
+        cur.execute(f"SAVEPOINT {_SAVEPOINT}")
+    except Exception:  # noqa: BLE001 - sin transaccion se sigue, sin red de contencion
+        protegido = False
+
+    def _volver_atras() -> None:
+        """El rollback tampoco puede levantar: seria romper al llamador en el camino de
+        error, que es justo donde mas importa no romperlo."""
+        if not protegido:
+            return
+        try:
+            cur.execute(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
+        except Exception:  # noqa: BLE001
+            pass
+
     try:
         ensure_table(cur)
     except Exception as e:  # noqa: BLE001 - la auditoria no puede apagar las alertas
-        cur.execute(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
+        _volver_atras()
         decir(f"[desconexiones] captura NO aplicada, las alertas siguen "
               f"({type(e).__name__}: {e}). Falta el privilegio TRIGGER sobre `users`?")
         # A LA TABLA `errors`, NO SOLO AL LOG. Es el mismo argumento que ya esta escrito en
@@ -193,19 +265,28 @@ def asegurar_sin_romper(cur, log=None) -> bool:
         # (regla 6). `_escribir` abre su PROPIA conexion, asi que esto es seguro incluso con
         # la transaccion del llamador recien abortada.
         #
-        # El try NO es de mas: `errores.registrar` promete no levantar, pero la guarda no
-        # puede depender de esa promesa -- si algun dia rompe, se lleva puesto el manejo del
-        # fallo original y con el las alertas. Misma cautela que `worker._registrar_fallo`.
-        try:
-            from src import errores
-
-            errores.registrar("arranque", e, context={
-                "que": "desconexiones.ensure_table",
-                "efecto": "sin captura de conexion/desconexion; las alertas siguen",
-                "revisar": "has_table_privilege(current_user, 'users', 'TRIGGER')",
-            })
-        except Exception:  # noqa: BLE001 - una bitacora rota no puede abortar la guarda
-            pass
+        _a_la_bitacora(e, {
+            "que": "desconexiones.ensure_table",
+            "efecto": "sin captura de conexion/desconexion; las alertas siguen",
+            "revisar": "has_table_privilege(current_user, 'users', 'TRIGGER')",
+        })
         return False
-    cur.execute(f"RELEASE SAVEPOINT {_SAVEPOINT}")
+    if protegido:
+        cur.execute(f"RELEASE SAVEPOINT {_SAVEPOINT}")
+
+    # EL DDL CORRIO SIN ERROR Y LA CAPTURA PUEDE ESTAR IGUAL MUERTA. Ver `_DUENOS_SQL`: con
+    # la tabla creada por otro rol, el INSERT del trigger da permission denied, lo traga el
+    # EXCEPTION del plpgsql, y todos los chequeos de arriba dan verde. Es la tercera variante
+    # del mismo modo de falla en este archivo, asi que se verifica en vez de suponerse.
+    cur.execute(_DUENOS_SQL)
+    fila = cur.fetchone()
+    if fila and fila[0] is False:
+        decir("[desconexiones] la funcion y `conexiones_operador` tienen DUEÑOS DISTINTOS: "
+              "el trigger no va a poder insertar. Alinear con ALTER TABLE ... OWNER TO.")
+        _a_la_bitacora(None, {
+            "que": "invariante de dueños de desconexiones",
+            "efecto": "el trigger existe y NO captura; el historial queda vacio",
+            "revisar": "pg_proc.proowner vs pg_class.relowner de conexiones_operador",
+        })
+        return False
     return True
