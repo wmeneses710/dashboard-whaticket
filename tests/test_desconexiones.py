@@ -1,0 +1,269 @@
+"""El historial de conexion/desconexion de operadores: la CAPTURA, no la alerta.
+
+POR QUE ES UN TRIGGER Y NO UN POLLER. `users` es un SNAPSHOT: el ETL pisa `status` y
+`refreshed_at` en cada sync y el estado anterior se pierde. Un poller cada 60 s pierde
+toda transicion que ocurra entre dos pasadas; el trigger ve TODOS los cambios por
+construccion, y ademas es agnostico del escritor (el ETL, un UPDATE a mano, o el ETL
+reescrito el año que viene).
+
+LO QUE ESTOS TESTS PROTEGEN son las tres decisiones que, si se caen, no dan error: dan un
+historial silenciosamente inutil o un ETL roto. Se prueba el TEXTO del DDL porque en este
+repo no hay tests contra base real; la verificacion de que el trigger DISPARA se hizo a
+mano contra `whaticket_copia` y esta anotada en docs/auditoria-desconexiones.md.
+"""
+from __future__ import annotations
+
+from src import desconexiones
+
+
+class _FakeCursor:
+    """Registra el SQL que le mandan, normalizado a una linea."""
+
+    def __init__(self):
+        self.sql: list[str] = []
+
+    def execute(self, sql, params=None):
+        self.sql.append(" ".join(str(sql).split()))
+
+
+def _ddl() -> str:
+    cur = _FakeCursor()
+    desconexiones.ensure_table(cur)
+    return " ".join(cur.sql)
+
+
+# --- la idempotencia --------------------------------------------------------
+
+def test_cada_sentencia_del_DDL_es_idempotente():
+    """`ensure_table` corre en CADA ciclo del worker (cada 60 s). Una sentencia que no
+    tolere volver a correr tumba el ciclo entero, y con el las alertas."""
+    cur = _FakeCursor()
+    desconexiones.ensure_table(cur)
+    for stmt in cur.sql:
+        assert ("IF NOT EXISTS" in stmt) or ("OR REPLACE" in stmt), \
+            f"sentencia no idempotente: {stmt[:120]}"
+
+
+def test_el_trigger_se_reemplaza_SIN_dejar_una_ventana_sin_trigger():
+    """`DROP` + `CREATE` deja microsegundos en los que un UPDATE del ETL no se registra.
+    PG 16 tiene `CREATE OR REPLACE TRIGGER`: se usa ese."""
+    ddl = _ddl()
+    assert "CREATE OR REPLACE TRIGGER" in ddl
+    assert "DROP TRIGGER" not in ddl
+
+
+# --- las tres decisiones que si se caen NO dan error ------------------------
+
+def test_el_trigger_solo_registra_cambios_REALES_de_status():
+    """SIN ESTE `WHEN` el historial nace basura. El upsert del ETL toca las 49 filas en
+    cada sync y `AFTER UPDATE OF status` dispara aunque el valor sea el mismo: serian 49
+    filas de ruido por corrida en lugar de solo las transiciones."""
+    ddl = _ddl()
+    assert "AFTER UPDATE OF status ON users" in ddl
+    assert "WHEN (OLD.status IS DISTINCT FROM NEW.status)" in ddl
+
+
+def test_el_trigger_NO_puede_abortar_la_escritura_del_ETL():
+    """MISMA REGLA QUE `errores.registrar` Y `worker._registrar_fallo`: un registrador
+    roto no puede tumbar a quien lo llama. Aca es mas grave que en Python, porque el
+    trigger corre DENTRO de la transaccion del ETL: si la tabla de historial no existe o
+    no acepta la fila, el UPDATE de `users` falla y el ETL deja de ingestar."""
+    ddl = _ddl()
+    assert "EXCEPTION" in ddl and "WHEN OTHERS" in ddl
+
+
+def test_el_historial_guarda_LOS_DOS_relojes():
+    """`last_seen` es cuando lo vio WHATICKET; `detected_at` es cuando lo vimos NOSOTROS.
+    Su DIFERENCIA es la latencia del sync del ETL, que hoy no se puede medir de ninguna
+    otra forma (`users` se pisa entero y `sync_state` no tiene clave para lookups).
+    Guardar uno solo hace la pregunta imposible para siempre."""
+    ddl = _ddl()
+    assert "last_seen" in ddl
+    assert "detected_at" in ddl
+
+
+def test_se_guarda_el_estado_ANTERIOR_y_no_solo_el_nuevo():
+    """Sin `status_ant` una fila no dice si fue una desconexion o una reconexion."""
+    ddl = _ddl()
+    assert "status_ant" in ddl
+    assert "status_nuevo" in ddl
+
+
+# --- las trampas conocidas de este repo -------------------------------------
+
+def test_el_DDL_no_lleva_NINGUN_porcentaje():
+    """psycopg parsea el SQL completo buscando placeholders, comentarios incluidos (ver
+    tests/test_queries.py). Un `%` suelto en el cuerpo de la funcion plpgsql revienta con
+    IndexError en cuanto alguien le pase params. Se evita entero."""
+    assert "%" not in _ddl()
+
+
+def test_la_tabla_NO_se_llama_como_el_toggle_de_operadores():
+    """`operator_status.activo` es la baja LOGICA del tablero (prender/apagar un operador);
+    `users.status` es la CONEXION (online/offline). Son cosas distintas y un nombre como
+    `operator_status_history` las confunde para siempre."""
+    ddl = _ddl()
+    assert "operator_status_history" not in ddl
+    assert "conexiones_operador" in ddl
+
+
+# --- el INSERT corre con los privilegios de QUIEN DISPARA -------------------
+
+def test_la_funcion_es_SECURITY_DEFINER():
+    """EL BUG QUE ESTO IMPIDE, reproducido el 2026-09-03 contra `whaticket_copia`.
+
+    Por defecto `CREATE FUNCTION` es SECURITY INVOKER: el cuerpo corre con los privilegios
+    de QUIEN dispara el trigger, o sea el rol del ETL, no el dueño de la funcion. Si ese
+    rol no tiene INSERT en `conexiones_operador` (ni USAGE en su secuencia, que arranca sin
+    ACL), el INSERT da permission denied, lo atrapa el `EXCEPTION WHEN OTHERS` y el
+    historial queda VACIO PARA SIEMPRE sin un solo error visible.
+
+    Medido con un rol que solo tenia SELECT+UPDATE sobre `users`:
+        filas capturadas: 0
+        contar pg_trigger devuelve: 1   <- todo verde, y miente
+
+    El savepoint de `asegurar_sin_romper` cubre el `CREATE TRIGGER`, que es en tiempo de
+    DEPLOY. Esto es en tiempo de EJECUCION, y es el que no se ve.
+    """
+    assert "SECURITY DEFINER" in _ddl()
+
+
+def test_la_funcion_fija_el_search_path():
+    """SECURITY DEFINER SIN `search_path` FIJO ES UN AGUJERO DE ESCALADA: quien pueda crear
+    un objeto en un schema que venga antes en el path del invocador secuestra la resolucion
+    de nombres y corre codigo con los privilegios del dueño. `pg_temp` va ULTIMO para que
+    una tabla temporaria no pueda sombrear a `conexiones_operador`."""
+    ddl = _ddl()
+    assert "SET search_path" in ddl
+    assert "pg_temp" in ddl
+
+
+# --- la captura no puede apagar las alertas que YA funcionan -----------------
+
+def test_la_captura_va_en_un_SAVEPOINT_propio():
+    """UN DDL QUE FALLA ABORTA LA TRANSACCION ENTERA en Postgres, asi que un try/except
+    pelado no alcanza: la sentencia siguiente de `barrer` moriria con
+    InFailedSqlTransaction y se llevaria el barrido igual. Misma trampa que documenta
+    `worker.score_batch` con su `conn.rollback()`."""
+    cur = _FakeCursor()
+    desconexiones.asegurar_sin_romper(cur)
+    junto = " ".join(cur.sql)
+    assert "SAVEPOINT" in junto
+    assert "RELEASE SAVEPOINT" in junto
+
+
+def test_un_fallo_de_la_captura_NO_apaga_las_alertas(monkeypatch):
+    """EL RIESGO REAL DE PRODUCCION. `CREATE TRIGGER` sobre `users` pide el privilegio
+    TRIGGER, y `users` es del ETL: si el dashboard conecta con un rol que no lo tiene,
+    esto revienta con permission denied. En la copia no se ve porque ahi el rol es
+    superusuario y dueño de la tabla.
+
+    `alertas.barrer` tiene UN solo try que arranca en `ensure_table` y un except que
+    devuelve todo en ceros: sin esta guarda, una tabla de auditoria nueva apagaria en
+    silencio las alertas VIP que hoy andan."""
+    def revienta(cur):
+        raise RuntimeError("permission denied for table users")
+
+    monkeypatch.setattr(desconexiones, "ensure_table", revienta)
+    cur = _FakeCursor()
+    ok = desconexiones.asegurar_sin_romper(cur, log=lambda m: None)
+    assert ok is False, "tiene que informar que NO quedo aplicada"
+    assert any("ROLLBACK TO SAVEPOINT" in s for s in cur.sql), \
+        "sin el rollback al savepoint la transaccion queda abortada"
+
+
+def test_el_fallo_de_la_captura_DICE_algo(monkeypatch):
+    """Degradar en silencio es el modo de falla que ya costo caro dos veces en este repo
+    (la alerta de espera, el PUT de `operator_status`). UNA linea que distinga
+    'la captura entro' de 'la captura no entro'. Es la leccion de `errores.estado`."""
+    def revienta(cur):
+        raise RuntimeError("permission denied for table users")
+
+    monkeypatch.setattr(desconexiones, "ensure_table", revienta)
+    dicho: list[str] = []
+    desconexiones.asegurar_sin_romper(_FakeCursor(), log=dicho.append)
+    assert dicho, "un fallo de la captura no puede ser silencioso"
+    assert "permission denied" in " ".join(dicho)
+
+
+def test_el_fallo_va_a_la_tabla_ERRORS_y_no_solo_a_stdout(monkeypatch):
+    """`stdout` de un contenedor se pierde en el redeploy; `errors` sobrevive. Es el mismo
+    argumento que ya esta escrito en el loop de alertas de `worker.py`:
+
+        "A LA TABLA `errors`, NO SOLO A STDOUT. (...) si se rompe en silencio el canal se
+         queda mudo y nadie distingue 'no hubo esperas largas' de 'el barrido esta muerto
+         hace tres dias'."
+
+    Componente `arranque`, que es el del vocabulario acordado para migraciones y config
+    (`errores.COMPONENTES`), y sin `account` porque el DDL no es de una cuenta puntual."""
+    from src import errores
+
+    def revienta(cur):
+        raise RuntimeError("permission denied for table users")
+
+    visto = {}
+
+    def falso_registrar(component, exc=None, *, account=None, message=None, context=None):
+        visto.update(component=component, exc=exc, account=account, context=context)
+        return True
+
+    monkeypatch.setattr(desconexiones, "ensure_table", revienta)
+    monkeypatch.setattr(errores, "registrar", falso_registrar)
+    desconexiones.asegurar_sin_romper(_FakeCursor(), log=lambda m: None)
+
+    assert visto.get("component") == "arranque", \
+        f"componente fuera del vocabulario acordado: {visto.get('component')!r}"
+    assert visto["component"] in errores.COMPONENTES
+    assert visto.get("account") is None, "el DDL no es de una cuenta puntual"
+    assert isinstance(visto.get("exc"), RuntimeError)
+
+
+def test_una_bitacora_ROTA_no_rompe_la_guarda(monkeypatch):
+    """`errores.registrar` promete no levantar, pero la guarda NO puede depender de esa
+    promesa: si algun dia rompe, se lleva puesto el manejo del fallo original y con el las
+    alertas. Misma cautela que `worker._registrar_fallo` del lado del llamador."""
+    from src import errores
+
+    def revienta(cur):
+        raise RuntimeError("permission denied")
+
+    def bitacora_rota(*a, **k):
+        raise RuntimeError("la tabla errors no existe")
+
+    monkeypatch.setattr(desconexiones, "ensure_table", revienta)
+    monkeypatch.setattr(errores, "registrar", bitacora_rota)
+    cur = _FakeCursor()
+    assert desconexiones.asegurar_sin_romper(cur, log=lambda m: None) is False
+    assert any("ROLLBACK TO SAVEPOINT" in s for s in cur.sql)
+
+
+def test_alertas_ensure_table_usa_la_version_que_NO_rompe(monkeypatch):
+    """La guarda no sirve si el cableado llama a la version estricta."""
+    from src import alertas
+
+    def revienta(cur):
+        raise RuntimeError("permission denied for table users")
+
+    monkeypatch.setattr(desconexiones, "ensure_table", revienta)
+    alertas.ensure_table(_FakeCursor())   # no tiene que levantar
+
+
+def test_el_DDL_lo_corre_ALGUIEN_en_produccion():
+    """UN DDL QUE NADIE LLAMA ES UN ARCHIVO, NO UNA TABLA. `alertas.ensure_table` corre en
+    cada ciclo del worker, asi que la captura arranca con el primer ciclo. Sin este cableo
+    todo lo de arriba pasa los tests y no existe en la base."""
+    from src import alertas
+
+    cur = _FakeCursor()
+    alertas.ensure_table(cur)
+    junto = " ".join(cur.sql)
+    assert "conexiones_operador" in junto
+    assert "trg_conexiones_operador" in junto
+
+
+def test_el_indice_sirve_a_la_consulta_de_la_alerta():
+    """La consulta que viene es 'desconexiones de una cuenta, lo mas reciente primero'.
+    Indice parcial sobre offline, mismo idioma que `idx_operator_status_off`."""
+    ddl = _ddl()
+    assert "CREATE INDEX IF NOT EXISTS" in ddl
+    assert "offline" in ddl

@@ -222,10 +222,24 @@ def ensure_table(cur) -> None:
     Asegurarla aca vuelve el despliegue independiente del orden: una tabla VACIA significa
     "no hay VIP que vigilar", que es lo correcto, no un error.
     """
+    from src.desconexiones import asegurar_sin_romper as asegurar_conexiones
     from src.vip import ensure_table as ensure_vip
     for stmt in _CREATE_STMTS:
         cur.execute(stmt)
     ensure_vip(cur)
+    # `conexiones_operador` + su trigger sobre `users`, por el MISMO motivo que la de VIP:
+    # el dueño de `users` es el ETL (otro repo) y el orden de deploy no se puede deducir
+    # del codigo. Asegurarla aca hace que la captura empiece con el primer ciclo del worker
+    # y que el trigger se restablezca solo si un redeploy del ETL recrea `users`. Ver
+    # src/desconexiones.py para por que la alerta NO vive en el trigger.
+    #
+    # VA ULTIMA Y EN SU PROPIO SAVEPOINT, y las dos cosas importan. Ultima porque
+    # `alertas_enviadas` y `vip_players` son de las alertas que YA funcionan y no pueden
+    # depender de una tabla nueva. En savepoint porque `CREATE TRIGGER` sobre una tabla
+    # ajena puede fallar por privilegios en prod, un DDL fallido aborta la transaccion
+    # entera, y este `try` de `barrer` devuelve todo en ceros: la auditoria apagaria las
+    # alertas VIP en silencio. Degrada a "sin captura", no a "sin alertas".
+    asegurar_conexiones(cur)
 
 
 def ledger_vacio(cur, account: str, tipo: str) -> bool:
