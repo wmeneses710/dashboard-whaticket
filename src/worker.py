@@ -1085,6 +1085,11 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     # `conexiones_operador`, que se llena igual, y se prende despues.
     canal_desc = desconexiones.canal_desde_env(os.environ)
     emit(f"[worker] alerta de desconexion: {'on' if canal_desc.configurado else 'off'}")
+    # LA CAPTURA ES OTRA COSA QUE EL AVISO, y por eso son DOS lineas. El historial se llena
+    # aunque la alerta este apagada; sin esta linea, un trigger que quedo sin crear --o
+    # creado y sin poder insertar-- se ve igual que un dia en que nadie se desconecto.
+    # Mismo patron que la linea de `errores.estado`, unas lineas mas arriba.
+    emit(f"[worker] {desconexiones.estado(cfg.database_url)}")
     threading.Thread(
         target=run_alert_loop, args=(cfg, canal_vip),
         kwargs={"llm": llm, "should_stop": should_stop, "log": emit,

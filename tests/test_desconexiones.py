@@ -555,3 +555,84 @@ def test_el_mensaje_es_INCONFUNDIBLE_en_un_chat_compartido():
     assert "🔌" in primera
     assert "esconecta" in primera, "la primera linea tiene que decir QUE es"
     assert "🍀" not in msg and "⏳" not in msg, "no puede confundirse con un resumen VIP"
+
+
+# =====================================================================
+# LA SONDA DE ARRANQUE
+# =====================================================================
+
+class _CursorEstado:
+    """Cursor falso para la sonda: contesta las dos consultas por orden."""
+
+    def __init__(self, primera, segunda=(0, None), duenos=True):
+        self._primera, self._segunda, self._duenos = primera, segunda, duenos
+        self._n = 0
+
+    def execute(self, sql, params=None):
+        txt = " ".join(str(sql).split())
+        # `FROM conexiones_operador` y no `count(*)`: _ESTADO_SQL tambien tiene un
+        # `count(*)` (sobre pg_trigger) y menciona la tabla, asi que el despacho por esas
+        # dos subcadenas matcheaba la PRIMERA consulta. Otra vez una huella textual
+        # demasiado ancha.
+        self._ultimo = ("duenos" if "tgfoid" in txt
+                        else "conteo" if "FROM conexiones_operador" in txt
+                        else "primera")
+    def fetchone(self):
+        if self._ultimo == "duenos":
+            return (self._duenos,)
+        if self._ultimo == "conteo":
+            return self._segunda
+        return self._primera
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+class _ConnEstado:
+    def __init__(self, cur): self._cur = cur
+    def cursor(self): return self._cur
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+def _estado(primera, segunda=(0, None), duenos=True) -> str:
+    cur = _CursorEstado(primera, segunda, duenos)
+    return desconexiones.estado("dsn", connect=lambda: _ConnEstado(cur))
+
+
+def test_la_sonda_NUNCA_levanta_y_devuelve_UNA_linea():
+    """Es un log de arranque: no puede impedir que el worker levante. Mismo contrato que
+    `errores.estado`."""
+    def revienta():
+        raise RuntimeError("could not connect to server")
+
+    linea = desconexiones.estado("dsn", connect=revienta)
+    assert isinstance(linea, str) and "\n" not in linea
+    assert "could not connect" in linea
+
+
+def test_la_sonda_distingue_el_deploy_que_ENTRO_del_que_NO():
+    """La razon de existir de esto, igual que en `errores.estado`: el orden de deploy y los
+    privilegios no se pueden deducir del codigo. UNA linea que separe "esta capturando" de
+    "el trigger no esta y por eso"."""
+    # (trigger, definer, puede_trigger, tabla)
+    assert "NO ACTIVA" in _estado((0, None, False, False))
+    assert "privilegio TRIGGER" in _estado((0, None, False, True))
+    assert "SECURITY DEFINER" in _estado((1, False, True, True))
+    assert "dueño" in _estado((1, True, True, True), duenos=False)
+
+
+def test_la_sonda_dice_CUANTOS_eventos_y_hace_cuanto():
+    """`lista` sin numeros no distingue "capturando" de "el trigger esta y no inserta" --
+    que es el modo de falla que costo dos rondas encontrar."""
+    from datetime import timedelta
+
+    linea = _estado((1, True, True, True), segunda=(41, timedelta(minutes=3)))
+    assert "41" in linea and ("0:03" in linea or "3" in linea)
+
+
+def test_la_sonda_no_asusta_en_un_despliegue_NUEVO():
+    """Cero eventos recien desplegado es NORMAL: nadie se desconecto todavia. Decir "roto"
+    ahi entrena a la gente a ignorar la linea."""
+    linea = _estado((1, True, True, True), segunda=(0, None))
+    assert "0 eventos" in linea
+    assert "ROTA" not in linea and "NO ACTIVA" not in linea

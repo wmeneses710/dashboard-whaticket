@@ -518,3 +518,91 @@ def mensaje_desconexion(d: dict) -> str:
         if seg >= 60:
             cuerpo.append(f"⏱ detectado {seg // 60} min despues")
     return "\n".join(cuerpo)
+
+
+# =====================================================================
+# LA SONDA DE ARRANQUE
+# =====================================================================
+#
+# POR QUE EXISTE, y es la misma razon que `errores.estado`: el orden de deploy y los
+# privilegios NO SE PUEDEN DEDUCIR DEL CODIGO. Sin esta linea, un trigger que quedo sin
+# crear --o creado y sin poder insertar-- se ve EXACTAMENTE igual que un dia en que nadie se
+# desconecto: las dos cosas son un historial vacio.
+#
+# LO QUE ESTA LINEA NO CUBRE: es de ARRANQUE, asi que no ve una captura que se muere estando
+# el worker vivo. Eso lo cubre `asegurar_sin_romper`, que revisa la invariante de dueños en
+# cada ciclo de 60 s y lo deja en `errors`. Entre las dos queda un hueco angosto: trigger
+# presente, dueños alineados, y el INSERT fallando por otra causa. Ese se ve al proximo
+# reinicio, en el conteo de eventos de esta misma linea.
+
+_ESTADO_SQL = """
+SELECT (SELECT count(*) FROM pg_trigger t
+         WHERE t.tgrelid = to_regclass('users')
+           AND t.tgname  = 'trg_conexiones_operador'
+           AND NOT t.tgisinternal),
+       (SELECT prosecdef FROM pg_proc
+         WHERE oid = to_regprocedure('registrar_conexion_operador()')),
+       CASE WHEN to_regclass('users') IS NULL THEN NULL
+            ELSE has_table_privilege(current_user, 'users', 'TRIGGER') END,
+       to_regclass('conexiones_operador') IS NOT NULL
+"""
+
+
+def estado(dsn: str, connect=None) -> str:
+    """UNA linea para el log de arranque: la captura esta viva, o por que no.
+
+    NUNCA LEVANTA. Es un log de arranque: no puede impedir que el worker levante. Mismo
+    contrato que `errores.estado`.
+
+    `connect` inyectable como en `ErrorLog`, para poder probarla sin base.
+
+    TODO POR OID / `to_regclass`, igual que `_DUENOS_SQL`: un homonimo en otro schema no
+    puede volverla multifila, y un objeto ausente da NULL en vez de reventar. Un `SELECT` y
+    no un `INSERT` de prueba, por el mismo motivo que en `errores.estado`: verificar
+    escribiendo dejaria una fila basura en cada arranque.
+    """
+    def _abrir():
+        import psycopg
+
+        return psycopg.connect(dsn, connect_timeout=8)
+
+    try:
+        with (connect or _abrir)() as conn:
+            with conn.cursor() as cur:
+                cur.execute(_ESTADO_SQL)
+                trg, definer, puede_trigger, tabla = cur.fetchone()
+
+                if not tabla:
+                    return ("captura de desconexiones NO ACTIVA: falta la tabla "
+                            "`conexiones_operador` (la crea el worker en su primer ciclo)")
+                if not trg:
+                    porque = ("" if puede_trigger else
+                              "; falta el privilegio TRIGGER sobre `users` "
+                              "(lo otorga el dueño de la tabla, que es el ETL)")
+                    return ("captura de desconexiones NO ACTIVA: sin trigger sobre "
+                            f"`users`{porque}")
+                # SECURITY INVOKER = el INSERT corre como el rol del ETL. Reproducido: 0
+                # filas capturadas con el trigger presente y todo en verde.
+                if not definer:
+                    return ("captura de desconexiones ROTA: la funcion no es SECURITY "
+                            "DEFINER, asi que el INSERT corre con los privilegios del ETL "
+                            "y el historial se queda vacio en silencio")
+                if _duenos_coinciden(cur) is not True:
+                    return ("captura de desconexiones ROTA: la funcion y "
+                            "`conexiones_operador` no comparten dueño, asi que el trigger "
+                            "no puede insertar. Alinear con ALTER TABLE ... OWNER TO")
+
+                cur.execute("SELECT count(*), now() - max(detected_at) "
+                            "FROM conexiones_operador")
+                n, hace = cur.fetchone()
+                # CERO NO ES UN ERROR EN UN DESPLIEGUE NUEVO: nadie se desconecto todavia.
+                # Decir "roto" aca entrena a la gente a ignorar la linea, que es como se
+                # pierde la unica señal que teniamos.
+                if not n:
+                    return ("captura de desconexiones lista, 0 eventos todavia "
+                            "(normal recien desplegado; si sigue en 0 al proximo "
+                            "reinicio, revisar)")
+                return f"captura de desconexiones lista ({n} eventos, el ultimo hace {hace})"
+    except Exception as e:  # noqa: BLE001 - cualquier fallo se traduce a texto
+        return ("no se pudo verificar la captura de desconexiones: "
+                f"{type(e).__name__}: {str(e)[:200]}")

@@ -237,11 +237,31 @@ puede escribir en `errors` desde el `EXCEPTION` del plpgsql de forma confiable: 
 de la transacción del ETL, y si esa transacción hace *rollback* el registro del error se va
 con ella.
 
-La cobertura correcta es una **sonda del lado del dashboard**: si `asegurar_sin_romper`
-devolvió `True` (el trigger está) y `conexiones_operador` sigue vacía después de varias
-pasadas del ETL, registrar en `errors`. Detecta todas las causas de vacío silencioso, no
-solo la de privilegios. **Está pendiente** — hoy la detección es el punto 2 del chequeo
-post-deploy, hecho a mano.
+La cobertura es una **línea en el log de arranque**, `desconexiones.estado()`, igual que la
+de `errores.estado` y la de las alertas VIP. Sin ella, un trigger que quedó sin crear — o
+creado y sin poder insertar — se ve **exactamente igual** que un día en que nadie se
+desconectó: las dos cosas son un historial vacío.
+
+Se emite en `run_worker_loop`, al lado de `[worker] alertas VIP: on|off`, y distingue cinco
+estados:
+
+| Línea | Qué pasó |
+|---|---|
+| `lista (N eventos, el ultimo hace X)` | está capturando |
+| `lista, 0 eventos todavia (normal recien desplegado...)` | recién subido, nadie se desconectó aún |
+| `NO ACTIVA: falta la tabla ...` | el worker no completó su primer ciclo |
+| `NO ACTIVA: sin trigger sobre users; falta el privilegio TRIGGER ...` | el modo de falla 1 |
+| `ROTA: la funcion no es SECURITY DEFINER ...` / `... no comparten dueño ...` | los modos 2 y 4 |
+
+`0 eventos` **no** se reporta como error recién desplegado: nadie se desconectó todavía, y
+decir "roto" ahí entrena a la gente a ignorar la línea — que es como se pierde la única señal
+que había. Lo que sí importa es `0 eventos` en un worker que lleva días arriba.
+
+**Lo que esta línea no cubre:** es de arranque, así que no ve una captura que se muere estando
+el worker vivo. Eso lo cubre `asegurar_sin_romper`, que revisa la invariante de dueños en cada
+ciclo de 60 s y lo deja en `errors`. Entre las dos queda un hueco angosto — trigger presente,
+dueños alineados, y el `INSERT` fallando por otra causa — que se ve al próximo reinicio, en el
+conteo de eventos de esta misma línea.
 
 ## Verificación contra base real
 
