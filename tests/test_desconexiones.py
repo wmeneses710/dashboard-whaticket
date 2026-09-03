@@ -19,17 +19,28 @@ from src import desconexiones
 class _FakeCursor:
     """Registra el SQL que le mandan, normalizado a una linea.
 
-    `dueno_coincide` es la respuesta al chequeo de la invariante de dueños.
+    `dueno_coincide`: la respuesta al chequeo de dueños. `True` / `False` / `None` ("no se
+    pudo determinar"), o el centinela `SIN_FILA` para que `fetchone` devuelva `None`.
+    `levantar_en`: subcadena del SQL con la que la sentencia debe reventar.
     """
 
-    def __init__(self, dueno_coincide=True):
+    SIN_FILA = object()
+
+    def __init__(self, dueno_coincide=True, levantar_en=None):
         self.sql: list[str] = []
         self._dueno = dueno_coincide
+        self._levantar_en = levantar_en
 
     def execute(self, sql, params=None):
-        self.sql.append(" ".join(str(sql).split()))
+        texto = " ".join(str(sql).split())
+        self.sql.append(texto)
+        if self._levantar_en and self._levantar_en in texto:
+            raise RuntimeError(
+                "more than one row returned by a subquery used as an expression")
 
     def fetchone(self):
+        if self._dueno is _FakeCursor.SIN_FILA:
+            return None
         return (self._dueno,)
 
 
@@ -221,6 +232,61 @@ def test_dueno_distinto_se_reporta_como_captura_ROTA(monkeypatch):
     cur = _FakeCursor(dueno_coincide=False)
     assert desconexiones.asegurar_sin_romper(cur, log=lambda m: None) is False
     assert visto.get("component") == "arranque"
+
+
+def test_si_la_consulta_de_duenos_LEVANTA_no_se_rompe_el_llamador(monkeypatch):
+    """MODO 6. La guarda que cerro el modo 5 abrio este: el chequeo de dueños quedo
+    DESPUES del `RELEASE SAVEPOINT` y sin `try`. Si esa sentencia levanta, la excepcion
+    sube a `alertas.ensure_table` -> `alertas.barrer`, cuyo unico `try` devuelve todo en
+    ceros: las alertas VIP se apagan en silencio. Es exactamente el daño que el savepoint
+    existe para evitar, y el contrato que el modulo declara.
+
+    LA VIA CONCRETA, reproducida el 2026-09-03: con un homonimo en otro schema, la version
+    anterior de `_DUENOS_SQL` (subconsultas por `proname`/`relname` sin calificar) daba
+        CardinalityViolation: more than one row returned by a subquery used as an expression
+    y ademas dejaba la transaccion en `InFailedSqlTransaction` -- asi que un `try/except` en
+    Python tampoco alcanzaba. Cada operacion necesita su PROPIO savepoint."""
+    from src import errores
+
+    monkeypatch.setattr(errores, "registrar", lambda *a, **k: None)
+    cur = _FakeCursor(levantar_en="pg_trigger")
+    assert desconexiones.asegurar_sin_romper(cur, log=lambda m: None) is False
+    assert any("ROLLBACK TO SAVEPOINT" in s for s in cur.sql), \
+        "el chequeo de dueños necesita su propio savepoint, no solo un try"
+
+
+def test_NULL_no_es_verde(monkeypatch):
+    """`no se` NO puede leerse como `bien` en un modulo cuyo punto entero es que el verde
+    signifique algo. Si un objeto no existe la expresion da NULL, y el codigo anterior
+    hacia `fila[0] is False` -> `None is False` es False -> caia al `return True`.
+    Reproducido: la consulta devolvia `(None,)` y el modulo reportaba verde."""
+    from src import errores
+
+    monkeypatch.setattr(errores, "registrar", lambda *a, **k: None)
+    assert desconexiones.asegurar_sin_romper(
+        _FakeCursor(dueno_coincide=None), log=lambda m: None) is False
+
+
+def test_sin_trigger_tampoco_es_verde(monkeypatch):
+    """Si el trigger no existe la consulta no devuelve NINGUNA fila. `fetchone()` da None y
+    el codigo anterior habria explotado con TypeError al indexar."""
+    from src import errores
+
+    monkeypatch.setattr(errores, "registrar", lambda *a, **k: None)
+    assert desconexiones.asegurar_sin_romper(
+        _FakeCursor(dueno_coincide=_FakeCursor.SIN_FILA), log=lambda m: None) is False
+
+
+def test_el_chequeo_de_duenos_NO_puede_dar_multifila():
+    """Se pregunta por OID, no por nombre. `to_regclass` devuelve NULL en vez de error y no
+    puede dar multifila; `pg_trigger` se acota por `(tgrelid, tgname)`, que es unico. Y el
+    oid de la funcion sale de `tgfoid`: la que el trigger VA A LLAMAR de verdad, no la que
+    resuelva el search_path del momento."""
+    sql = desconexiones._DUENOS_SQL
+    assert "to_regclass" in sql
+    assert "tgfoid" in sql and "tgrelid" in sql
+    assert "WHERE proname" not in sql and "WHERE relname" not in sql, \
+        "buscar por nombre sin calificar es la via a CardinalityViolation"
 
 
 def test_dueno_coincidente_no_reporta_nada(monkeypatch):

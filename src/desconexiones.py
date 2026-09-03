@@ -23,14 +23,22 @@ fila (transaccional, sin red) y el hilo de alertas que ya corre cada 60 s la dre
 QUIEN ESCRIBE ESTE DDL. Lo asegura el dashboard aunque el dueño de `users` sea el ETL,
 por el mismo motivo que `alertas.ensure_table` crea `vip_players`: el orden de deploy no
 se puede deducir del codigo (ver `errores.estado`, donde el dashboard subiendo antes que
-el `db/schema.sql` del ETL dejaba la tabla vacia EN SILENCIO). `CREATE OR REPLACE` de las
-cuatro sentencias hace que correrlo desde los dos lados sea inofensivo, y que el trigger
-se restablezca solo si un redeploy del ETL recrea `users`.
+el `db/schema.sql` del ETL dejaba la tabla vacia EN SILENCIO). Las CINCO sentencias son
+re-ejecutables --`IF NOT EXISTS`, `OR REPLACE` y un `REVOKE`, que revocando algo ya
+revocado es un no-op--, asi que correrlo repetido es inofensivo y el trigger se
+restablece solo si un redeploy del ETL recrea `users`.
 
 LO QUE TODAVIA NO RESUELVE: la CADENCIA. El trigger garantiza que no se pierda ningun
-cambio que llegue, pero dispara cuando el ETL escribe. Si el sync de `users` corre una vez
-por dia, el historial tendra un salto por dia. Son dos perillas distintas y esta es solo
-la de la captura.
+cambio que llegue, pero dispara cuando el ETL escribe. Son dos perillas distintas y esta
+es solo la de la captura.
+
+LA CADENCIA MEDIDA ES ~300 s (`LOOKUP_REFRESH_SECONDS` del ETL): `sistemas` 1,02 s y
+`datos` 238 s de `refreshed_at - max(last_seen)` el 2026-09-03. Una version anterior de
+este comentario decia "una vez por dia", inferido de dos lecturas de `refreshed_at`
+separadas 24 h. Esos dos puntos NO median la cadencia: `refreshed_at` se pisa entero en
+cada pasada, asi que con 5 minutos o con 24 horas el snapshot se ve IDENTICO -- estaban
+separados 24 h porque se consulto a la misma hora del dia. La metrica era incapaz de
+distinguir la hipotesis de su alternativa; el par `last_seen`/`refreshed_at` si puede.
 
 VOLUMEN: 49 operadores por unas pocas transiciones diarias. Decenas de filas por dia, no
 hace falta politica de retencion.
@@ -41,9 +49,11 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Nombre fijo, no generado: `alertas.ensure_table` es el unico llamador y corre una vez por
-# cuenta, sin anidamiento.
-_SAVEPOINT = "sp_conexiones_ddl"
+# Nombres fijos, no generados: `alertas.ensure_table` es el unico llamador y corre una vez
+# por cuenta, sin anidamiento. UNO POR OPERACION, porque cada una necesita su propia red:
+# ver `_en_savepoint`.
+_SP_DDL = "sp_conexiones_ddl"
+_SP_DUENOS = "sp_conexiones_duenos"
 
 # La tabla NO se llama `operator_status_history` a proposito. `operator_status.activo` es
 # la baja LOGICA del tablero (prender/apagar un operador para que no ensucie los cuadros)
@@ -157,20 +167,46 @@ _CREATE_STMTS = (
 # escribir la tabla. Y `CREATE TABLE IF NOT EXISTS` es un NO-OP si la tabla ya existe, sin
 # importar quien la creo: si la creo otro rol, la funcion corre como su propio dueño, el
 # INSERT vuelve a dar permission denied, y `prosecdef` sigue diciendo `true` -- asi que el
-# chequeo de SECURITY DEFINER NO lo detecta. Se compara tambien la secuencia porque el
-# `bigserial` la crea a nombre de quien creo la tabla.
+# chequeo de SECURITY DEFINER NO lo detecta.
+#
+# LA SECUENCIA SE COMPARA IGUAL, pero es defensa en profundidad y no el caso comun: mientras
+# este LIGADA a la tabla, Postgres se niega a cambiarle el dueño
+# (`FeatureNotSupported: Sequence is linked to table`, verificado el 2026-09-03), asi que
+# sigue al de la tabla sola. Solo se puede desalinear con un `ALTER SEQUENCE ... OWNED BY
+# NONE` deliberado primero -- probado, y ahi el chequeo lo detecta.
+#
+# TODO POR OID, NUNCA POR NOMBRE. La primera version usaba subconsultas
+# `WHERE proname = ...` / `WHERE relname = ...` sin calificar por schema, y con un homonimo
+# en otro schema eso levanta -- reproducido el 2026-09-03:
+#     CardinalityViolation: more than one row returned by a subquery used as an expression
+# y encima deja la transaccion en InFailedSqlTransaction. `to_regclass` devuelve NULL en vez
+# de error y no puede dar multifila; `WHERE oid = ...` acota a una fila por construccion; y
+# `(tgrelid, tgname)` es unico en `pg_trigger`.
+#
+# EL OID DE LA FUNCION SALE DE `tgfoid`, que es la que el trigger VA A LLAMAR de verdad, y no
+# la que resuelva el search_path del momento. Preguntar por el nombre contestaria sobre otra
+# funcion que la que corre.
+#
+# DEVUELVE NULL, O NINGUNA FILA, CUANDO NO SE PUEDE SABER: `to_regclass` de algo ausente da
+# NULL, y si el trigger no existe no hay fila. Quien lea esto tiene que tratar eso como
+# "no se", NO como "bien" (ver `_duenos_coinciden`).
 _DUENOS_SQL = """
-SELECT (SELECT proowner FROM pg_proc  WHERE proname = 'registrar_conexion_operador')
-     = (SELECT relowner FROM pg_class WHERE relname = 'conexiones_operador')
-   AND (SELECT proowner FROM pg_proc  WHERE proname = 'registrar_conexion_operador')
-     = (SELECT relowner FROM pg_class WHERE relname = 'conexiones_operador_id_seq')
+SELECT (SELECT proowner FROM pg_proc  WHERE oid = t.tgfoid)
+     = (SELECT relowner FROM pg_class WHERE oid = to_regclass('conexiones_operador'))
+   AND (SELECT proowner FROM pg_proc  WHERE oid = t.tgfoid)
+     = (SELECT relowner FROM pg_class WHERE oid = to_regclass('conexiones_operador_id_seq'))
+  FROM pg_trigger t
+ WHERE t.tgrelid = to_regclass('users')
+   AND t.tgname  = 'trg_conexiones_operador'
+   AND NOT t.tgisinternal
 """
 
 
 def ensure_table(cur) -> None:
     """Crea `conexiones_operador`, su indice y el trigger sobre `users` (idempotente).
 
-    Las cuatro sentencias son `IF NOT EXISTS` / `OR REPLACE`: corre en cada ciclo del
+    Las cinco sentencias se pueden volver a correr (`IF NOT EXISTS`, `OR REPLACE` y un
+    `REVOKE`, que es un no-op si ya estaba revocado): corre en cada ciclo del
     worker sin efecto, y auto-sana si un redeploy del ETL recrea `users` y se lleva el
     trigger puesto.
     """
@@ -204,87 +240,122 @@ def _a_la_bitacora(exc: BaseException | None, context: dict) -> None:
         pass
 
 
-def asegurar_sin_romper(cur, log=None) -> bool:
-    """`ensure_table` que NO puede tumbar a quien lo llama. True si quedo aplicado.
+def _en_savepoint(cur, nombre: str, hacer):
+    """Corre `hacer()` dentro de un SAVEPOINT propio. Devuelve `(ok, valor_o_excepcion)`.
 
-    POR QUE UN SAVEPOINT Y NO UN try/except PELADO. En Postgres un DDL que falla ABORTA la
-    transaccion entera: atrapar la excepcion en Python no alcanza, porque la sentencia
-    siguiente muere con InFailedSqlTransaction y se lleva el ciclo igual. Es la misma
-    trampa que documenta `worker.score_batch` con su `conn.rollback()`.
+    ES EL UNICO LUGAR DEL MODULO QUE TOCA SAVEPOINTS, y eso es la leccion, no una
+    preferencia de estilo. La version anterior tenia la danza escrita inline dentro de
+    `asegurar_sin_romper`, y al agregar el chequeo de dueños quedo DESPUES del `RELEASE` y
+    sin `try`: una sentencia sin red en la funcion cuyo contrato es no poder romper al
+    llamador. Si levantaba, subia hasta el `except` ancho de `alertas.barrer` y las alertas
+    VIP se apagaban en silencio. Con la danza en un solo lugar, toda operacion nueva entra
+    por aca o no entra.
 
-    QUE PUEDE FALLAR EN PRODUCCION, y por que no se ve en la copia. `CREATE TRIGGER` sobre
-    `users` pide el privilegio TRIGGER y `CREATE FUNCTION` pide CREATE en el schema. El
-    dueño de `users` es el ETL: si el dashboard conecta con un rol que no los tiene, esto
-    revienta con permission denied. En `whaticket_copia` el rol es `whaticket`,
-    superusuario Y dueño de la tabla, asi que ahi pasa siempre -- medido el 2026-09-03. La
-    copia NO es evidencia de que en prod vaya a andar.
+    UN SAVEPOINT POR OPERACION, no uno para todas: una sentencia que falla ABORTA la
+    transaccion, asi que un `try/except` en Python no alcanza -- lo que siga muere con
+    InFailedSqlTransaction igual. Y el savepoint del DDL ya esta liberado cuando corre el
+    chequeo, asi que no puede cubrirlo.
 
-    DEGRADA A "SIN CAPTURA", NUNCA A "SIN ALERTAS". `alertas.barrer` tiene UN solo `try`
-    que arranca en `ensure_table` y un `except` que devuelve todo en ceros: sin esta
-    guarda, una tabla de auditoria nueva apagaria EN SILENCIO las alertas VIP que hoy
-    funcionan en produccion, y el resultado se veria igual que un dia tranquilo.
+    SIN TRANSACCION NO HAY SAVEPOINT: con `autocommit=True` pedirlo levanta
+    NoActiveSqlTransaction. Ahi se corre sin red, que es correcto, porque cada sentencia es
+    su propia transaccion y una que falla no arrastra al resto.
 
-    Y LO DICE. Una linea que distingue "la captura entro" de "la captura no entro", por la
-    misma razon que existe `errores.estado`: degradar callado ya costo caro dos veces acá.
+    NUNCA LEVANTA. Ni al tomar el savepoint, ni al cerrarlo, ni en el camino de error --que
+    es justo donde mas importa no romper al llamador.
     """
-    decir = log or (lambda m: logger.warning("%s", m))
-
-    # `SAVEPOINT` SOLO EXISTE DENTRO DE UN BLOQUE DE TRANSACCION. Con `autocommit=True`
-    # pedirlo levanta NoActiveSqlTransaction, y esta funcion --cuyo contrato es NO poder
-    # romper al llamador-- rompia al llamador. Hoy el unico llamador es `alertas.barrer`, que
-    # usa `conn.commit()`, asi que no era un bug en produccion; era una mina para el
-    # proximo. Con autocommit no hay nada que proteger: cada sentencia es su propia
-    # transaccion y un DDL fallido no arrastra al resto.
     protegido = True
     try:
-        cur.execute(f"SAVEPOINT {_SAVEPOINT}")
+        cur.execute(f"SAVEPOINT {nombre}")
     except Exception:  # noqa: BLE001 - sin transaccion se sigue, sin red de contencion
         protegido = False
 
-    def _volver_atras() -> None:
-        """El rollback tampoco puede levantar: seria romper al llamador en el camino de
-        error, que es justo donde mas importa no romperlo."""
+    def _cerrar(sentencia: str) -> None:
         if not protegido:
             return
         try:
-            cur.execute(f"ROLLBACK TO SAVEPOINT {_SAVEPOINT}")
-        except Exception:  # noqa: BLE001
+            cur.execute(f"{sentencia} {nombre}")
+        except Exception:  # noqa: BLE001 - cerrar la red no puede ser lo que rompa
             pass
 
     try:
-        ensure_table(cur)
-    except Exception as e:  # noqa: BLE001 - la auditoria no puede apagar las alertas
-        _volver_atras()
+        valor = hacer()
+    except Exception as e:  # noqa: BLE001 - el llamador no se entera por una excepcion
+        _cerrar("ROLLBACK TO SAVEPOINT")
+        return False, e
+    _cerrar("RELEASE SAVEPOINT")
+    return True, valor
+
+
+def _duenos_coinciden(cur) -> bool | None:
+    """`True` / `False` / `None` cuando NO SE PUDO DETERMINAR. Ver `_DUENOS_SQL`.
+
+    `None` es un valor de primera clase y no un caso raro: falta el trigger, falta la tabla,
+    falta la secuencia. La version anterior comparaba `fila[0] is False` y con eso `None`
+    caia al camino verde -- `None is False` es False. En un modulo cuyo punto entero es que
+    el verde signifique algo, "no se" no puede leerse como "bien".
+    """
+    cur.execute(_DUENOS_SQL)
+    fila = cur.fetchone()
+    return None if fila is None else fila[0]
+
+
+def asegurar_sin_romper(cur, log=None) -> bool:
+    """`ensure_table` que NO puede tumbar a quien lo llama. True si la captura QUEDO VIVA.
+
+    No alcanza con que el DDL corra: devuelve True solo si tambien se pudo VERIFICAR que la
+    funcion y la tabla comparten dueño, porque sin eso el trigger existe y no inserta.
+
+    QUE PUEDE FALLAR EN PRODUCCION, y por que no se ve en la copia. `CREATE TRIGGER` sobre
+    `users` pide el privilegio TRIGGER y `CREATE FUNCTION` pide CREATE en el schema. El dueño
+    de `users` es el ETL: si el dashboard conecta con un rol que no los tiene, esto revienta
+    con permission denied. En `whaticket_copia` el rol es `whaticket`, superusuario Y dueño de
+    la tabla, asi que ahi pasa siempre -- medido el 2026-09-03. La copia NO es evidencia de
+    que en prod vaya a andar.
+
+    DEGRADA A "SIN CAPTURA", NUNCA A "SIN ALERTAS". `alertas.barrer` tiene UN solo `try` que
+    arranca en `ensure_table` y un `except` que devuelve todo en ceros: sin esta guarda, una
+    tabla de auditoria nueva apagaria EN SILENCIO las alertas VIP que hoy funcionan en
+    produccion, y el resultado se veria igual que un dia tranquilo.
+
+    Y LO DICE, en el log y en la tabla `errors`. Degradar callado ya costo caro dos veces
+    aca; ver `_a_la_bitacora`.
+    """
+    decir = log or (lambda m: logger.warning("%s", m))
+
+    ok, res = _en_savepoint(cur, _SP_DDL, lambda: ensure_table(cur))
+    if not ok:
         decir(f"[desconexiones] captura NO aplicada, las alertas siguen "
-              f"({type(e).__name__}: {e}). Falta el privilegio TRIGGER sobre `users`?")
-        # A LA TABLA `errors`, NO SOLO AL LOG. Es el mismo argumento que ya esta escrito en
-        # el loop de alertas de `worker.py`: stdout de un contenedor se pierde en el
-        # redeploy y `errors` sobrevive (y la comparte el ETL, que es quien puede otorgar el
-        # privilegio que falta). `arranque` es el componente del vocabulario acordado para
-        # migraciones y config, y va SIN `account` porque el DDL no es de una cuenta puntual
-        # (regla 6). `_escribir` abre su PROPIA conexion, asi que esto es seguro incluso con
-        # la transaccion del llamador recien abortada.
-        #
-        _a_la_bitacora(e, {
+              f"({type(res).__name__}: {res}). Falta el privilegio TRIGGER sobre `users`?")
+        _a_la_bitacora(res, {
             "que": "desconexiones.ensure_table",
             "efecto": "sin captura de conexion/desconexion; las alertas siguen",
             "revisar": "has_table_privilege(current_user, 'users', 'TRIGGER')",
         })
         return False
-    if protegido:
-        cur.execute(f"RELEASE SAVEPOINT {_SAVEPOINT}")
 
     # EL DDL CORRIO SIN ERROR Y LA CAPTURA PUEDE ESTAR IGUAL MUERTA. Ver `_DUENOS_SQL`: con
     # la tabla creada por otro rol, el INSERT del trigger da permission denied, lo traga el
-    # EXCEPTION del plpgsql, y todos los chequeos de arriba dan verde. Es la tercera variante
-    # del mismo modo de falla en este archivo, asi que se verifica en vez de suponerse.
-    cur.execute(_DUENOS_SQL)
-    fila = cur.fetchone()
-    if fila and fila[0] is False:
-        decir("[desconexiones] la funcion y `conexiones_operador` tienen DUEÑOS DISTINTOS: "
-              "el trigger no va a poder insertar. Alinear con ALTER TABLE ... OWNER TO.")
+    # EXCEPTION del plpgsql, y todos los chequeos de arriba dan verde. Se verifica en vez de
+    # suponerse -- y con su PROPIO savepoint, porque el del DDL ya se libero.
+    ok, res = _en_savepoint(cur, _SP_DUENOS, lambda: _duenos_coinciden(cur))
+    if not ok:
+        decir(f"[desconexiones] no se pudo verificar la invariante de dueños "
+              f"({type(res).__name__}: {res}); la captura queda SIN confirmar")
+        _a_la_bitacora(res, {
+            "que": "chequeo de la invariante de dueños de desconexiones",
+            "efecto": "no se sabe si el trigger puede insertar; las alertas siguen",
+            "revisar": "src/desconexiones.py::_DUENOS_SQL",
+        })
+        return False
+    if res is not True:
+        motivo = ("la funcion y `conexiones_operador` tienen DUEÑOS DISTINTOS"
+                  if res is False else
+                  "faltan objetos (trigger, tabla o secuencia): no se pudo determinar")
+        decir(f"[desconexiones] {motivo}: el trigger no va a poder insertar. "
+              "Alinear con ALTER TABLE ... OWNER TO.")
         _a_la_bitacora(None, {
             "que": "invariante de dueños de desconexiones",
+            "motivo": motivo,
             "efecto": "el trigger existe y NO captura; el historial queda vacio",
             "revisar": "pg_proc.proowner vs pg_class.relowner de conexiones_operador",
         })

@@ -46,11 +46,12 @@ hilo de alertas la drena con `Canal.enviar` + `marcar_enviada`. Cola de pendient
 sin mecanismo nuevo: `alertas_enviadas` con `tipo='desconexion'` y `clave` =
 `conexiones_operador.id`, resuelta con un `LEFT JOIN`.
 
-## Los cinco modos de falla silenciosa, y cómo se cubren
+## Los seis modos de falla silenciosa, y cómo se cubren
 
 Todos comparten la misma forma: **el chequeo obvio da verde y la captura no funciona.**
-Los cinco se encontraron de a uno, cada uno después de declarar el anterior "cubierto".
-Cuatro de los cinco se reprodujeron contra base real antes de arreglarlos.
+Se encontraron de a uno, cada uno después de declarar el anterior "cubierto" — y el sexto
+lo **abrió la guarda que cerró el quinto**. Cinco de los seis se reprodujeron contra base
+real antes de arreglarlos.
 
 ### 1. En tiempo de deploy: el `CREATE TRIGGER` puede fallar por privilegios
 
@@ -169,6 +170,53 @@ dejando las alertas en ceros. Lo destapó el propio script de verificación. Aho
 `SAVEPOINT` no se puede tomar, el DDL corre sin red — que es correcto, porque con autocommit
 cada sentencia es su propia transacción y un DDL fallido no arrastra al resto.
 
+### 6. El chequeo de dueños quedó fuera de la red
+
+**La guarda que cerró el modo 5 abrió este.** El chequeo de la invariante de dueños quedó
+*después* del `RELEASE SAVEPOINT` y sin `try`. Si esa sentencia levantaba, la excepción subía
+a `alertas.ensure_table` → `alertas.barrer` → `except` ancho → alertas en ceros. Es el daño
+exacto que el savepoint existe para evitar, en la función cuyo contrato declarado es no poder
+tumbar a quien la llama.
+
+Y había una vía concreta: las subconsultas de `_DUENOS_SQL` buscaban por `proname` / `relname`
+sin calificar por schema. Reproducido el 2026-09-03 creando un homónimo en otro schema:
+
+```
+la consulta vieja LEVANTA: CardinalityViolation
+  more than one row returned by a subquery used as an expression
+y la transaccion queda ABORTADA: InFailedSqlTransaction
+```
+
+La transacción abortada es lo que cierra el caso: un `try/except` en Python **tampoco** habría
+salvado a `barrer`. Cada operación necesita su propio savepoint.
+
+Segundo defecto en las mismas cuatro líneas: `fila[0] is False` leía `NULL` como verde. Con un
+objeto ausente la expresión da `NULL`, y `None is False` es `False`, así que caía al
+`return True`. Reproducido: la consulta devolvía `(None,)` y el módulo reportaba verde. En un
+módulo cuyo punto entero es que el verde signifique algo, *"no sé"* no puede leerse como
+*"bien"*.
+
+**Arreglado en tres frentes:**
+
+- La danza del savepoint vive ahora en **un solo lugar** (`_en_savepoint`), con **un savepoint
+  por operación**. Tenerla escrita *inline* es lo que permitió que una sentencia quedara
+  afuera; ahora toda operación nueva entra por ahí o no entra. Verificado: una consulta que
+  revienta adentro devuelve `ok=False` y la transacción sigue viva.
+- `_DUENOS_SQL` pregunta **por OID, nunca por nombre**: `to_regclass` (devuelve `NULL` en vez
+  de error, no puede dar multifila), `WHERE oid = ...` (una fila por construcción) y
+  `pg_trigger` acotado por `(tgrelid, tgname)`, que es único. El OID de la función sale de
+  `tgfoid` — la que el trigger *va a llamar de verdad*, no la que resuelva el `search_path`
+  del momento. Verificado con el homónimo presente: no levanta, y la transacción sobrevive.
+- `_duenos_coinciden` devuelve `True` / `False` / **`None`**, y solo `True` es verde.
+  Verificado en vivo: sin el trigger devuelve `None`.
+
+> **Matiz sobre la secuencia.** El chequeo compara también el dueño de
+> `conexiones_operador_id_seq`, pero es defensa en profundidad y no el caso común: mientras
+> esté **ligada** a la tabla, Postgres se niega a cambiarle el dueño
+> (`FeatureNotSupported: Sequence is linked to table`). Solo se desalinea con un
+> `ALTER SEQUENCE ... OWNED BY NONE` deliberado primero — probado, y ahí el chequeo lo
+> detecta (`False`).
+
 ### A dónde va cada fallo
 
 | Fallo | Dónde queda | Sobrevive al redeploy |
@@ -217,6 +265,13 @@ el worker.
 | Rol del ETL con `EXECUTE=False` → ¿sigue capturando? | 1 fila | **1** |
 | Dueño de la tabla distinto al de la función | `False` + fila en `errors` | **`False`** |
 | `asegurar_sin_romper` con `autocommit=True` | no levanta | **OK, corre sin savepoint** |
+| `_DUENOS_SQL` **por nombre**, con homónimo en otro schema | 1 fila | **`CardinalityViolation` + txn abortada** |
+| `_DUENOS_SQL` **por OID**, con homónimo en otro schema | 1 fila | **`(True,)`, txn viva** |
+| Objeto ausente, comparando `is False` | no verde | **`(None,)` → devolvía `True`** |
+| Objeto ausente, con `None` explícito | no verde | **`None` → `False`** |
+| `_en_savepoint` con una consulta que revienta | contiene el fallo | **`ok=False`, txn viva** |
+| Secuencia **ligada**, intentar cambiarle el dueño | — | **`FeatureNotSupported`: imposible** |
+| Secuencia **desligada** con otro dueño | detectado | **`False`** |
 
 > **La copia con superusuario no es evidencia de que producción funcione.** El rol de
 > `whaticket_copia` es `whaticket`: superusuario **y** dueño de `users`. Es el mejor caso
