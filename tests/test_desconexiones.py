@@ -428,3 +428,101 @@ def test_el_indice_sirve_a_la_consulta_de_la_alerta():
     ddl = _ddl()
     assert "CREATE INDEX IF NOT EXISTS" in ddl
     assert "offline" in ddl
+
+
+# =====================================================================
+# LA ALERTA: el drenaje del outbox
+# =====================================================================
+
+def test_la_clave_de_la_alerta_es_el_EVENTO_y_no_el_OPERADOR():
+    """Un operador se desconecta muchas veces. Dedupear por operador dejaria muda la
+    segunda desconexion y todas las que siguen; dedupear por `(operador, fecha)` haria lo
+    mismo dentro del dia. La clave es la fila del historial, que es UN evento.
+
+    Mismo razonamiento que `alertas.clave_resumen`, que paso de sesion a interaccion por
+    dejar mudas N-1 atenciones."""
+    assert desconexiones.clave_alerta(41) == "41"
+    assert desconexiones.clave_alerta(41) != desconexiones.clave_alerta(42)
+
+
+def test_solo_alerta_DESCONEXIONES_no_reconexiones():
+    """El historial guarda las dos transiciones. Avisar de una reconexion no es una alerta,
+    es ruido con el doble de volumen."""
+    assert "status_nuevo = 'offline'" in desconexiones._PENDIENTES_SQL
+
+
+def test_no_alerta_a_los_operadores_APAGADOS_y_matchea_por_CLAVE():
+    """Un operador con baja logica en `operator_status` no esta trabajando: su desconexion
+    no le importa a nadie.
+
+    Y EL MATCH VA POR CLAVE, no por string exacto. Es el bug que ya se pago con
+    `operator_status` el 2026-08-27: la tabla tenia 'RAMIREZ', el modal mandaba 'Ramirez',
+    el ON CONFLICT no matcheaba y el operador no se prendia NUNCA. Ver
+    `identidad.clave_sql`."""
+    sql = desconexiones._PENDIENTES_SQL
+    assert "operator_status" in sql
+    assert "activo" in sql
+    assert "lower" in sql.lower() or "translate" in sql.lower(), \
+        "el match contra operator_status tiene que ser por clave, no por string exacto"
+
+
+def test_la_consulta_tiene_VENTANA_y_TOPE():
+    """LA LECCION DEL APAGON DE HOY. El worker estuvo 93 minutos caido; cuando vuelve, sin
+    ventana dispara TODAS las desconexiones acumuladas de un saque. Y el sembrado de
+    `ledger_vacio` no cubre esto: solo protege el PRIMER arranque de la historia, no cada
+    reinicio.
+
+    El tope por ciclo es la segunda red: un pico no puede volcar cien mensajes seguidos."""
+    assert "detected_at >" in desconexiones._PENDIENTES_SQL
+    assert desconexiones.VENTANA_ALERTA_MINUTOS > 0
+    assert desconexiones.TOPE_POR_CICLO > 0
+
+
+def test_el_mensaje_va_en_HTML_ESCAPADO():
+    """Los nombres vienen del CRM. `_` y `&` en un nombre ya rompieron un envio real con
+    400 can't parse entities (ver `Canal.enviar`)."""
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Ana & Co <b>", "account": "datos",
+        "last_seen": None, "detected_at": None,
+    })
+    # LA PROPIEDAD, NO SU HUELLA: el dato crudo NO puede aparecer tal cual, y sus tres
+    # caracteres peligrosos tienen que estar escapados. Buscar `"<b>Ana" not in msg` era
+    # una asercion MAL escrita: ese `<b>` es la negrita del propio mensaje, no inyeccion --
+    # el mismo error de confundir un string con la propiedad que se queria probar.
+    assert "Ana & Co <b>" not in msg, "el dato crudo llego sin escapar"
+    assert "&amp;" in msg and "&lt;b&gt;" in msg
+
+
+def test_el_mensaje_dice_QUIEN_y_CUANDO_en_hora_local():
+    """Un aviso que no dice la hora local obliga a hacer la cuenta de UTC-5 a mano."""
+    from datetime import datetime, timedelta, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Arturo", "account": "datos",
+        "last_seen": datetime(2026, 9, 2, 20, 1, 29, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 2, 20, 3, 0, tzinfo=utc),
+    })
+    assert "Arturo" in msg
+    assert "datos" in msg
+    assert "15:01" in msg, "la hora tiene que ir en Ecuador (UTC-5), no en UTC"
+
+
+def test_el_mensaje_sin_nombre_no_imprime_None():
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": None, "account": "datos", "last_seen": None, "detected_at": None})
+    assert "None" not in msg
+
+
+def test_el_canal_de_desconexiones_es_PROPIO_y_arranca_APAGADO():
+    """Canal aparte del de VIP: otra audiencia (supervision de ATC, no quien mira VIP) y,
+    sobre todo, un interruptor propio. Vacio = apagado, asi que se puede desplegar el
+    codigo y medir el volumen en `conexiones_operador` ANTES de prender el aviso."""
+    canal = desconexiones.canal_desde_env({})
+    assert not canal.configurado, "sin variables tiene que arrancar APAGADO"
+    canal = desconexiones.canal_desde_env(
+        {"TELEGRAM_TOKEN_DESCONEXION": "t", "TELEGRAM_CHAT_DESCONEXION": "c"})
+    assert canal.configurado
+    # y NO puede reusar las del canal VIP: prenderia solo, sin que nadie lo decida
+    assert not desconexiones.canal_desde_env(
+        {"TELEGRAM_TOKEN_VIP": "t", "TELEGRAM_CHAT_VIP": "c"}).configurado

@@ -848,7 +848,8 @@ def mensaje_resumen(d: dict) -> str:
 
 def barrer(conn, account: str, canal: Canal,
            ahora: datetime | None = None,
-           log=None, ledger_vacio_=None, llm=None) -> dict:
+           log=None, ledger_vacio_=None, llm=None,
+           canal_desconexion: Canal | None = None) -> dict:
     """Un ciclo de alertas de UNA cuenta. Devuelve `{"espera_larga": n, "resumen": n, ...}`.
 
     `llm` es OPCIONAL y solo lo usa la capa 2 de la espera larga. Sin el, la compuerta
@@ -866,8 +867,13 @@ def barrer(conn, account: str, canal: Canal,
     # ciclo fallaban, esto daba {resumen:0}, que es lo MISMO que devuelve un dia tranquilo.
     # El worker solo loguea cuando hay algo, asi que un canal caido se veia identico a que
     # no hubiera pasado nada.
-    hecho = {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0,
-             "silenciadas": 0}
+    hecho = {"espera_larga": 0, "resumen": 0, "desconexion": 0, "fallos": 0,
+             "sembrados": 0, "silenciadas": 0}
+    # CANAL PROPIO Y APAGADO POR DEFECTO. `None` -> un canal sin configurar, o sea que todo
+    # llamador que no lo pase (los tests, y cualquier despliegue sin las variables) corre con
+    # el aviso de desconexion APAGADO. El volumen real todavia no se midio: ver
+    # `desconexiones.canal_desde_env`.
+    canal_desconexion = canal_desconexion or Canal("", "")
     # El worker escribe con timestamp por `emit`; el `logger` de la libreria sale por
     # stderr sin hora ni nombre y en un log de contenedor mezclado con uvicorn no se
     # rastrea. Con el `log` inyectado la falla aparece en la misma corriente que el resto.
@@ -888,7 +894,7 @@ def barrer(conn, account: str, canal: Canal,
             # UNA POR TIPO: cada alerta arranca en AHORA por su cuenta.
             primera = {t: (ledger_vacio(cur, account, t) if ledger_vacio_ is None
                            else ledger_vacio_)
-                       for t in ("espera_larga", "resumen")}
+                       for t in ("espera_larga", "resumen", "desconexion")}
         conn.commit()
 
         # ESPERA LARGA. Va PRIMERO: es la unica de las dos que alguien puede querer accionar
@@ -954,6 +960,39 @@ def barrer(conn, account: str, canal: Canal,
                         desmarcar(cur, account, "resumen", clave_resumen(r["interaccion_id"]))
                     conn.commit()
                 time.sleep(THROTTLE_SEGUNDOS)
+        # DESCONEXION DE OPERADOR. Drena el outbox que escribe el trigger de
+        # `src/desconexiones.py`; ese modulo decide QUE fila merece aviso (ventana, tope y
+        # el descarte de los operadores apagados) y aca solo se manda, con la misma
+        # maquinaria que las otras dos: marcar primero, sembrar en el primer arranque,
+        # desmarcar si el fallo es transitorio.
+        if canal_desconexion.configurado:
+            from src import desconexiones
+
+            with conn.cursor() as cur:
+                caidas = desconexiones.pendientes(cur, account, ahora)
+            for c in caidas:
+                clave = desconexiones.clave_alerta(c["id"])
+                with conn.cursor() as cur:
+                    nueva = marcar_enviada(cur, account, "desconexion", clave)
+                conn.commit()
+                if not nueva:
+                    continue
+                if primera["desconexion"]:
+                    hecho["sembrados"] += 1
+                    continue
+                estado = canal_desconexion.enviar(
+                    desconexiones.mensaje_desconexion(c))
+                if estado == OK:
+                    hecho["desconexion"] += 1
+                else:
+                    hecho["fallos"] += 1
+                    decir(f"[alertas] {account} desconexion {c['id']}: {estado}")
+                if estado == REINTENTAR:
+                    with conn.cursor() as cur:
+                        desmarcar(cur, account, "desconexion", clave)
+                    conn.commit()
+                time.sleep(THROTTLE_SEGUNDOS)
+
         if any(primera.values()) and hecho["sembrados"]:
             sembrados = [t for t, v in primera.items() if v]
             decir(f"[alertas] {account}: PRIMER arranque de {'/'.join(sembrados)}, "

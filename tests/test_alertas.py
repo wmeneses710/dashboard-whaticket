@@ -252,8 +252,8 @@ def test_el_barrido_no_manda_nada_si_el_canal_esta_apagado(monkeypatch):
     conn = _ConnFalsa(cur)
     r = alertas.barrer(conn, "sistemas", alertas.Canal("", ""),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert r == {"espera_larga": 0, "resumen": 0, "fallos": 0, "sembrados": 0,
-                 "silenciadas": 0}
+    assert r == {"espera_larga": 0, "resumen": 0, "desconexion": 0, "fallos": 0,
+                 "sembrados": 0, "silenciadas": 0}
     assert llamadas == [], "un canal apagado no tiene que pegarle a la red"
     assert not any("INSERT INTO alertas_enviadas" in s for s in cur.sql), \
         "y tampoco puede marcar como enviada una alerta que nunca salio"
@@ -619,7 +619,8 @@ def test_el_barrido_NO_devuelve_la_clave_de_la_alerta_EN_VIVO():
     cur = _FakeCursor()
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert set(r) == {"espera_larga", "resumen", "fallos", "sembrados", "silenciadas"}
+    assert set(r) == {"espera_larga", "resumen", "desconexion", "fallos", "sembrados",
+                      "silenciadas"}
     assert "espera" not in r
 
 

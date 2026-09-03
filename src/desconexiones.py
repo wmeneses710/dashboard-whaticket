@@ -361,3 +361,141 @@ def asegurar_sin_romper(cur, log=None) -> bool:
         })
         return False
     return True
+
+
+# =====================================================================
+# LA ALERTA: el drenaje del outbox
+# =====================================================================
+#
+# EL TRIGGER ESCRIBE, ESTO MANDA. Ver el encabezado del modulo para por que el envio no
+# vive en el trigger. Aca solo se elige QUE fila del historial merece un aviso; el envio,
+# la idempotencia y los reintentos son los de `src/alertas.py`, ya probados en produccion.
+
+# LA VENTANA, y es la leccion del apagon del 2026-09-03. El worker estuvo 93 minutos caido
+# (apagon; antes ese mismo dia, el servidor del modelo). Cuando un worker vuelve, sin
+# ventana dispara TODAS las desconexiones acumuladas de un saque. Y el sembrado de
+# `alertas.ledger_vacio` NO cubre esto: solo protege el PRIMER arranque de la historia, no
+# cada reinicio. Media hora es el corte: mas viejo que eso ya no es un aviso, es un informe.
+VENTANA_ALERTA_MINUTOS = 30
+
+# LA SEGUNDA RED. Un pico --un reinicio del CRM que desloguea a todos, un corte de red-- no
+# puede volcar cien mensajes seguidos en el grupo. Lo que sobra del tope NO se pierde: queda
+# sin marcar y entra en el ciclo siguiente, sesenta segundos despues.
+TOPE_POR_CICLO = 10
+
+# NO SE AVISA DE LOS OPERADORES APAGADOS. `operator_status.activo = false` es la baja logica
+# del tablero: esa persona no esta trabajando y su desconexion no le importa a nadie.
+#
+# EL MATCH VA POR CLAVE, NO POR STRING EXACTO. Es el bug que ya se pago con `operator_status`
+# el 2026-08-27: la tabla tenia 'RAMIREZ', el modal mandaba 'Ramirez', el `ON CONFLICT` no
+# matcheaba y el operador no se prendia NUNCA -- con 222 sesiones recientes. `clave_sql` es
+# la fuente unica de esa regla (minusculas, sin tildes, con la ñ arreglada).
+_PENDIENTES_SQL_TPL = """
+SELECT c.id, c.account, c.operator_name, c.last_seen, c.detected_at
+  FROM conexiones_operador c
+  LEFT JOIN alertas_enviadas a
+         ON a.account = c.account
+        AND a.tipo    = 'desconexion'
+        AND a.clave   = c.id::text
+ WHERE c.account = %(account)s
+   AND c.status_nuevo = 'offline'
+   AND a.clave IS NULL
+   AND c.detected_at > %(desde)s
+   AND NOT EXISTS (
+         SELECT 1 FROM operator_status os
+          WHERE os.account = c.account
+            AND os.activo = false
+            AND {clave_os} = {clave_c})
+ ORDER BY c.detected_at
+ LIMIT %(tope)s
+"""
+
+
+def _pendientes_sql() -> str:
+    from src.identidad import clave_sql
+
+    return _PENDIENTES_SQL_TPL.format(clave_os=clave_sql("os.operator_name"),
+                                      clave_c=clave_sql("c.operator_name"))
+
+
+_PENDIENTES_SQL = _pendientes_sql()
+
+
+def pendientes(cur, account: str, ahora, ventana_minutos: int = VENTANA_ALERTA_MINUTOS,
+               tope: int = TOPE_POR_CICLO) -> list[dict]:
+    """Las desconexiones de una cuenta que todavia no se avisaron. Mas viejas primero.
+
+    `ahora` viene de la BASE (`alertas.ahora_de_la_base`), no de la app: es el mismo reloj
+    con el que se escribio `detected_at`.
+    """
+    from datetime import timedelta
+
+    cur.execute(_PENDIENTES_SQL, {
+        "account": account,
+        "desde": ahora - timedelta(minutes=ventana_minutos),
+        "tope": tope,
+    })
+    cols = [d.name for d in cur.description]
+    return [dict(zip(cols, f)) for f in cur.fetchall()]
+
+
+def clave_alerta(evento_id) -> str:
+    """LA CLAVE ES EL EVENTO, no el operador.
+
+    Un operador se desconecta muchas veces: dedupear por operador dejaria muda la segunda
+    desconexion y todas las que siguen. Es el mismo razonamiento por el que
+    `alertas.clave_resumen` paso de sesion a interaccion.
+    """
+    return str(evento_id)
+
+
+def canal_desde_env(env):
+    """El bot de las alertas de desconexion. CANAL PROPIO, y arranca APAGADO.
+
+    APARTE DEL DE VIP por dos razones. La audiencia es otra --supervision de ATC, no quien
+    mira jugadores VIP-- y, sobre todo, esto necesita su propio interruptor: el volumen real
+    todavia no se conoce. 49 operadores por una o tres desconexiones diarias serian entre 50
+    y 150 avisos por dia, que no es un canal, es ruido.
+
+    VACIO = APAGADO, sin error (igual que `alertas.canal_desde_env`). Eso permite desplegar
+    el codigo, dejar que `conexiones_operador` acumule dos o tres dias, MEDIR el volumen
+    real, y recien entonces decidir el filtro y prender el aviso. La consulta para medirlo
+    esta en docs/auditoria-desconexiones.md.
+    """
+    from src.alertas import Canal
+
+    return Canal(env.get("TELEGRAM_TOKEN_DESCONEXION", ""),
+                 env.get("TELEGRAM_CHAT_DESCONEXION", ""))
+
+
+def mensaje_desconexion(d: dict) -> str:
+    """El aviso, en HTML.
+
+    EN HTML Y ESCAPADO: los nombres vienen del CRM y un `_` o un `&` ya rompieron un envio
+    real con `400 can't parse entities` (ver `alertas.Canal.enviar`).
+
+    LA HORA VA EN ECUADOR. Quien lee el grupo no tiene que restar cinco horas a mano.
+    """
+    from src.alertas import _esc, _quien
+    # LA MISMA FUENTE QUE EL RESTO DE LAS ALERTAS: `src/horario.TZ`, que es la que importa
+    # `alertas.py`. Ecuador no tiene horario de verano, asi que el offset fijo alcanza -- y
+    # tener dos definiciones de "la hora local" es como se desincronizan los informes.
+    from src.horario import TZ as TZ_EC
+
+    def _hora(v) -> str:
+        return v.astimezone(TZ_EC).strftime("%H:%M:%S") if v else "?"
+
+    cuerpo = [
+        "🔌 <b>Operador desconectado</b>",
+        "",
+        f"🧑‍💼 <b>{_quien(d.get('operator_name'))}</b>  ·  cuenta {_esc(d.get('account'))}",
+        f"🕐 {_hora(d.get('last_seen'))} (Ecuador)",
+    ]
+    # LA LATENCIA SE MUESTRA cuando es grande: un aviso de una desconexion de hace veinte
+    # minutos tiene que decir que llego tarde, no dejar creer que acaba de pasar.
+    visto, detectado = d.get("last_seen"), d.get("detected_at")
+    if visto and detectado:
+        seg = int((detectado - visto).total_seconds())
+        if seg >= 60:
+            cuerpo.append(f"⏱ detectado {seg // 60} min despues")
+    return "\n".join(cuerpo)

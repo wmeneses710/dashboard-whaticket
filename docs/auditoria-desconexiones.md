@@ -1,7 +1,8 @@
 # Auditoría de conexión/desconexión de operadores
 
-Estado al 2026-09-03: **la captura está construida y verificada. La alerta no** —
-deliberadamente, ver el último apartado.
+Estado al 2026-09-03: **la captura y la alerta están construidas y verificadas. La alerta
+está APAGADA por defecto** — a propósito, porque el volumen real todavía no se midió. Ver
+"Cómo prender la alerta".
 
 ## El problema que resuelve
 
@@ -403,3 +404,71 @@ SELECT count(*) AS eventos,
        max(detected_at - last_seen) AS maxima
   FROM conexiones_operador;
 ```
+
+
+## La alerta
+
+El drenaje del *outbox*: el trigger escribe en `conexiones_operador` y el hilo de alertas
+manda. Vive en `src/desconexiones.py` (qué fila merece aviso) + un bloque en
+`alertas.barrer` (el envío, con la maquinaria ya probada).
+
+### Canal propio, apagado por defecto
+
+`TELEGRAM_TOKEN_DESCONEXION` / `TELEGRAM_CHAT_DESCONEXION`. **Vacías = apagado**, sin error.
+
+Aparte del canal de VIP por dos razones: la audiencia es otra (supervisión de ATC, no quien
+mira jugadores VIP) y, sobre todo, necesita su propio interruptor. Reusar el de VIP habría
+hecho que las desconexiones empezaran a llegar al grupo de VIP en el momento del deploy,
+sin que nadie lo decida.
+
+En el arranque el worker loguea `[worker] alerta de desconexion: on|off`.
+
+### Qué se filtra, y por qué
+
+| Filtro | Por qué | Verificado |
+|---|---|---|
+| `status_nuevo = 'offline'` | una reconexión no es una alerta; avisar de las dos duplica el volumen | reconexión excluida |
+| `detected_at >` ahora − **30 min** | **la lección del apagón**: el worker estuvo 93 min caído; sin ventana, al volver dispara todo el acumulado de un saque. El sembrado de `ledger_vacio` solo protege el *primer* arranque de la historia, no cada reinicio | evento de 90 min excluido |
+| `LIMIT 10` por ciclo | un pico (reinicio del CRM que desloguea a todos) no puede volcar cien mensajes. Lo que sobra no se pierde: entra al ciclo siguiente, 60 s después | 15 sembrados → 10 devueltos |
+| no está en `operator_status` con `activo = false` | baja lógica del tablero: esa persona no está trabajando | `RAMIREZ` en el historial vs `Ramirez` en la tabla → excluido |
+| `LEFT JOIN alertas_enviadas` | idempotencia; la clave es el **evento**, no el operador | marcada una vez, no vuelve |
+
+> El filtro de `operator_status` **matchea por clave** (`identidad.clave_sql`: minúsculas,
+> sin tildes), no por string exacto. Es el bug que ya se pagó el 2026-08-27: la tabla tenía
+> `'RAMIREZ'`, el modal mandaba `'Ramirez'`, el `ON CONFLICT` no matcheaba y el operador no
+> se prendía nunca — con 222 sesiones recientes. Verificado con las dos grafías.
+
+### Cómo prender la alerta
+
+**Medí el volumen primero.** El historial se llena con la alerta apagada, así que la
+respuesta ya está en la base sin arriesgar nada:
+
+```sql
+-- Cuantos avisos por dia tendrias HOY, con los filtros puestos
+SELECT date_trunc('day', c.detected_at AT TIME ZONE 'America/Guayaquil') AS dia,
+       count(*) AS avisos
+  FROM conexiones_operador c
+ WHERE c.status_nuevo = 'offline'
+   AND NOT EXISTS (SELECT 1 FROM operator_status os
+                    WHERE os.account = c.account AND os.activo = false
+                      AND lower(os.operator_name) = lower(c.operator_name))
+ GROUP BY 1 ORDER BY 1 DESC;
+
+-- Y la distribucion por hora, para decidir si hace falta un filtro de horario
+SELECT extract(hour FROM c.detected_at AT TIME ZONE 'America/Guayaquil') AS hora,
+       count(*)
+  FROM conexiones_operador c WHERE c.status_nuevo = 'offline'
+ GROUP BY 1 ORDER BY 1;
+```
+
+**Estimación previa, que es la razón del interruptor:** 49 operadores por una o tres
+desconexiones diarias son entre 50 y 150 avisos por día. Eso no es un canal, es ruido — y un
+canal que se ignora se lleva puestas las alertas que sí importan (la de espera disparó 0 de
+207 y se dio de baja).
+
+Si el número es alto, el filtro se decide **con esa distribución**, no con la inferencia
+sobre 49 filas de `users.last_seen` que motivó todo esto. Candidatos: horario de atención,
+duración mínima de la desconexión, o solo ciertos operadores.
+
+Cuando el número cierre: poner las dos variables y reiniciar. El primer ciclo **siembra sin
+enviar** (`ledger_vacio`), así que el backlog acumulado no sale de golpe.

@@ -923,7 +923,8 @@ def _emit_stdout(msg: str) -> None:
     print(msg, flush=True)
 
 
-def run_alert_loop(cfg, canal, llm=None, should_stop=None, log=_emit_stdout) -> None:
+def run_alert_loop(cfg, canal, llm=None, should_stop=None, log=_emit_stdout,
+                   canal_desconexion=None) -> None:
     """Barre las alertas a SU ritmo, sin quedar atras del lote de scoring.
 
     HILO PROPIO Y CONEXION PROPIA. Va aparte porque las dos cosas tienen relojes distintos:
@@ -950,16 +951,19 @@ def run_alert_loop(cfg, canal, llm=None, should_stop=None, log=_emit_stdout) -> 
             with psycopg.connect(cfg.database_url, connect_timeout=8) as conn:
                 for account in cfg.scoring_accounts:
                     cuenta_en_curso = account
-                    a = barrer_alertas(conn, account, canal, log=log, llm=llm)
-                    if a["espera_larga"] or a["resumen"] or a["fallos"] \
-                            or a.get("silenciadas"):
+                    a = barrer_alertas(conn, account, canal, log=log, llm=llm,
+                                       canal_desconexion=canal_desconexion)
+                    if a["espera_larga"] or a["resumen"] or a.get("desconexion") \
+                            or a["fallos"] or a.get("silenciadas"):
                         # `silenciadas` se muestra para que el filtro de "una por ticket"
                         # no sea invisible: si crece mucho, es que el scoring viene
                         # atrasado y las hermanas se apilan en el mismo barrido.
                         callado = (f" silenciadas={a['silenciadas']}"
                                    if a.get("silenciadas") else "")
                         log(f"[alertas] {account}: espera_larga={a['espera_larga']} "
-                            f"resumen={a['resumen']} fallos={a['fallos']}{callado}")
+                            f"resumen={a['resumen']} "
+                            f"desconexion={a.get('desconexion', 0)} "
+                            f"fallos={a['fallos']}{callado}")
         except Exception as e:  # noqa: BLE001 - el hilo tiene que sobrevivir a la BD
             log(f"[alertas] ciclo ROTO: {type(e).__name__}: {e}")
             # A LA TABLA `errors`, NO SOLO A STDOUT. Este loop corre en hilo propio: si se
@@ -985,6 +989,7 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
 
     import os
 
+    from src import desconexiones
     from src.alertas import canal_desde_env
     from src.conversions import refresh_account_conversions
     from src.sessions import refresh_account_sessions
@@ -1073,9 +1078,17 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     # EL BARRIDO DE ALERTAS ARRANCA ACA, DESPUES DEL LOCK, para heredar el singleton: una
     # sola instancia alerta, igual que una sola scorea. Y en HILO PROPIO porque el scoring y
     # las alertas tienen relojes distintos -- ver `ALERTAS_POLL_SEGUNDOS`.
+    # CANAL PROPIO PARA LAS DESCONEXIONES, aparte del de VIP: otra audiencia (supervision
+    # de ATC) y, sobre todo, su propio interruptor. Sin las variables arranca APAGADO, que
+    # es el default deliberado -- el volumen real todavia no se midio y 49 operadores por
+    # una o tres desconexiones diarias serian entre 50 y 150 avisos por dia. Se mide sobre
+    # `conexiones_operador`, que se llena igual, y se prende despues.
+    canal_desc = desconexiones.canal_desde_env(os.environ)
+    emit(f"[worker] alerta de desconexion: {'on' if canal_desc.configurado else 'off'}")
     threading.Thread(
         target=run_alert_loop, args=(cfg, canal_vip),
-        kwargs={"llm": llm, "should_stop": should_stop, "log": emit},
+        kwargs={"llm": llm, "should_stop": should_stop, "log": emit,
+                "canal_desconexion": canal_desc},
         daemon=True, name="alertas-vip",
     ).start()
     # Migración AUTOMÁTICA a scoring por SESIÓN (una vez, antes de tocar columnas):
