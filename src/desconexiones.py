@@ -381,7 +381,14 @@ VENTANA_ALERTA_MINUTOS = 30
 # LA SEGUNDA RED. Un pico --un reinicio del CRM que desloguea a todos, un corte de red-- no
 # puede volcar cien mensajes seguidos en el grupo. Lo que sobra del tope NO se pierde: queda
 # sin marcar y entra en el ciclo siguiente, sesenta segundos despues.
-TOPE_POR_CICLO = 10
+#
+# CINCO Y NO DIEZ, PORQUE EL CHAT ES COMPARTIDO con las alertas VIP (decision del negocio,
+# 2026-09-03). El tope es POR CUENTA y hay dos, asi que diez serian veinte mensajes por ciclo
+# de 60 s -- justo en el limite de Telegram para un grupo (~20/min) y sin dejar lugar a los
+# resumenes VIP, que van al mismo lado. Un 429 no pierde el aviso (`REINTENTAR` lo desmarca y
+# vuelve al ciclo siguiente), pero llenar la cuota con desconexiones RETRASA los resumenes,
+# que son los que alguien puede querer accionar el mismo dia.
+TOPE_POR_CICLO = 5
 
 # NO SE AVISA DE LOS OPERADORES APAGADOS. `operator_status.activo = false` es la baja logica
 # del tablero: esa persona no esta trabajando y su desconexion no le importa a nadie.
@@ -450,22 +457,34 @@ def clave_alerta(evento_id) -> str:
 
 
 def canal_desde_env(env):
-    """El bot de las alertas de desconexion. CANAL PROPIO, y arranca APAGADO.
+    """El canal del aviso de desconexion: EL MISMO GRUPO que las alertas VIP.
 
-    APARTE DEL DE VIP por dos razones. La audiencia es otra --supervision de ATC, no quien
-    mira jugadores VIP-- y, sobre todo, esto necesita su propio interruptor: el volumen real
-    todavia no se conoce. 49 operadores por una o tres desconexiones diarias serian entre 50
-    y 150 avisos por dia, que no es un canal, es ruido.
+    DECISION DEL NEGOCIO (2026-09-03): un solo grupo. El aviso tiene otro proposito, no otro
+    destino. Por eso el canal sale de `alertas.canal_desde_env` y NO tiene variables propias:
+    dos pares de variables apuntando al mismo chat se desincronizan el dia que se rote el
+    token, y nadie se entera hasta que una de las dos alertas deja de llegar.
 
-    VACIO = APAGADO, sin error (igual que `alertas.canal_desde_env`). Eso permite desplegar
-    el codigo, dejar que `conexiones_operador` acumule dos o tres dias, MEDIR el volumen
-    real, y recien entonces decidir el filtro y prender el aviso. La consulta para medirlo
-    esta en docs/auditoria-desconexiones.md.
+    EL CANAL SE COMPARTE, EL INTERRUPTOR NO. `ALERTA_DESCONEXION` (vacio = apagado) es
+    aparte, y no es celo: el canal VIP YA esta configurado en produccion, asi que sin flag
+    esta alerta se prenderia sola en el momento del deploy -- con un volumen estimado de 50 a
+    150 avisos por dia (49 operadores por una o tres desconexiones) que todavia NO se midio.
+    Y un grupo que se llena de avisos que no importan se deja de leer: la alerta de espera
+    disparo 0 de 207 y se dio de baja.
+
+    El historial se llena IGUAL con la alerta apagada, asi que el volumen se mide sobre datos
+    propios y despues se prende. Mismo patron opt-in que `SCORING_ENABLED` y `API_DOCS`: el
+    default tiene que ser el seguro, no el comodo. La consulta para medirlo esta en
+    docs/auditoria-desconexiones.md.
     """
-    from src.alertas import Canal
+    from src.alertas import Canal, canal_desde_env as canal_vip
+    # `config._bool` y no una lista propia de valores verdaderos: tener dos definiciones de
+    # "booleano de entorno" es como se desincronizan: si alguien agrega un valor alla, esta
+    # copia no lo sigue. Es el mismo argumento de la zona horaria unas lineas mas abajo.
+    from src.config import _bool
 
-    return Canal(env.get("TELEGRAM_TOKEN_DESCONEXION", ""),
-                 env.get("TELEGRAM_CHAT_DESCONEXION", ""))
+    if not _bool(env.get("ALERTA_DESCONEXION")):
+        return Canal("", "")
+    return canal_vip(env)
 
 
 def mensaje_desconexion(d: dict) -> str:

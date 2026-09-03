@@ -514,15 +514,44 @@ def test_el_mensaje_sin_nombre_no_imprime_None():
     assert "None" not in msg
 
 
-def test_el_canal_de_desconexiones_es_PROPIO_y_arranca_APAGADO():
-    """Canal aparte del de VIP: otra audiencia (supervision de ATC, no quien mira VIP) y,
-    sobre todo, un interruptor propio. Vacio = apagado, asi que se puede desplegar el
-    codigo y medir el volumen en `conexiones_operador` ANTES de prender el aviso."""
-    canal = desconexiones.canal_desde_env({})
-    assert not canal.configurado, "sin variables tiene que arrancar APAGADO"
-    canal = desconexiones.canal_desde_env(
-        {"TELEGRAM_TOKEN_DESCONEXION": "t", "TELEGRAM_CHAT_DESCONEXION": "c"})
+_VIP = {"TELEGRAM_TOKEN_VIP": "t", "TELEGRAM_CHAT_VIP": "c"}
+
+
+def test_va_al_MISMO_chat_que_las_alertas_VIP():
+    """Decision del negocio (2026-09-03): un solo grupo. El aviso tiene otro proposito, no
+    otro destino. Asi que el canal SALE de `alertas.canal_desde_env`, sin variables propias:
+    dos pares de variables para el mismo chat se desincronizan el dia que se rote el token."""
+    canal = desconexiones.canal_desde_env({**_VIP, "ALERTA_DESCONEXION": "true"})
     assert canal.configurado
-    # y NO puede reusar las del canal VIP: prenderia solo, sin que nadie lo decida
-    assert not desconexiones.canal_desde_env(
-        {"TELEGRAM_TOKEN_VIP": "t", "TELEGRAM_CHAT_VIP": "c"}).configurado
+    from src import alertas
+    assert canal == alertas.canal_desde_env(_VIP), "tiene que ser EL MISMO canal, no una copia"
+
+
+def test_el_INTERRUPTOR_es_propio_y_arranca_APAGADO():
+    """EL CANAL ES COMPARTIDO, EL INTERRUPTOR NO. Y esto no es celo: el canal VIP YA esta
+    configurado en produccion, asi que sin flag esta alerta se prende sola en el momento del
+    deploy -- con un volumen estimado de 50 a 150 avisos por dia que todavia NO se midio.
+
+    El historial se llena igual con la alerta apagada, asi que el volumen se mide sobre
+    datos propios y despues se prende. Mismo patron opt-in que `SCORING_ENABLED` y
+    `API_DOCS`: el default tiene que ser el seguro, no el comodo."""
+    assert not desconexiones.canal_desde_env(_VIP).configurado, \
+        "con el canal VIP puesto y SIN el flag tiene que estar APAGADO"
+    assert not desconexiones.canal_desde_env({"ALERTA_DESCONEXION": "true"}).configurado, \
+        "con el flag pero sin canal no hay a donde mandar"
+    assert desconexiones.canal_desde_env(
+        {**_VIP, "ALERTA_DESCONEXION": "1"}).configurado
+
+
+def test_el_mensaje_es_INCONFUNDIBLE_en_un_chat_compartido():
+    """COMPARTIR CHAT TIENE UNA CONSECUENCIA: quien lee el grupo tiene que distinguir de un
+    vistazo un aviso de desconexion de un resumen VIP, sin abrir nada. Los resumenes abren
+    con 🍀 y la marca de espera con ⏳; este abre con 🔌 y dice de que es en la PRIMERA
+    linea, que es lo unico que se ve en la notificacion del telefono."""
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Arturo", "account": "datos",
+        "last_seen": None, "detected_at": None})
+    primera = msg.splitlines()[0]
+    assert "🔌" in primera
+    assert "esconecta" in primera, "la primera linea tiene que decir QUE es"
+    assert "🍀" not in msg and "⏳" not in msg, "no puede confundirse con un resumen VIP"

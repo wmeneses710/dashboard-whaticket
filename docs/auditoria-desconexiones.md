@@ -412,16 +412,47 @@ El drenaje del *outbox*: el trigger escribe en `conexiones_operador` y el hilo d
 manda. Vive en `src/desconexiones.py` (qué fila merece aviso) + un bloque en
 `alertas.barrer` (el envío, con la maquinaria ya probada).
 
-### Canal propio, apagado por defecto
+### El mismo chat que las alertas VIP, con interruptor propio
 
-`TELEGRAM_TOKEN_DESCONEXION` / `TELEGRAM_CHAT_DESCONEXION`. **Vacías = apagado**, sin error.
+**Decisión del negocio (2026-09-03): un solo grupo.** El aviso tiene otro propósito, no otro
+destino. Así que el canal sale de `alertas.canal_desde_env` y **no tiene variables propias**:
+dos pares de variables apuntando al mismo chat se desincronizan el día que se rote el token,
+y nadie se entera hasta que una de las dos alertas deja de llegar.
 
-Aparte del canal de VIP por dos razones: la audiencia es otra (supervisión de ATC, no quien
-mira jugadores VIP) y, sobre todo, necesita su propio interruptor. Reusar el de VIP habría
-hecho que las desconexiones empezaran a llegar al grupo de VIP en el momento del deploy,
-sin que nadie lo decida.
+**El canal se comparte; el interruptor no.**
+
+```
+ALERTA_DESCONEXION=true     # vacío o ausente = APAGADO
+```
+
+Y eso no es celo: el canal VIP **ya está configurado en producción**, así que sin el flag esta
+alerta se prendería sola en el momento del deploy — con un volumen estimado de 50 a 150 avisos
+por día que todavía no se midió. Mismo patrón *opt-in* que `SCORING_ENABLED` y `API_DOCS`: el
+default tiene que ser el seguro, no el cómodo.
 
 En el arranque el worker loguea `[worker] alerta de desconexion: on|off`.
+
+### Compartir chat tiene dos consecuencias, y las dos se resolvieron
+
+**1. El mensaje tiene que ser inconfundible.** Quien lee el grupo tiene que distinguir de un
+vistazo un aviso de desconexión de un resumen VIP, sin abrir nada. Los resúmenes abren con 🍀
+y la marca de espera con ⏳; este abre con **🔌** y dice qué es en la primera línea, que es lo
+único que se ve en la notificación del teléfono.
+
+```
+🔌 <b>Operador desconectado</b>          🍀 <b>Conversación cerrada</b>
+
+🧑‍💼 <b>Arturo</b>  ·  cuenta datos       👤 <b>brysuye</b>  <code>#3</code>  Sur
+🕐 15:01:29 (Ecuador)                    🔎 cuenta N/D
+⏱ detectado 2 min despues                🧑‍💼 Genessis · 📌 soporte_cuenta
+                                         ★★★★☆  4 de 5
+```
+
+**2. El tope bajó de 10 a 5 por ciclo.** El tope es *por cuenta* y hay dos, así que 10 serían
+20 mensajes por ciclo de 60 s — justo en el límite de Telegram para un grupo (~20/min) y sin
+dejar lugar a los resúmenes VIP, que van al mismo lado. Un 429 no pierde el aviso
+(`REINTENTAR` lo desmarca y vuelve al ciclo siguiente), pero llenar la cuota con desconexiones
+**retrasa los resúmenes**, que son los que alguien puede querer accionar el mismo día.
 
 ### Qué se filtra, y por qué
 
@@ -429,7 +460,7 @@ En el arranque el worker loguea `[worker] alerta de desconexion: on|off`.
 |---|---|---|
 | `status_nuevo = 'offline'` | una reconexión no es una alerta; avisar de las dos duplica el volumen | reconexión excluida |
 | `detected_at >` ahora − **30 min** | **la lección del apagón**: el worker estuvo 93 min caído; sin ventana, al volver dispara todo el acumulado de un saque. El sembrado de `ledger_vacio` solo protege el *primer* arranque de la historia, no cada reinicio | evento de 90 min excluido |
-| `LIMIT 10` por ciclo | un pico (reinicio del CRM que desloguea a todos) no puede volcar cien mensajes. Lo que sobra no se pierde: entra al ciclo siguiente, 60 s después | 15 sembrados → 10 devueltos |
+| `LIMIT 5` por ciclo (por cuenta) | un pico (reinicio del CRM que desloguea a todos) no puede volcar cien mensajes. Lo que sobra no se pierde: entra al ciclo siguiente, 60 s después | 15 sembrados → tope respetado |
 | no está en `operator_status` con `activo = false` | baja lógica del tablero: esa persona no está trabajando | `RAMIREZ` en el historial vs `Ramirez` en la tabla → excluido |
 | `LEFT JOIN alertas_enviadas` | idempotencia; la clave es el **evento**, no el operador | marcada una vez, no vuelve |
 
@@ -470,5 +501,5 @@ Si el número es alto, el filtro se decide **con esa distribución**, no con la 
 sobre 49 filas de `users.last_seen` que motivó todo esto. Candidatos: horario de atención,
 duración mínima de la desconexión, o solo ciertos operadores.
 
-Cuando el número cierre: poner las dos variables y reiniciar. El primer ciclo **siembra sin
+Cuando el número cierre: `ALERTA_DESCONEXION=true` y reiniciar. El primer ciclo **siembra sin
 enviar** (`ledger_vacio`), así que el backlog acumulado no sale de golpe.
