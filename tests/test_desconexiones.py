@@ -616,6 +616,13 @@ def test_la_sonda_distingue_el_deploy_que_ENTRO_del_que_NO():
     "el trigger no esta y por eso"."""
     # (trigger, definer, puede_trigger, tabla)
     assert "NO ACTIVA" in _estado((0, None, False, False))
+    # Y NO PUEDE NORMALIZAR LA FALLA. La primera version decia "(la crea el worker en su
+    # primer ciclo)", porque la sonda corria ANTES de que el hilo de alertas hubiera tenido
+    # su primer ciclo: informaba "falta la tabla" en CADA arranque. Se vio en produccion el
+    # 2026-09-03 16:31:49. Era yo tapando un bug de orden con texto tranquilizador, que es
+    # justo lo que entrena a la gente a ignorar la linea. Ahora se asegura ANTES de sondear,
+    # asi que una tabla ausente aca es una falla REAL y el mensaje tiene que apuntar a ella.
+    assert "primer ciclo" not in _estado((0, None, False, False))
     assert "privilegio TRIGGER" in _estado((0, None, False, True))
     assert "SECURITY DEFINER" in _estado((1, False, True, True))
     assert "dueño" in _estado((1, True, True, True), duenos=False)

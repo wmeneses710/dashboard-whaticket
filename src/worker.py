@@ -990,7 +990,10 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     import os
 
     from src import desconexiones
-    from src.alertas import canal_desde_env
+    # `alertas.ensure_table` y no `desconexiones.ensure_table`: la primera asegura TODO el
+    # juego (alertas_enviadas, vip_players y la captura de desconexiones con su savepoint),
+    # que es la misma que corre el hilo en cada ciclo. Llamar la de abajo saltearia la red.
+    from src.alertas import canal_desde_env, ensure_table as ensure_alertas
     from src.conversions import refresh_account_conversions
     from src.sessions import refresh_account_sessions
 
@@ -1085,6 +1088,30 @@ def run_worker_loop(cfg, should_stop=None, log=_emit_stdout) -> None:
     # `conexiones_operador`, que se llena igual, y se prende despues.
     canal_desc = desconexiones.canal_desde_env(os.environ)
     emit(f"[worker] alerta de desconexion: {'on' if canal_desc.configurado else 'off'}")
+    # ASEGURAR ANTES DE SONDEAR, y esto es un ARREGLO de produccion. La sonda estaba sola
+    # aca, ANTES de que el hilo de alertas hubiera tenido su primer ciclo --que es quien
+    # corre el DDL-- asi que informaba "falta la tabla" en TODOS los arranques. Visto en el
+    # log el 2026-09-03 16:31:49:
+    #
+    #     [worker] captura de desconexiones NO ACTIVA: falta la tabla `conexiones_operador`
+    #     [alertas] loop propio cada 60s          <- el que la crea, DESPUES
+    #
+    # Una linea que grita en falso todos los dias es una linea que nadie va a leer el dia que
+    # sea verdad, y ese era exactamente el modo de falla que la sonda venia a cubrir.
+    #
+    # SINCRONICO Y ACA, no dentro del hilo, por dos razones: encaja con el resto de este
+    # bloque de arranque (que ya siembra `operator_status` y `vip_players` igual), y la
+    # captura empieza YA en vez de hasta 60 s despues -- las desconexiones de ese minuto no
+    # se pierden. `ensure_table` es idempotente, asi que el ciclo del hilo la vuelve a
+    # correr sin efecto.
+    try:
+        with psycopg.connect(cfg.database_url, connect_timeout=8) as conn_desc:
+            with conn_desc.cursor() as cur_desc:
+                ensure_alertas(cur_desc)
+            conn_desc.commit()
+    except Exception as e:  # noqa: BLE001 - el arranque no puede caerse por la auditoria
+        emit(f"[worker] no se pudo asegurar la captura de desconexiones: "
+             f"{type(e).__name__}: {e}")
     # LA CAPTURA ES OTRA COSA QUE EL AVISO, y por eso son DOS lineas. El historial se llena
     # aunque la alerta este apagada; sin esta linea, un trigger que quedo sin crear --o
     # creado y sin poder insertar-- se ve igual que un dia en que nadie se desconecto.

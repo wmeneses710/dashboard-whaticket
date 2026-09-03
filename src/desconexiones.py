@@ -572,9 +572,18 @@ def estado(dsn: str, connect=None) -> str:
                 cur.execute(_ESTADO_SQL)
                 trg, definer, puede_trigger, tabla = cur.fetchone()
 
+                # SE SONDEA DESPUES DE ASEGURAR (ver `run_worker_loop`), asi que una tabla
+                # ausente ACA no es "todavia no le toco": es que el DDL no pudo correr.
+                #
+                # LA PRIMERA VERSION DECIA "(la crea el worker en su primer ciclo)" y la
+                # sonda corria ANTES del primer ciclo del hilo de alertas, asi que informaba
+                # esto en CADA arranque -- visto en produccion el 2026-09-03 16:31:49. El
+                # texto tranquilizador tapaba un bug de orden, y una linea que grita en falso
+                # todos los dias es una linea que nadie va a leer el dia que sea verdad.
                 if not tabla:
-                    return ("captura de desconexiones NO ACTIVA: falta la tabla "
-                            "`conexiones_operador` (la crea el worker en su primer ciclo)")
+                    return ("captura de desconexiones NO ACTIVA: el DDL no pudo crear "
+                            "`conexiones_operador`; revisar CREATE en el schema y el log "
+                            "de `errors` (component=arranque)")
                 if not trg:
                     porque = ("" if puede_trigger else
                               "; falta el privilegio TRIGGER sobre `users` "
