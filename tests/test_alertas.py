@@ -252,8 +252,8 @@ def test_el_barrido_no_manda_nada_si_el_canal_esta_apagado(monkeypatch):
     conn = _ConnFalsa(cur)
     r = alertas.barrer(conn, "sistemas", alertas.Canal("", ""),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert r == {"espera_larga": 0, "resumen": 0, "desconexion": 0, "fallos": 0,
-                 "sembrados": 0, "silenciadas": 0}
+    assert r == {"espera_larga": 0, "resumen": 0, "desconexion": 0, "conexion": 0,
+                 "fallos": 0, "sembrados": 0, "silenciadas": 0}
     assert llamadas == [], "un canal apagado no tiene que pegarle a la red"
     assert not any("INSERT INTO alertas_enviadas" in s for s in cur.sql), \
         "y tampoco puede marcar como enviada una alerta que nunca salio"
@@ -619,8 +619,8 @@ def test_el_barrido_NO_devuelve_la_clave_de_la_alerta_EN_VIVO():
     cur = _FakeCursor()
     r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("T", "1"),
                        ahora=datetime(2026, 8, 26, 14, 0, tzinfo=TZ))
-    assert set(r) == {"espera_larga", "resumen", "desconexion", "fallos", "sembrados",
-                      "silenciadas"}
+    assert set(r) == {"espera_larga", "resumen", "desconexion", "conexion", "fallos",
+                      "sembrados", "silenciadas"}
     assert "espera" not in r
 
 
@@ -1382,3 +1382,150 @@ def test_barrer_manda_UNA_sola_del_ticket_pero_MARCA_las_dos(monkeypatch):
     assert r["silenciadas"] == 1, "y la anterior se cuenta, no desaparece del reporte"
     marcas = [s for s in cur.sql if "INSERT INTO alertas_enviadas" in s]
     assert len(marcas) == 2, "pero las DOS quedan marcadas o vuelven el proximo barrido"
+
+
+# --- LA ALERTA DE CONEXION: `desconexiones.pendientes_conexion` y
+# `desconexiones.mensaje_conexion` YA EXISTEN Y ESTAN PROBADAS (ver test_desconexiones.py),
+# pero nada las llamaba desde `barrer` -- eran codigo muerto. Estos tests prueban el
+# WIRING: que el ciclo drena `pendientes_conexion`, manda por el MISMO `canal_desconexion`
+# que la desconexion, marca antes de mandar, siembra en el primer arranque (midiendo HOY
+# contra la copia: 22 conexiones pendientes en el primer pase, la misma razon por la que
+# `resumen`/`desconexion` siembran) y desmarca en un fallo transitorio -- exactamente la
+# misma maquinaria que el bloque de desconexion, sin volver a probar la SQL en si (eso ya
+# lo cubre test_desconexiones.py).
+
+from src import desconexiones  # noqa: E402 - agrupado con el resto de los tests de conexion
+
+
+class _CursorConexion:
+    """Cursor minimo para el WIRING de `conexion`: no ejecuta la SQL de `pendientes_conexion`
+    de verdad (esa se monkeypatchea aparte) -- solo hace falta que sepa responder el
+    INSERT/DELETE contra `alertas_enviadas` que usan `marcar_enviada`/`desmarcar`."""
+
+    def __init__(self, ya_marcada=False):
+        self.sql, self.params = [], []
+        self._ya_marcada = ya_marcada
+        self.rowcount = 1
+
+    def execute(self, sql, params=None):
+        texto = " ".join(str(sql).split())
+        self.sql.append(texto)
+        self.params.append(params)
+        if "INSERT INTO alertas_enviadas" in texto:
+            self.rowcount = 0 if self._ya_marcada else 1
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return None
+
+
+def _evento_conexion(id_=91):
+    return {"id": id_, "account": "sistemas", "operator_name": "Andree",
+            "last_seen": datetime(2026, 9, 1, 9, 0, tzinfo=TZ),
+            "detected_at": datetime(2026, 9, 1, 9, 1, tzinfo=TZ)}
+
+
+def test_una_conexion_pendiente_se_manda_por_el_canal_de_desconexion_y_se_cuenta(monkeypatch):
+    monkeypatch.setattr(desconexiones, "pendientes_conexion",
+                        lambda cur, account, ahora, **k: [_evento_conexion()])
+    # AISLA el bloque de conexion del de desconexion: los dos comparten
+    # `canal_desconexion.configurado`, y sin este stub el bloque de desconexion tambien
+    # correria, con `_CursorConexion` (que no soporta la SQL real de `pendientes`).
+    monkeypatch.setattr(desconexiones, "pendientes", lambda cur, account, ahora, **k: [])
+    enviados = []
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: (
+        enviados.append(k.get("json")), type("R", (), {"status_code": 200, "text": ""})())[1])
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _CursorConexion()
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("", ""),
+                       ahora=datetime(2026, 9, 1, 9, 5, tzinfo=TZ), ledger_vacio_=False,
+                       canal_desconexion=alertas.Canal("T", "1"))
+    assert r["conexion"] == 1
+    assert len(enviados) == 1 and "Operador conectado" in enviados[0]["text"]
+    marcas = [s for s in cur.sql if "INSERT INTO alertas_enviadas" in s]
+    assert marcas, "se marca antes de mandar, igual que el resto de las alertas"
+
+
+def test_el_PRIMER_arranque_de_conexion_siembra_y_NO_manda(monkeypatch):
+    """Medido hoy contra la copia: 22 conexiones quedarian pendientes en el primer pase. Sin
+    sembrar, prender el flag manda las 22 de un saque y el canal nace quemado -- el mismo
+    razonamiento, textual, que ya esta escrito para `resumen` y `desconexion` mas arriba."""
+    monkeypatch.setattr(desconexiones, "pendientes_conexion",
+                        lambda cur, account, ahora, **k: [_evento_conexion()])
+    monkeypatch.setattr(desconexiones, "pendientes", lambda cur, account, ahora, **k: [])
+    enviados = []
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: enviados.append(1))
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _CursorConexion()
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("", ""),
+                       ahora=datetime(2026, 9, 1, 9, 5, tzinfo=TZ), ledger_vacio_=True,
+                       canal_desconexion=alertas.Canal("T", "1"))
+    assert enviados == [], "el backlog de conexiones tampoco se replica al encender"
+    assert r["conexion"] == 0 and r["sembrados"] == 1
+    assert any("INSERT INTO alertas_enviadas" in s for s in cur.sql), "pero SI queda marcada"
+
+
+def test_una_conexion_YA_marcada_no_se_reenvia(monkeypatch):
+    monkeypatch.setattr(desconexiones, "pendientes_conexion",
+                        lambda cur, account, ahora, **k: [_evento_conexion()])
+    monkeypatch.setattr(desconexiones, "pendientes", lambda cur, account, ahora, **k: [])
+    enviados = []
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: enviados.append(1))
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _CursorConexion(ya_marcada=True)
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("", ""),
+                       ahora=datetime(2026, 9, 1, 9, 5, tzinfo=TZ), ledger_vacio_=False,
+                       canal_desconexion=alertas.Canal("T", "1"))
+    assert r["conexion"] == 0
+    assert enviados == [], "marcar_enviada devuelve False: la clave ya estaba"
+
+
+def test_una_conexion_con_fallo_TRANSITORIO_se_desmarca_para_reintentar(monkeypatch):
+    monkeypatch.setattr(desconexiones, "pendientes_conexion",
+                        lambda cur, account, ahora, **k: [_evento_conexion()])
+    monkeypatch.setattr(desconexiones, "pendientes", lambda cur, account, ahora, **k: [])
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 500, "text": "boom"})())
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _CursorConexion()
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("", ""),
+                       ahora=datetime(2026, 9, 1, 9, 5, tzinfo=TZ), ledger_vacio_=False,
+                       canal_desconexion=alertas.Canal("T", "1"))
+    assert r["fallos"] == 1 and r["conexion"] == 0
+    assert any("DELETE FROM alertas_enviadas" in s for s in cur.sql), \
+        "un fallo transitorio desmarca para que el proximo ciclo la reintente"
+
+
+def test_una_conexion_con_fallo_DURO_se_cuenta_y_se_loguea(monkeypatch):
+    monkeypatch.setattr(desconexiones, "pendientes_conexion",
+                        lambda cur, account, ahora, **k: [_evento_conexion(id_=7)])
+    monkeypatch.setattr(desconexiones, "pendientes", lambda cur, account, ahora, **k: [])
+    monkeypatch.setattr(alertas.httpx, "post",
+                        lambda *a, **k: type("R", (), {"status_code": 400, "text": "mal"})())
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    dichos = []
+    cur = _CursorConexion()
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("", ""),
+                       ahora=datetime(2026, 9, 1, 9, 5, tzinfo=TZ), ledger_vacio_=False,
+                       canal_desconexion=alertas.Canal("T", "1"), log=dichos.append)
+    assert r["fallos"] == 1 and r["conexion"] == 0
+    assert any("7" in d for d in dichos), dichos
+    assert not any("DELETE FROM alertas_enviadas" in s for s in cur.sql), \
+        "un 400 no es transitorio: no se desmarca"
+
+
+def test_con_el_canal_de_desconexion_APAGADO_no_se_manda_ninguna_conexion(monkeypatch):
+    """El default-off: sin `canal_desconexion` (o sin configurar) el flag sigue apagado y
+    ninguna de las dos mitades del ciclo manda nada."""
+    llamado = []
+    monkeypatch.setattr(desconexiones, "pendientes_conexion",
+                        lambda cur, account, ahora, **k: llamado.append(1) or [_evento_conexion()])
+    monkeypatch.setattr(alertas.httpx, "post", lambda *a, **k: llamado.append("post"))
+    monkeypatch.setattr(alertas.time, "sleep", lambda s: None)
+    cur = _CursorConexion()
+    r = alertas.barrer(_ConnFalsa(cur), "sistemas", alertas.Canal("", ""),
+                       ahora=datetime(2026, 9, 1, 9, 5, tzinfo=TZ), ledger_vacio_=False)
+    assert r["conexion"] == 0
+    assert llamado == [], "con el canal apagado ni siquiera se consulta pendientes_conexion"

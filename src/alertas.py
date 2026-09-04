@@ -867,7 +867,7 @@ def barrer(conn, account: str, canal: Canal,
     # ciclo fallaban, esto daba {resumen:0}, que es lo MISMO que devuelve un dia tranquilo.
     # El worker solo loguea cuando hay algo, asi que un canal caido se veia identico a que
     # no hubiera pasado nada.
-    hecho = {"espera_larga": 0, "resumen": 0, "desconexion": 0, "fallos": 0,
+    hecho = {"espera_larga": 0, "resumen": 0, "desconexion": 0, "conexion": 0, "fallos": 0,
              "sembrados": 0, "silenciadas": 0}
     # CANAL PROPIO Y APAGADO POR DEFECTO. `None` -> un canal sin configurar, o sea que todo
     # llamador que no lo pase (los tests, y cualquier despliegue sin las variables) corre con
@@ -891,10 +891,13 @@ def barrer(conn, account: str, canal: Canal,
             # **155 con ventana de 72 h** -- en produccion, poner el token dispararia el
             # backlog entero de un saque y el canal nace quemado. Un canal de alertas
             # arranca en AHORA: la primera pasada SIEMBRA el ledger sin mandar nada.
-            # UNA POR TIPO: cada alerta arranca en AHORA por su cuenta.
+            # UNA POR TIPO: cada alerta arranca en AHORA por su cuenta. "conexion" entra a la
+            # misma tupla por la misma razon que "desconexion": MEDIDO hoy contra la copia,
+            # 22 conexiones quedarian pendientes en el primer pase. Sin sembrar, prender el
+            # flag manda esas 22 de un saque y el canal nace quemado.
             primera = {t: (ledger_vacio(cur, account, t) if ledger_vacio_ is None
                            else ledger_vacio_)
-                       for t in ("espera_larga", "resumen", "desconexion")}
+                       for t in ("espera_larga", "resumen", "desconexion", "conexion")}
         conn.commit()
 
         # ESPERA LARGA. Va PRIMERO: es la unica de las dos que alguien puede querer accionar
@@ -960,6 +963,40 @@ def barrer(conn, account: str, canal: Canal,
                         desmarcar(cur, account, "resumen", clave_resumen(r["interaccion_id"]))
                     conn.commit()
                 time.sleep(THROTTLE_SEGUNDOS)
+        # CONEXION DE OPERADOR. La OTRA mitad del mismo ciclo: `desconexiones.pendientes_conexion`
+        # y `desconexiones.mensaje_conexion` ya estaban escritas y probadas, pero nada las
+        # llamaba -- codigo muerto. Van por el MISMO `canal_desconexion` que la desconexion
+        # (conexion y desconexion son las dos puntas de una sesion de operador, no dos avisos
+        # distintos) y con la misma maquinaria: marcar primero, sembrar en el primer arranque,
+        # desmarcar si el fallo es transitorio. Va ANTES del bloque de desconexion para que un
+        # ciclo se lea abre-y-cierra.
+        if canal_desconexion.configurado:
+            from src import desconexiones
+
+            with conn.cursor() as cur:
+                conexiones = desconexiones.pendientes_conexion(cur, account, ahora)
+            for c in conexiones:
+                clave = desconexiones.clave_alerta(c["id"])
+                with conn.cursor() as cur:
+                    nueva = marcar_enviada(cur, account, "conexion", clave)
+                conn.commit()
+                if not nueva:
+                    continue
+                if primera["conexion"]:
+                    hecho["sembrados"] += 1
+                    continue
+                estado = canal_desconexion.enviar(desconexiones.mensaje_conexion(c))
+                if estado == OK:
+                    hecho["conexion"] += 1
+                else:
+                    hecho["fallos"] += 1
+                    decir(f"[alertas] {account} conexion {c['id']}: {estado}")
+                if estado == REINTENTAR:
+                    with conn.cursor() as cur:
+                        desmarcar(cur, account, "conexion", clave)
+                    conn.commit()
+                time.sleep(THROTTLE_SEGUNDOS)
+
         # DESCONEXION DE OPERADOR. Drena el outbox que escribe el trigger de
         # `src/desconexiones.py`; ese modulo decide QUE fila merece aviso (ventana, tope y
         # el descarte de los operadores apagados) y aca solo se manda, con la misma

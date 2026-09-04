@@ -478,6 +478,26 @@ def test_la_consulta_tiene_VENTANA_y_TOPE():
     assert desconexiones.TOPE_POR_CICLO > 0
 
 
+# --- la consulta trae emparejada la SESION que se cierra con la desconexion -
+
+def test_la_sql_de_pendientes_pairea_la_sesion_con_LAG_particionado():
+    """El emparejado va en SQL, no en Python -- mismo patron que `_SESIONES_SQL`. La
+    particion por (user_id, account) es lo que impide que el `online` anterior de OTRO
+    operador o de OTRA cuenta se cuele en esta desconexion."""
+    sql = desconexiones._PENDIENTES_SQL
+    assert "lag(" in sql.lower()
+    assert "partition by user_id, account" in sql.lower()
+
+
+def test_la_sql_de_pendientes_solo_expone_la_sesion_si_el_ANTERIOR_fue_online():
+    """Si el evento inmediato anterior NO fue un `online` (otro `offline`, o no hay
+    anterior -- 11 de 22 operadores en produccion arrancan asi su historial), la sesion NO
+    EXISTE: tiene que dar NULL, no el dato crudo de ese evento anterior sea cual sea."""
+    sql = desconexiones._PENDIENTES_SQL
+    assert "case when" in sql.lower()
+    assert "= 'online'" in sql
+
+
 def test_el_mensaje_va_en_HTML_ESCAPADO():
     """Los nombres vienen del CRM. `_` y `&` en un nombre ya rompieron un envio real con
     400 can't parse entities (ver `Canal.enviar`)."""
@@ -555,6 +575,132 @@ def test_el_mensaje_es_INCONFUNDIBLE_en_un_chat_compartido():
     assert "🔌" in primera
     assert "esconecta" in primera, "la primera linea tiene que decir QUE es"
     assert "🍀" not in msg and "⏳" not in msg, "no puede confundirse con un resumen VIP"
+
+
+# --- la linea de la SESION que se cierra con esta desconexion ---------------
+#
+# LA REGLA DEL NEGOCIO (decidida por el usuario, sin margen para interpretarla): la sesion es
+# el `online` INMEDIATO ANTERIOR del MISMO (user_id, account). Si no hay uno, la linea NO SE
+# AGREGA -- ni "desconocido", ni una estimacion desde el arranque de la captura. Medido el
+# 2026-09-03: 11 de 22 operadores arrancan su historial con un `offline` porque ya estaban
+# conectados cuando el trigger empezo a grabar (17:03 UTC); esos NO tienen sesion que contar,
+# y el mensaje tiene que salir IDENTICO al de hoy.
+
+def test_el_mensaje_agrega_la_linea_de_sesion_cuando_HAY_online_previo():
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Alejandra", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "sesion_last_seen_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+        "sesion_detected_at_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+    })
+    assert "9 min" in msg, "9 minutos de sesion (17:00 a 17:09) no puede faltar"
+    assert "12:00:00" in msg, "el inicio va en hora Ecuador: 17:00 UTC - 5h = 12:00:00"
+
+
+def test_el_mensaje_NO_agrega_linea_de_sesion_sin_online_previo():
+    """El caso de 11 de 22 operadores en produccion: el `offline` es el primer evento de su
+    historial. El mensaje tiene que salir EXACTAMENTE igual al de hoy, sin la linea de mas."""
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    base = {
+        "operator_name": "Bryan", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+    }
+    con_sesion_nula = {**base,
+                        "sesion_last_seen_inicio": None, "sesion_detected_at_inicio": None}
+    msg_sin_claves = desconexiones.mensaje_desconexion(base)
+    assert msg_sin_claves == desconexiones.mensaje_desconexion(con_sesion_nula)
+    assert "🕓" not in msg_sin_claves, "sin online previo no hay linea de sesion"
+
+
+def test_la_duracion_de_sesion_usa_LAST_SEEN_y_no_DETECTED_AT():
+    """Mismo argumento que `sesiones_cerradas`: la latencia mediana del sync es 157 s en
+    offline y 151 s en online (maximo ~5 min). Con ambos relojes presentes y DISTINTOS la
+    duracion tiene que salir del de `last_seen`."""
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Carla", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 17, 11, 37, tzinfo=utc),        # +157s latencia
+        "sesion_last_seen_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+        "sesion_detected_at_inicio": datetime(2026, 9, 3, 16, 57, 29, tzinfo=utc),  # -151s
+    })
+    assert "9 min" in msg, "17:00 a 17:09 por last_seen son 9 minutos, no por detected_at"
+
+
+def test_la_duracion_de_sesion_cae_a_DETECTED_AT_si_LAST_SEEN_es_NULL():
+    """`last_seen` es NULLABLE en el esquema. El fallback es POR PUNTA: si falta en el
+    arranque de la sesion cae a `detected_at` de esa misma punta -- consistente con
+    `sesiones_cerradas`."""
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Diego", "account": "datos",
+        "last_seen": None,
+        "detected_at": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "sesion_last_seen_inicio": None,
+        "sesion_detected_at_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+    })
+    assert "9 min" in msg
+
+
+def test_la_linea_de_sesion_usa_HORAS_cuando_pasa_de_60_minutos():
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Elena", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 20, 12, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 20, 12, 0, tzinfo=utc),
+        "sesion_last_seen_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+        "sesion_detected_at_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+    })
+    assert "3 h 12 min" in msg
+
+
+def test_la_linea_de_sesion_dice_TIEMPO_DE_SESION_y_no_CONECTADO():
+    """Pedido del usuario, textual: "en la de desconexion en vez de conexion ponle tiempo de
+    sesion para que quede mas claro". Solo cambia la etiqueta -- la duracion, el fallback y
+    el resto del mensaje siguen igual (ver los tests de arriba)."""
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Gabriela", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "sesion_last_seen_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+        "sesion_detected_at_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+    })
+    assert "🕓 tiempo de sesion 9 min (desde 12:00:00)" in msg
+    assert "🕓 conectado" not in msg, "la etiqueta vieja no puede seguir apareciendo"
+
+
+def test_la_linea_de_LATENCIA_sigue_funcionando_con_la_linea_de_sesion():
+    """La linea nueva no puede romper el comportamiento ya probado de `⏱ detectado N min
+    despues`: las dos tienen que poder convivir en el mismo mensaje, cada una con su propio
+    dato -- la sesion sale de `last_seen`, la latencia se mide contra `detected_at`."""
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_desconexion({
+        "operator_name": "Fabian", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 17, 9, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 17, 20, 0, tzinfo=utc),   # 11 min de latencia
+        "sesion_last_seen_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+        "sesion_detected_at_inicio": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+    })
+    assert "⏱ detectado 11 min despues" in msg
+    assert "9 min" in msg, "la sesion sigue durando 9 minutos, sin cambios"
 
 
 # =====================================================================
@@ -643,3 +789,353 @@ def test_la_sonda_no_asusta_en_un_despliegue_NUEVO():
     linea = _estado((1, True, True, True), segunda=(0, None))
     assert "0 eventos" in linea
     assert "ROTA" not in linea and "NO ACTIVA" not in linea
+
+
+# =====================================================================
+# LAS SESIONES DE CONEXION: el ciclo cerrado online -> offline
+# =====================================================================
+#
+# LA REGLA DEL NEGOCIO (decidida por el usuario, no negociable): una sesion es un `online`
+# emparejado con el SIGUIENTE `offline` del mismo (user_id, account). Si un `online` todavia
+# no tiene su `offline`, esa sesion NO EXISTE -- no se estima "tiempo hasta ahora", no se
+# emite fila parcial. "No hay pierde, no podemos hacer mas."
+#
+# POR QUE `last_seen` Y NO `detected_at`. `detected_at` es cuando el SYNC se dio cuenta, no
+# cuando paso. Medido el 2026-09-03 sobre 58 filas: la latencia mediana es 157 s en offline y
+# 151 s en online, con un maximo de ~5 minutos. En la sesion corta de Alejandra la diferencia
+# fue de 5 minutos por `detected_at` contra 9 minutos por `last_seen`: un error del 80% justo
+# en las sesiones cortas, que son las que le importan al negocio. `last_seen` es NULL en la
+# copia de hoy en 0 de 58 filas, pero la columna lo permite, asi que el fallback a
+# `detected_at` se prueba igual.
+#
+# EL EMPAREJADO VA EN SQL, NO EN PYTHON. `lead()` particionado por `(user_id, account)` ve
+# TODA la secuencia de una sola pasada; reimplementarlo con un loop en Python duplicaria una
+# logica que el motor ya resuelve de forma correcta y mas barata.
+#
+# QUE SE PRUEBA DESDE PYTHON Y QUE NO. Igual que el resto del modulo (ver el encabezado del
+# archivo): este repo no tiene tests contra una base real. El EMPAREJADO (`lead()`, el
+# `WHERE status_sig = 'offline'` que descarta al operador todavia conectado) se prueba por el
+# TEXTO de la consulta. El FALLBACK `last_seen` -> `detected_at` y el CALCULO de la duracion
+# son Python puro sobre las columnas que la consulta ya deja pareadas, y esos SI se prueban
+# con valores reales.
+
+class _FakeCursorSesiones:
+    """Cursor falso con `description` + `fetchall`, para una funcion que arma dicts a partir
+    de columnas nombradas. Mismo patron que `tests/test_queries.py::_FakeCursor`: las filas
+    que devuelve `fetchall` son las que la consulta YA pareo via `lead()` -- lo que no se
+    puede correr desde aca es el propio `lead()`, que se prueba por texto (ver abajo)."""
+
+    def __init__(self, rows=(), description=()):
+        self._rows = rows
+        self.description = [type("C", (), {"name": n})() for n in description]
+        self.sql: list[str] = []
+
+    def execute(self, sql, params=None):
+        self.sql.append(" ".join(str(sql).split()))
+
+    def fetchall(self):
+        return self._rows
+
+
+_COLS_SESIONES = ("user_id", "account", "operator_name",
+                   "last_seen_inicio", "detected_at_inicio",
+                   "last_seen_fin", "detected_at_fin")
+
+
+def test_un_ciclo_cerrado_devuelve_UNA_sesion():
+    """El caso normal: un online con su offline, ambos relojes presentes."""
+    from datetime import datetime, timezone
+
+    ini = datetime(2026, 9, 3, 17, 0, 0, tzinfo=timezone.utc)
+    fin = datetime(2026, 9, 3, 17, 9, 0, tzinfo=timezone.utc)
+    cur = _FakeCursorSesiones(
+        rows=[("u1", "datos", "Alejandra", ini, ini, fin, fin)],
+        description=_COLS_SESIONES,
+    )
+    sesiones = desconexiones.sesiones_cerradas(cur)
+    assert len(sesiones) == 1
+    s = sesiones[0]
+    assert s["account"] == "datos"
+    assert s["user_id"] == "u1"
+    assert s["operator_name"] == "Alejandra"
+    assert s["start"] == ini
+    assert s["end"] == fin
+    assert s["duration_seconds"] == 540
+
+
+def test_el_operador_TODAVIA_conectado_no_aparece():
+    """Si el ultimo evento de un operador es un `online` sin `offline` despues, `lead()` da
+    NULL para esa fila y el `WHERE status_sig = 'offline'` la descarta antes de que llegue a
+    Python. No hay pierde: no se estima tiempo contra el reloj actual."""
+    sql = desconexiones._SESIONES_SQL
+    assert "status_sig = 'offline'" in sql
+    assert "now()" not in sql, "no se estima 'tiempo hasta ahora' para una sesion abierta"
+
+    cur = _FakeCursorSesiones(rows=[], description=_COLS_SESIONES)
+    assert desconexiones.sesiones_cerradas(cur) == [], \
+        "sin filas de la consulta (operador todavia online), no hay sesiones"
+
+
+def test_varios_ciclos_consecutivos_del_MISMO_operador():
+    """Dos ciclos completos del mismo operador tienen que salir como DOS sesiones
+    independientes, cada una con su propia duracion."""
+    from datetime import datetime, timezone
+
+    def t(h, m):
+        return datetime(2026, 9, 3, h, m, 0, tzinfo=timezone.utc)
+
+    filas = [
+        ("u1", "datos", "Bryan", t(8, 0), t(8, 0), t(8, 5), t(8, 5)),
+        ("u1", "datos", "Bryan", t(9, 0), t(9, 0), t(9, 20), t(9, 20)),
+    ]
+    cur = _FakeCursorSesiones(rows=filas, description=_COLS_SESIONES)
+    sesiones = desconexiones.sesiones_cerradas(cur)
+    assert len(sesiones) == 2
+    assert sesiones[0]["duration_seconds"] == 300
+    assert sesiones[1]["duration_seconds"] == 1200
+
+
+def test_dos_operadores_intercalados_no_se_mezclan():
+    """El emparejado parte por `(user_id, account)`: dos operadores con eventos intercalados
+    en el tiempo no pueden cruzarse las sesiones entre si."""
+    from datetime import datetime, timezone
+
+    def t(h, m):
+        return datetime(2026, 9, 3, h, m, 0, tzinfo=timezone.utc)
+
+    filas = [
+        ("u1", "datos", "Ana", t(8, 0), t(8, 0), t(8, 10), t(8, 10)),
+        ("u2", "datos", "Bruno", t(8, 3), t(8, 3), t(8, 8), t(8, 8)),
+    ]
+    cur = _FakeCursorSesiones(rows=filas, description=_COLS_SESIONES)
+    sesiones = desconexiones.sesiones_cerradas(cur)
+    por_nombre = {s["operator_name"]: s for s in sesiones}
+    assert set(por_nombre) == {"Ana", "Bruno"}
+    assert por_nombre["Ana"]["duration_seconds"] == 600
+    assert por_nombre["Bruno"]["duration_seconds"] == 300
+    assert "PARTITION BY user_id, account" in desconexiones._SESIONES_SQL, \
+        "sin particionar por (user_id, account) dos operadores se pueden cruzar"
+
+
+def test_last_seen_NULL_usa_detected_at():
+    """`last_seen` es NULLABLE en el esquema. Hoy esta lleno en 58/58 filas de la copia, pero
+    el fallback tiene que existir y probarse igual: sin el, una fila con `last_seen` NULL
+    rompe con TypeError al restar `None - None`."""
+    from datetime import datetime, timezone
+
+    d_ini = datetime(2026, 9, 3, 17, 0, 0, tzinfo=timezone.utc)
+    d_fin = datetime(2026, 9, 3, 17, 5, 0, tzinfo=timezone.utc)
+    cur = _FakeCursorSesiones(
+        rows=[("u1", "datos", "Carla", None, d_ini, None, d_fin)],
+        description=_COLS_SESIONES,
+    )
+    s = desconexiones.sesiones_cerradas(cur)[0]
+    assert s["start"] == d_ini
+    assert s["end"] == d_fin
+    assert s["duration_seconds"] == 300
+
+
+def test_la_duracion_usa_LAST_SEEN_y_no_DETECTED_AT():
+    """LA DECISION CRITICA, medida el 2026-09-03: la latencia del sync es de mediana 157 s en
+    offline y 151 s en online (maximo ~5 min). En la sesion corta de Alejandra la diferencia
+    fue de 5 minutos por `detected_at` contra 9 minutos por `last_seen` -- un error del 80%
+    justo en las sesiones cortas, que son las que le importan al negocio. Con ambos relojes
+    presentes y DISTINTOS, la duracion tiene que salir del de `last_seen`."""
+    from datetime import datetime, timezone
+
+    ls_ini = datetime(2026, 9, 3, 17, 0, 0, tzinfo=timezone.utc)
+    da_ini = datetime(2026, 9, 3, 17, 2, 31, tzinfo=timezone.utc)   # +151 s de latencia
+    ls_fin = datetime(2026, 9, 3, 17, 9, 0, tzinfo=timezone.utc)
+    da_fin = datetime(2026, 9, 3, 17, 11, 37, tzinfo=timezone.utc)  # +157 s de latencia
+    cur = _FakeCursorSesiones(
+        rows=[("u1", "datos", "Alejandra", ls_ini, da_ini, ls_fin, da_fin)],
+        description=_COLS_SESIONES,
+    )
+    s = desconexiones.sesiones_cerradas(cur)[0]
+    assert s["duration_seconds"] == 540, "9 minutos por last_seen, no por detected_at"
+
+
+def test_la_sql_pairea_con_LEAD_y_no_en_Python():
+    """El emparejado online/offline lo hace el motor con una window function, no un loop en
+    Python que reimplemente lo mismo mas caro y con mas superficie de bug."""
+    sql = desconexiones._SESIONES_SQL
+    assert "lead(" in sql.lower()
+    assert "partition by user_id, account" in sql.lower()
+    assert "status_nuevo = 'online'" in sql
+    assert "status_sig = 'offline'" in sql
+
+
+# =====================================================================
+# LA ALERTA DE CONEXION: el otro lado del mismo ciclo
+# =====================================================================
+#
+# NO LLEVA DURACION DE SESION, A PROPOSITO: al momento de conectar la sesion todavia no
+# cerro, no hay nada que resumir -- la duracion aparece recien cuando el ciclo se cierra, en
+# el aviso de desconexion. La clave de dedup es la MISMA regla que en desconexiones
+# (`clave_alerta`, el evento y no el operador): se reusa la funcion, no se reimplementa.
+
+def test_la_sql_de_conexion_filtra_ONLINE_y_dedupea_por_tipo_conexion():
+    """Espejo de `test_solo_alerta_DESCONEXIONES_no_reconexiones`, pero para el otro lado del
+    ciclo: la conexion no puede colarse en el dedup de la desconexion ni viceversa."""
+    sql = desconexiones._PENDIENTES_CONEXION_SQL
+    assert "status_nuevo = 'online'" in sql
+    assert "tipo    = 'conexion'" in sql or "tipo = 'conexion'" in sql
+
+
+def test_la_sql_de_conexion_excluye_operadores_APAGADOS_y_matchea_por_CLAVE():
+    """Misma guarda que `pendientes`: un operador con baja logica en `operator_status` no
+    esta trabajando, y el match va por clave (`identidad.clave_sql`) y no por string exacto."""
+    sql = desconexiones._PENDIENTES_CONEXION_SQL
+    assert "operator_status" in sql
+    assert "activo" in sql
+    assert "lower" in sql.lower() or "translate" in sql.lower()
+
+
+def test_la_sql_de_conexion_tiene_VENTANA_y_TOPE():
+    """Misma leccion del apagon que la de desconexion: sin ventana, un worker que vuelve
+    dispara todas las conexiones acumuladas de un saque."""
+    sql = desconexiones._PENDIENTES_CONEXION_SQL
+    assert "detected_at >" in sql
+    assert "LIMIT %(tope)s" in sql
+
+
+def test_la_sql_de_conexion_NO_pairea_sesion():
+    """La conexion no tiene ciclo que cerrar: no hace falta `lag()`/`lead()` ni una
+    subconsulta con window function, a diferencia de `_PENDIENTES_SQL` (desconexion)."""
+    sql = desconexiones._PENDIENTES_CONEXION_SQL
+    assert "lag(" not in sql.lower()
+    assert "lead(" not in sql.lower()
+    assert "window" not in sql.lower()
+
+
+def test_la_sql_de_conexion_y_la_de_desconexion_comparten_el_bloque_de_guardas():
+    """Factorizado, no copiado y pegado: el dedup, la ventana, el tope y la exclusion de
+    apagados son el MISMO texto en las dos consultas salvo el tipo/estado -- ver
+    `_bloque_guardas_pendientes`. Si una consulta cambia esa parte y la otra no, este test
+    revienta."""
+    off = desconexiones._PENDIENTES_SQL
+    on = desconexiones._PENDIENTES_CONEXION_SQL
+    comun = desconexiones._bloque_guardas_pendientes("desconexion", "offline")
+    assert comun in off
+    comun_on = desconexiones._bloque_guardas_pendientes("conexion", "online")
+    assert comun_on in on
+
+
+def test_pendientes_conexion_ejecuta_con_los_MISMOS_parametros_que_pendientes():
+    """Cuenta, ventana y tope entran igual que en `pendientes`: mismo contrato para que el
+    worker pueda llamar a las dos funciones de forma simetrica."""
+    from datetime import datetime, timezone
+
+    class _Cursor:
+        def __init__(self):
+            self.params = None
+            self.description = [type("C", (), {"name": n})()
+                                for n in ("id", "account", "operator_name",
+                                          "last_seen", "detected_at")]
+
+        def execute(self, sql, params=None):
+            self.params = params
+
+        def fetchall(self):
+            return [(1, "datos", "Hugo",
+                     datetime(2026, 9, 3, 17, 0, 0, tzinfo=timezone.utc),
+                     datetime(2026, 9, 3, 17, 0, 0, tzinfo=timezone.utc))]
+
+    cur = _Cursor()
+    ahora = datetime(2026, 9, 3, 17, 30, 0, tzinfo=timezone.utc)
+    filas = desconexiones.pendientes_conexion(cur, "datos", ahora, ventana_minutos=30, tope=5)
+    assert cur.params["account"] == "datos"
+    assert cur.params["tope"] == 5
+    assert len(filas) == 1
+    assert filas[0]["operator_name"] == "Hugo"
+
+
+def test_la_clave_de_conexion_reusa_clave_alerta():
+    """La misma regla que en desconexiones: la clave es el EVENTO, no el operador. No hay
+    una `clave_alerta_conexion` aparte -- `clave_alerta` ya es generica sobre el id."""
+    assert desconexiones.clave_alerta(77) == "77"
+
+
+def test_el_mensaje_de_conexion_dice_QUIEN_CUENTA_y_HORA_local():
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_conexion({
+        "operator_name": "Ines", "account": "sistemas",
+        "last_seen": datetime(2026, 9, 3, 20, 1, 29, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 20, 3, 0, tzinfo=utc),
+    })
+    assert "Ines" in msg
+    assert "sistemas" in msg
+    assert "15:01" in msg, "la hora tiene que ir en Ecuador (UTC-5), no en UTC"
+
+
+def test_el_mensaje_de_conexion_NO_lleva_duracion_de_sesion():
+    """A DIFERENCIA de la desconexion: al conectar la sesion todavia no cerro, no hay nada
+    que resumir. Ni la palabra 'sesion' ni el simbolo de la linea de duracion (🕓) pueden
+    aparecer."""
+    msg = desconexiones.mensaje_conexion({
+        "operator_name": "Julian", "account": "datos",
+        "last_seen": None, "detected_at": None})
+    assert "🕓" not in msg
+    assert "sesion" not in msg.lower()
+
+
+def test_el_mensaje_de_conexion_es_ESCAPADO_y_sin_None():
+    msg = desconexiones.mensaje_conexion({
+        "operator_name": "Ana & Co <b>", "account": "datos",
+        "last_seen": None, "detected_at": None,
+    })
+    assert "Ana & Co <b>" not in msg
+    assert "&amp;" in msg and "&lt;b&gt;" in msg
+
+    msg_sin_nombre = desconexiones.mensaje_conexion({
+        "operator_name": None, "account": "datos", "last_seen": None, "detected_at": None})
+    assert "None" not in msg_sin_nombre
+
+
+def test_el_mensaje_de_conexion_LATENCIA_sigue_funcionando():
+    """La linea `⏱ detectado N min despues` aplica identica: la latencia medida en `online`
+    es de mediana 151 s."""
+    from datetime import datetime, timezone
+
+    utc = timezone.utc
+    msg = desconexiones.mensaje_conexion({
+        "operator_name": "Karen", "account": "datos",
+        "last_seen": datetime(2026, 9, 3, 17, 0, 0, tzinfo=utc),
+        "detected_at": datetime(2026, 9, 3, 17, 2, 31, tzinfo=utc),   # +151 s
+    })
+    assert "⏱ detectado 2 min despues" in msg
+
+
+def test_el_mensaje_de_conexion_es_INCONFUNDIBLE_en_el_chat_compartido():
+    """Marcador verde en vez del enchufe -- distinguible de un vistazo de la desconexion, de
+    los resumenes VIP (🍀) y de la alerta de espera (⏳)."""
+    msg = desconexiones.mensaje_conexion({
+        "operator_name": "Karen", "account": "datos",
+        "last_seen": None, "detected_at": None})
+    primera = msg.splitlines()[0]
+    assert "🟢" in primera
+    assert "onectad" in primera, "la primera linea tiene que decir QUE es"
+    assert "🔌" not in msg and "🍀" not in msg and "⏳" not in msg
+
+
+def test_el_indice_de_conexion_es_NUEVO_e_IDEMPOTENTE_y_no_toca_el_de_offline():
+    """El indice parcial existente es `WHERE status_nuevo = 'offline'` y no sirve para
+    buscar `online`: hace falta uno segundo, propio, sin tocar el primero -- ya esta
+    desplegado."""
+    ddl = _ddl()
+    assert ddl.count("CREATE INDEX IF NOT EXISTS") == 2
+    assert "WHERE status_nuevo = 'offline'" in ddl
+    assert "WHERE status_nuevo = 'online'" in ddl
+    # el indice de offline sigue apareciendo LITERAL, sin alterar: no se dropea ni se
+    # renombra.
+    assert "idx_conexiones_operador_off" in ddl
+
+
+def test_el_flag_ALERTA_DESCONEXION_es_el_MISMO_para_las_dos_mitades_del_ciclo():
+    """Decision registrada en el docstring de `canal_desde_env`: conexion y desconexion son
+    las dos mitades de UN ciclo, y un flag separado dejaria prender la mitad -- sin agregar
+    una variable de entorno nueva."""
+    assert desconexiones.canal_desde_env({**_VIP, "ALERTA_DESCONEXION": "true"}).configurado
+    assert not desconexiones.canal_desde_env(_VIP).configurado

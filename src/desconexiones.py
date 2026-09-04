@@ -84,6 +84,14 @@ _CREATE_STMTS = (
     "CREATE INDEX IF NOT EXISTS idx_conexiones_operador_off "
     "ON conexiones_operador (account, detected_at DESC) "
     "WHERE status_nuevo = 'offline'",
+    # EL GEMELO PARA CONEXIONES. El indice de arriba es parcial sobre `offline` y no sirve
+    # para "conexiones de UNA cuenta, lo mas reciente primero" -- la consulta de
+    # `pendientes_conexion` filtra `online`. NO SE TOCA EL DE ARRIBA: ya esta desplegado, y
+    # un `DROP` + recreate dejaria una ventana sin indice. `IF NOT EXISTS` lo hace re-ejecutable
+    # igual que el resto de este modulo.
+    "CREATE INDEX IF NOT EXISTS idx_conexiones_operador_on "
+    "ON conexiones_operador (account, detected_at DESC) "
+    "WHERE status_nuevo = 'online'",
     # EL REGISTRADOR NO PUEDE TUMBAR A QUIEN LO LLAMA. Es la regla 1 de `errores.registrar`
     # y la de `worker._registrar_fallo`, y aca pesa mas: esto corre DENTRO de la transaccion
     # del ETL. Si alguien borra `conexiones_operador`, sin este bloque cada UPDATE de
@@ -398,14 +406,57 @@ TOPE_POR_CICLO = 5
 # matcheaba y el operador no se prendia NUNCA -- con 222 sesiones recientes. `clave_sql` es
 # la fuente unica de esa regla (minusculas, sin tildes, con la ñ arreglada).
 _PENDIENTES_SQL_TPL = """
-SELECT c.id, c.account, c.operator_name, c.last_seen, c.detected_at
-  FROM conexiones_operador c
-  LEFT JOIN alertas_enviadas a
+SELECT c.id, c.account, c.operator_name, c.last_seen, c.detected_at,
+       -- LA SESION QUE SE CIERRA CON ESTE `offline`, SI HAY UNA. Regla del negocio,
+       -- decidida por el usuario y sin margen para interpretarla: solo CICLO CERRADO -- el
+       -- `online` INMEDIATO ANTERIOR del MISMO (user_id, account). Si ese anterior no fue
+       -- un `online` (otro `offline`, o no hay anterior) el CASE da NULL y
+       -- `mensaje_desconexion` simplemente no agrega la linea -- ni "desconocido", ni una
+       -- estimacion desde el arranque de la captura. Medido el 2026-09-03: 11 de 22
+       -- operadores arrancan su historial con un `offline` porque ya estaban conectados
+       -- cuando el trigger empezo a grabar (17:03 UTC); esos NO tienen sesion que contar.
+       --
+       -- EL EMPAREJADO VA POR `lag()`, no por un JOIN aparte ni por un loop en Python:
+       -- particionado por (user_id, account) y ordenado por `detected_at` (NOT NULL, crece
+       -- con cada INSERT del trigger) -- mismo patron que `_SESIONES_SQL`. La particion es
+       -- lo que impide que el `online` anterior de OTRO operador o de OTRA cuenta se cuele.
+       CASE WHEN c.status_evento_anterior = 'online'
+            THEN c.sesion_last_seen_inicio END   AS sesion_last_seen_inicio,
+       CASE WHEN c.status_evento_anterior = 'online'
+            THEN c.sesion_detected_at_inicio END AS sesion_detected_at_inicio
+  FROM (
+        SELECT id, account, operator_name, status_nuevo, last_seen, detected_at,
+               lag(status_nuevo) OVER w AS status_evento_anterior,
+               lag(last_seen)    OVER w AS sesion_last_seen_inicio,
+               lag(detected_at)  OVER w AS sesion_detected_at_inicio
+          FROM conexiones_operador
+        WINDOW w AS (PARTITION BY user_id, account ORDER BY detected_at)
+       ) c
+{guardas}"""
+
+
+# EL BLOQUE COMPARTIDO ENTRE `pendientes` (offline) Y `pendientes_conexion` (online): el
+# dedup contra `alertas_enviadas`, la ventana, el tope y la exclusion de operadores apagados
+# por clave (`identidad.clave_sql`) son el MISMO texto en las dos consultas, salvo el `tipo`
+# de alerta y el `estado` que filtran. Factorizado para que una regla nueva ahi -- otro
+# guard, otro tope -- no se pueda actualizar en una consulta y olvidar en la otra.
+#
+# LO QUE NO ENTRA ACA: el SELECT y el FROM de verdad difieren. La de desconexion pairea la
+# sesion que se cierra con `lag()` sobre una subconsulta con window function; la de conexion
+# no tiene sesion que parear -- es un evento suelto. Forzar esa parte a un template comun le
+# restaria mas legibilidad de la que ahorraria, asi que cada consulta se queda con su propio
+# SELECT/FROM y comparten solo este bloque.
+def _bloque_guardas_pendientes(tipo: str, estado: str) -> str:
+    from src.identidad import clave_sql
+
+    clave_os = clave_sql("os.operator_name")
+    clave_c = clave_sql("c.operator_name")
+    return f"""  LEFT JOIN alertas_enviadas a
          ON a.account = c.account
-        AND a.tipo    = 'desconexion'
+        AND a.tipo    = '{tipo}'
         AND a.clave   = c.id::text
  WHERE c.account = %(account)s
-   AND c.status_nuevo = 'offline'
+   AND c.status_nuevo = '{estado}'
    AND a.clave IS NULL
    AND c.detected_at > %(desde)s
    AND NOT EXISTS (
@@ -419,10 +470,8 @@ SELECT c.id, c.account, c.operator_name, c.last_seen, c.detected_at
 
 
 def _pendientes_sql() -> str:
-    from src.identidad import clave_sql
-
-    return _PENDIENTES_SQL_TPL.format(clave_os=clave_sql("os.operator_name"),
-                                      clave_c=clave_sql("c.operator_name"))
+    return _PENDIENTES_SQL_TPL.format(
+        guardas=_bloque_guardas_pendientes("desconexion", "offline"))
 
 
 _PENDIENTES_SQL = _pendientes_sql()
@@ -446,18 +495,59 @@ def pendientes(cur, account: str, ahora, ventana_minutos: int = VENTANA_ALERTA_M
     return [dict(zip(cols, f)) for f in cur.fetchall()]
 
 
+# LA CONSULTA GEMELA, para el otro lado del mismo ciclo. Mismas guardas que `_PENDIENTES_SQL`
+# (ver `_bloque_guardas_pendientes`): dedup por evento, ventana, tope, exclusion de operadores
+# apagados. NO HACE FALTA `lag()`/`lead()`: la conexion no tiene una sesion que parear, es un
+# evento suelto -- por eso el SELECT/FROM es mas chico que el de desconexion.
+_PENDIENTES_CONEXION_SQL_TPL = """
+SELECT c.id, c.account, c.operator_name, c.last_seen, c.detected_at
+  FROM conexiones_operador c
+{guardas}"""
+
+
+def _pendientes_conexion_sql() -> str:
+    return _PENDIENTES_CONEXION_SQL_TPL.format(
+        guardas=_bloque_guardas_pendientes("conexion", "online"))
+
+
+_PENDIENTES_CONEXION_SQL = _pendientes_conexion_sql()
+
+
+def pendientes_conexion(cur, account: str, ahora, ventana_minutos: int = VENTANA_ALERTA_MINUTOS,
+                        tope: int = TOPE_POR_CICLO) -> list[dict]:
+    """Las conexiones de una cuenta que todavia no se avisaron. Mas viejas primero.
+
+    MISMO CONTRATO que `pendientes`: `ahora` viene de la BASE (`alertas.ahora_de_la_base`), no
+    de la app, porque es el mismo reloj con el que se escribio `detected_at`.
+    """
+    from datetime import timedelta
+
+    cur.execute(_PENDIENTES_CONEXION_SQL, {
+        "account": account,
+        "desde": ahora - timedelta(minutes=ventana_minutos),
+        "tope": tope,
+    })
+    cols = [d.name for d in cur.description]
+    return [dict(zip(cols, f)) for f in cur.fetchall()]
+
+
 def clave_alerta(evento_id) -> str:
     """LA CLAVE ES EL EVENTO, no el operador.
 
     Un operador se desconecta muchas veces: dedupear por operador dejaria muda la segunda
     desconexion y todas las que siguen. Es el mismo razonamiento por el que
     `alertas.clave_resumen` paso de sesion a interaccion.
+
+    LA MISMA FUNCION SIRVE PARA CONEXION Y DESCONEXION: la regla ("el evento, no el
+    operador") no depende de que transicion sea, y `_bloque_guardas_pendientes` ya
+    distingue el `tipo` ('conexion' / 'desconexion') en el dedup contra `alertas_enviadas`.
+    No hace falta una `clave_alerta_conexion` aparte.
     """
     return str(evento_id)
 
 
 def canal_desde_env(env):
-    """El canal del aviso de desconexion: EL MISMO GRUPO que las alertas VIP.
+    """El canal del aviso de conexion/desconexion: EL MISMO GRUPO que las alertas VIP.
 
     DECISION DEL NEGOCIO (2026-09-03): un solo grupo. El aviso tiene otro proposito, no otro
     destino. Por eso el canal sale de `alertas.canal_desde_env` y NO tiene variables propias:
@@ -475,6 +565,14 @@ def canal_desde_env(env):
     propios y despues se prende. Mismo patron opt-in que `SCORING_ENABLED` y `API_DOCS`: el
     default tiene que ser el seguro, no el comodo. La consulta para medirlo esta en
     docs/auditoria-desconexiones.md.
+
+    UN SOLO FLAG PARA LAS DOS MITADES DEL CICLO, y no `ALERTA_CONEXION` aparte. Conexion y
+    desconexion son las dos mitades de UN ciclo (`online` -> `offline`); un interruptor
+    separado dejaria prender solo una mitad, que es peor que las dos apagadas -- un aviso de
+    "se conecto" sin su contraparte "se desconecto" (o viceversa) confunde mas de lo que
+    informa. Si, el nombre `ALERTA_DESCONEXION` quedo mas angosto de lo que ahora significa;
+    renombrarlo rompe el deploy que ya lo tiene seteado en produccion, y ese costo no lo paga
+    una mejora cosmetica de nombre.
     """
     from src.alertas import Canal, canal_desde_env as canal_vip
     # `config._bool` y no una lista propia de valores verdaderos: tener dos definiciones de
@@ -487,6 +585,80 @@ def canal_desde_env(env):
     return canal_vip(env)
 
 
+# =====================================================================
+# LAS SESIONES DE CONEXION: el ciclo cerrado online -> offline
+# =====================================================================
+#
+# LA REGLA DEL NEGOCIO, decidida por el usuario y sin margen para interpretarla: una sesion
+# es un `online` emparejado con el SIGUIENTE `offline` del mismo (user_id, account). Si un
+# `online` todavia no tiene su `offline` -- el operador sigue conectado -- esa sesion NO
+# EXISTE. No se devuelve, no se estima "tiempo hasta ahora". "Debe ser un ciclo cerrado, abre
+# y cierra, se calcula el tiempo entre ellos, no hay pierde, no podemos hacer mas."
+#
+# EL EMPAREJADO VA POR `lead()`, particionado por `(user_id, account)` y ordenado por
+# `detected_at` -- que es NOT NULL y crece con cada INSERT del trigger, asi que ordena la
+# secuencia real de eventos aunque `last_seen` este ausente en alguna fila. Reimplementar el
+# emparejado con un loop en Python duplicaria algo que el motor ya resuelve en una sola
+# pasada, y de forma correcta por construccion.
+_SESIONES_SQL = """
+SELECT user_id, account, operator_name,
+       last_seen       AS last_seen_inicio,
+       detected_at     AS detected_at_inicio,
+       last_seen_sig   AS last_seen_fin,
+       detected_at_sig AS detected_at_fin
+  FROM (
+        SELECT user_id, account, operator_name, status_nuevo,
+               last_seen, detected_at,
+               lead(status_nuevo) OVER w AS status_sig,
+               lead(last_seen)    OVER w AS last_seen_sig,
+               lead(detected_at)  OVER w AS detected_at_sig
+          FROM conexiones_operador
+        WINDOW w AS (PARTITION BY user_id, account ORDER BY detected_at)
+       ) t
+ WHERE status_nuevo = 'online'
+   AND status_sig = 'offline'
+ ORDER BY account, user_id, detected_at
+"""
+
+
+def sesiones_cerradas(cur) -> list[dict]:
+    """Las sesiones de conexion CERRADAS: un `online` emparejado con el SIGUIENTE `offline`
+    del mismo (user_id, account). El operador todavia conectado NO aparece -- ver el
+    encabezado de esta seccion.
+
+    LA DURACION SALE DE `last_seen`, NO DE `detected_at`. `detected_at` es cuando el SYNC se
+    dio cuenta, no cuando paso: medido el 2026-09-03 sobre 58 filas, la latencia mediana es
+    157 s en offline y 151 s en online, con un maximo de ~5 minutos. En una sesion corta real
+    la diferencia fue de 5 minutos por `detected_at` contra 9 minutos por `last_seen` -- un
+    error del 80%, justo en las sesiones cortas que son las que le importan al negocio.
+
+    `last_seen` es NULLABLE en el esquema (hoy lleno en 58/58 filas de la copia, pero la
+    columna lo permite): cuando falta, esta funcion cae a `detected_at` para esa punta.
+
+    Cada elemento: `account`, `user_id`, `operator_name`, `start`, `end`,
+    `duration_seconds`.
+    """
+    cur.execute(_SESIONES_SQL)
+    cols = [d.name for d in cur.description]
+    filas = [dict(zip(cols, f)) for f in cur.fetchall()]
+
+    sesiones = []
+    for f in filas:
+        inicio = f["last_seen_inicio"] if f["last_seen_inicio"] is not None \
+            else f["detected_at_inicio"]
+        fin = f["last_seen_fin"] if f["last_seen_fin"] is not None \
+            else f["detected_at_fin"]
+        sesiones.append({
+            "account": f["account"],
+            "user_id": f["user_id"],
+            "operator_name": f["operator_name"],
+            "start": inicio,
+            "end": fin,
+            "duration_seconds": int((fin - inicio).total_seconds()),
+        })
+    return sesiones
+
+
 def mensaje_desconexion(d: dict) -> str:
     """El aviso, en HTML.
 
@@ -494,6 +666,12 @@ def mensaje_desconexion(d: dict) -> str:
     real con `400 can't parse entities` (ver `alertas.Canal.enviar`).
 
     LA HORA VA EN ECUADOR. Quien lee el grupo no tiene que restar cinco horas a mano.
+
+    LA LINEA DE SESION es opcional y depende de `sesion_last_seen_inicio` /
+    `sesion_detected_at_inicio`, que `_PENDIENTES_SQL_TPL` deja en NULL cuando el `offline`
+    no tuvo un `online` inmediato anterior en el mismo (user_id, account) -- regla del
+    negocio, sin margen para interpretarla: SOLO CICLO CERRADO. Sin esas claves (o con
+    ambas en NULL) el mensaje sale IDENTICO al de siempre.
     """
     from src.alertas import _esc, _quien
     # LA MISMA FUENTE QUE EL RESTO DE LAS ALERTAS: `src/horario.TZ`, que es la que importa
@@ -504,14 +682,74 @@ def mensaje_desconexion(d: dict) -> str:
     def _hora(v) -> str:
         return v.astimezone(TZ_EC).strftime("%H:%M:%S") if v else "?"
 
+    def _duracion(segundos: int) -> str:
+        """Horas y minutos en español, minutos solos bajo la hora -- ej. "3 h 12 min" o
+        "45 min". Sin segundos: a esta escala (sesiones de operador) no aportan nada."""
+        minutos = segundos // 60
+        horas, minutos = divmod(minutos, 60)
+        return f"{horas} h {minutos} min" if horas else f"{minutos} min"
+
     cuerpo = [
         "🔌 <b>Operador desconectado</b>",
         "",
         f"🧑‍💼 <b>{_quien(d.get('operator_name'))}</b>  ·  cuenta {_esc(d.get('account'))}",
         f"🕐 {_hora(d.get('last_seen'))} (Ecuador)",
     ]
+
+    # EL RELOJ ES `last_seen`, NO `detected_at` -- mismo argumento que `sesiones_cerradas`:
+    # la latencia mediana del sync es 157 s en offline y 151 s en online (maximo ~5 min), y
+    # en una sesion corta real eso fue un error del 80% (5 min por `detected_at` contra 9
+    # min por `last_seen`). `detected_at` entra solo como fallback POR PUNTA, cuando
+    # `last_seen` es NULL en esa punta -- la columna lo permite en el esquema.
+    inicio = d.get("sesion_last_seen_inicio")
+    if inicio is None:
+        inicio = d.get("sesion_detected_at_inicio")
+    if inicio is not None:
+        fin = d.get("last_seen")
+        if fin is None:
+            fin = d.get("detected_at")
+        duracion_seg = int((fin - inicio).total_seconds())
+        cuerpo.append(f"🕓 tiempo de sesion {_duracion(duracion_seg)} (desde {_hora(inicio)})")
+
     # LA LATENCIA SE MUESTRA cuando es grande: un aviso de una desconexion de hace veinte
     # minutos tiene que decir que llego tarde, no dejar creer que acaba de pasar.
+    visto, detectado = d.get("last_seen"), d.get("detected_at")
+    if visto and detectado:
+        seg = int((detectado - visto).total_seconds())
+        if seg >= 60:
+            cuerpo.append(f"⏱ detectado {seg // 60} min despues")
+    return "\n".join(cuerpo)
+
+
+def mensaje_conexion(d: dict) -> str:
+    """El aviso de CONEXION, en HTML. Mismo escapado y misma hora Ecuador que
+    `mensaje_desconexion` -- ver ese docstring para el porque (nombres del CRM, `400 can't
+    parse entities`, hora local para no restar cinco horas a mano).
+
+    SIN NINGUNA LINEA DE DURACION, A PROPOSITO. Al momento de conectar la sesion todavia no
+    cerro -- no existe hasta que llegue el `offline` que la cierra (ver la seccion "LAS
+    SESIONES DE CONEXION" mas abajo) -- asi que no hay nada que resumir. La duracion aparece
+    recien en `mensaje_desconexion`, cuando el ciclo se cierra.
+
+    LA LATENCIA SI APLICA IGUAL: es la misma metrica del sync (mediana 151 s en `online`, ver
+    el encabezado del modulo), y decir "esto llego con retraso" vale tanto para una conexion
+    como para una desconexion.
+    """
+    from src.alertas import _esc, _quien
+    from src.horario import TZ as TZ_EC
+
+    def _hora(v) -> str:
+        return v.astimezone(TZ_EC).strftime("%H:%M:%S") if v else "?"
+
+    cuerpo = [
+        "🟢 <b>Operador conectado</b>",
+        "",
+        f"🧑‍💼 <b>{_quien(d.get('operator_name'))}</b>  ·  cuenta {_esc(d.get('account'))}",
+        f"🕐 {_hora(d.get('last_seen'))} (Ecuador)",
+    ]
+
+    # LA LATENCIA, IGUAL QUE EN `mensaje_desconexion`: un aviso de una conexion de hace veinte
+    # minutos tiene que decir que llego tarde.
     visto, detectado = d.get("last_seen"), d.get("detected_at")
     if visto and detectado:
         seg = int((detectado - visto).total_seconds())
