@@ -530,6 +530,16 @@
       <div><label>Hasta</label><input type="datetime-local" v-model="filters.to" :class="{on: !!filters.to}"></div></div>
     <div class="search"><label>Buscar</label>
       <input type="search" v-model="filters.search" :class="{on: !!filters.search.trim()}" placeholder="cliente u operador…" autocomplete="off"></div>
+    <!-- SEGUNDO BUSCADOR, aparte de `filters.search`. Ese toca metadatos del contacto
+         (nombre, numero, operador); un username de agencia/jugador (p. ej. "GoGroSorti")
+         vive en el TEXTO del mensaje, que `filters.search` no puede alcanzar sin pagar un
+         seq scan de ~886 MB por cada tarjeta. Este input resuelve UNA vez contra
+         `/api/resolver-usuario` (debounced) y compone con el de arriba via `contactos`. -->
+    <div class="search"><label>Usuario / agencia</label>
+      <input type="search" v-model="usuarioBusqueda.q" :class="{on: !!usuarioBusqueda.q.trim()}"
+             placeholder="usuario o agencia…" autocomplete="off">
+      <div v-if="usuarioBusqueda.mensaje" class="charts-status" :class="usuarioBusqueda.kind+'-state'">{{ usuarioBusqueda.mensaje }}</div>
+    </div>
     <button class="btn-reset" type="button" :disabled="!isDirty" @click="resetFilters"
             :title="isDirty ? 'Vuelve los 10 controles a su valor inicial' : 'No hay nada filtrado'">
       Limpiar filtros<span v-if="activeChips.length" class="num"> · {{ activeChips.length }}</span></button>
@@ -538,11 +548,23 @@
   <div class="active-filters">
     <span class="af-lead">Filtros activos</span>
     <!-- Sin filtros la cuenta NO está completa si hay operadores apagados: decirlo, en vez
-         de afirmar algo que la baja lógica desmiente. -->
-    <span v-if="!activeChips.length" class="af-none">{{ sinFiltrosNota }}</span>
+         de afirmar algo que la baja lógica desmiente. Y si hay una búsqueda de
+         usuario/agencia activa TAMPOCO es "ninguno": ese chip se dibuja aparte (más abajo)
+         porque `usuarioBusqueda` no es un filtro de `FILTER_META`. -->
+    <span v-if="!activeChips.length && !usuarioBusqueda.contactos.length" class="af-none">{{ sinFiltrosNota }}</span>
     <span class="af" v-for="c in activeChips" :key="c.key">
       <span class="k">{{ c.label }}:</span><span class="v">{{ c.value }}</span>
       <button type="button" :aria-label="'Quitar filtro '+c.label" :title="'Quitar '+c.label" @click="clearFilter(c.key)">✕</button>
+    </span>
+    <!-- CHIP APARTE y no agregado a `FILTER_META`: `usuarioBusqueda` no es un filtro de
+         `matchBase` (es un id de contacto ya resuelto contra /api/resolver-usuario), y
+         meterlo en `FILTER_META` lo engancharía al watcher de debounce compartido de la
+         línea de más abajo (`test_TODO_filtro_de_FILTER_DEFAULTS_dispara_una_recarga`),
+         que asume que todo lo que hay ahí es un valor de `filters`. Se muestra igual para
+         que el supervisor vea POR QUÉ el tablero está recortado. -->
+    <span v-if="usuarioBusqueda.contactos.length" class="af">
+      <span class="k">Usuario/agencia:</span><span class="v">"{{ usuarioBusqueda.q.trim() }}"</span>
+      <button type="button" aria-label="Quitar filtro Usuario/agencia" title="Quitar Usuario/agencia" @click="limpiarUsuarioBusqueda">✕</button>
     </span>
   </div>
 
@@ -1349,13 +1371,27 @@ const seriesColors = () => isDark()?SERIES_DARK:SERIES_LIGHT;
 const hashStr = s => { let h=0; const t=String(s||""); for(let i=0;i<t.length;i++){ h=(h*31+t.charCodeAt(i))|0; } return Math.abs(h); };
 const operatorColor = name => { const pal=seriesColors(); return pal[hashStr(name)%pal.length]; };
 
-const debounce = (fn, ms=300) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a), ms); }; };
+// `.cancel()`: sin el, un debounce pendiente sigue vivo despues de que quien lo armo ya
+// no lo necesita (ver `limpiarUsuarioBusqueda`, que lo usa para cortar una resolucion de
+// usuario en cola antes de que dispare contra la cuenta equivocada).
+const debounce = (fn, ms=300) => {
+  let t;
+  const d = (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+  d.cancel = () => clearTimeout(t);
+  return d;
+};
 
 createApp({
   setup() {
     const accounts = ref([]);
     const account = ref(null);
     const filters = reactive({ ...FILTER_DEFAULTS });
+    // BUSCADOR POR USUARIO/AGENCIA. Vive APARTE de `filters`/`FILTER_DEFAULTS` a
+    // proposito: no es un filtro de matchBase, es un id de contacto YA RESUELTO contra
+    // `/api/resolver-usuario`. `contactos` es la lista de `contact_id` que compone con
+    // `filters.search` (AND) en el query string; `mensaje`/`kind` son el aviso legible
+    // (ambiguo, sin resultados o resuelto) que reusa el estilo de `.charts-status`.
+    const usuarioBusqueda = reactive({ q: "", contactos: [], mensaje: "", kind: "" });
     const options = reactive({ segments:[], channels:[], operators:[] });
     const ambientes = reactive({});
     const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]}, quality_motivo:{months:[],motivos:[]} });
@@ -1426,6 +1462,9 @@ createApp({
       if (filters.from) p.set("from", filters.from);
       if (filters.to) p.set("to", filters.to);
       if (filters.search.trim()) p.set("search", filters.search.trim());
+      // Ids YA RESUELTOS por /api/resolver-usuario. Compone con `search` via AND en
+      // `_scores_filters` (backend); acá solo se agrega si hubo una resolución exitosa.
+      if (usuarioBusqueda.contactos.length) p.set("contactos", usuarioBusqueda.contactos.join(","));
       for (const [k,v] of Object.entries(extra)) p.set(k, v);
       return p.toString();
     };
@@ -1502,9 +1541,77 @@ createApp({
 
     // ---- acciones ----
     const debouncedFilter = debounce(() => { tickets.page = 1; fetchSummary(); fetchTickets(); fetchConversion(); }, 300);
+    // RESUELVE `usuarioBusqueda.q` contra /api/resolver-usuario. `usuarioSeq` descarta
+    // una respuesta VIEJA (el mismo patron que `seqs` en los fetchers de arriba): sin
+    // esto, tipear rápido puede hacer que una resolución lenta pise a una más nueva.
+    // Declarado ANTES de `limpiarUsuarioBusqueda` porque esa función lo incrementa.
+    let usuarioSeq = 0;
+    function limpiarUsuarioBusqueda() {
+      // `++usuarioSeq` SINCRONICO (no esperar el debounce de 400ms de más abajo) +
+      // `.cancel()` del debounce pendiente: sin esto, una resolución en vuelo de la
+      // cuenta ANTERIOR podía llegar en la ventana entre `switchAccount` cambiando
+      // `account.value` y el `++usuarioSeq` que antes sólo ocurría DENTRO de
+      // `resolverUsuarioBusqueda`, pisando `usuarioBusqueda.contactos` con ids de otra
+      // base y dejando el tablero en cero sin explicación. El guard por CUENTA de abajo
+      // (`acc !== account.value`) es la segunda red, independiente de que el debounce
+      // dispare a tiempo.
+      ++usuarioSeq;
+      debouncedResolverUsuario.cancel();
+      usuarioBusqueda.q = ""; usuarioBusqueda.contactos = [];
+      usuarioBusqueda.mensaje = ""; usuarioBusqueda.kind = "";
+    }
+    async function resolverUsuarioBusqueda() {
+      const termino = usuarioBusqueda.q.trim();
+      const seq = ++usuarioSeq, acc = account.value;
+      if (!termino) {
+        usuarioBusqueda.contactos = []; usuarioBusqueda.mensaje = ""; usuarioBusqueda.kind = "";
+        debouncedFilter();
+        return;
+      }
+      if (!acc) return;
+      try {
+        const d = await fetchJSON("/api/resolver-usuario?account=" + encodeURIComponent(acc)
+                                  + "&q=" + encodeURIComponent(termino));
+        if (seq !== usuarioSeq || acc !== account.value) return;   // respuesta vieja o de otra cuenta -> descartar
+        if (d.ambiguo) {
+          // El caso real es "sorti": 19.965 contactos (46% de la base) por ser el nombre
+          // de la MARCA. Devolver esa lista no es buscar, es mentir -- se avisa el
+          // conteo y NO se aplica ningun filtro.
+          usuarioBusqueda.contactos = [];
+          usuarioBusqueda.mensaje = `Término demasiado general: ${fmtN(d.total)} contactos. Use un término más específico.`;
+          usuarioBusqueda.kind = "error";
+        } else if (d.motivo === "termino_corto") {
+          usuarioBusqueda.contactos = [];
+          usuarioBusqueda.mensaje = "Se requieren al menos 3 caracteres.";
+          usuarioBusqueda.kind = "error";
+        } else if (!d.contactos.length) {
+          // Sin este aviso el tablero queda en cero sin explicar por qué.
+          usuarioBusqueda.contactos = [];
+          usuarioBusqueda.mensaje = "No se encontró ningún usuario con ese término.";
+          usuarioBusqueda.kind = "error";
+        } else {
+          usuarioBusqueda.contactos = d.contactos.map(c => c.id);
+          // `conversaciones` y no `sesiones` (mismo vocabulario que `resolver_usuario`).
+          const conversaciones = d.contactos.reduce((a, c) => a + (c.conversaciones || 0), 0);
+          usuarioBusqueda.mensaje = `${d.contactos.length} contacto(s) · ${fmtN(conversaciones)} conversaciones`;
+          usuarioBusqueda.kind = "loading";
+        }
+        debouncedFilter();
+      } catch (e) {
+        if (seq === usuarioSeq && acc === account.value) {
+          usuarioBusqueda.mensaje = "No se pudo resolver la búsqueda.";
+          usuarioBusqueda.kind = "error";
+        }
+      }
+    }
+    // DEBOUNCED: sin esto, cada tecla dispara el seq scan de ~886 MB sobre `messages`
+    // (no hay ningún índice de texto ahí -- ver `queries.resolver_usuario`).
+    const debouncedResolverUsuario = debounce(resolverUsuarioBusqueda, 400);
+    watch(() => usuarioBusqueda.q, debouncedResolverUsuario);
     async function switchAccount(acc) {
       account.value = acc;
       Object.assign(filters, FILTER_DEFAULTS);
+      limpiarUsuarioBusqueda();   // un contact_id resuelto en OTRA cuenta no significa nada acá
       tickets.page = 1; openKeys.clear();
       // limpia los refs de canvas de la cuenta anterior (si tenía más operadores/motivos,
       // quedaban canvases detached en los dicts reactivos -> se re-setean al re-renderizar).
@@ -1523,8 +1630,14 @@ createApp({
       .filter(k => String(filters[k] ?? "").trim() !== String(FILTER_DEFAULTS[k] ?? ""))
       .map(k => ({ key: k, label: FILTER_META[k].label, value: FILTER_META[k].show(filters[k]) })));
     // El botón "Limpiar" también resetea el ORDEN, que no genera chip -> se habilita
-    // igual si lo único cambiado es el orden.
-    const isDirty = computed(() => activeChips.value.length > 0 || filters.sort !== FILTER_DEFAULTS.sort);
+    // igual si lo único cambiado es el orden. Y TAMBIÉN el buscador de usuario/agencia:
+    // `usuarioBusqueda` vive FUERA de `FILTER_META`/`activeChips` a propósito (no es un
+    // filtro de matchBase, es un id ya resuelto), así que sin este OR el botón quedaba
+    // deshabilitado con el tablero recortado por ese buscador -- confirmado leyendo el
+    // código: `resetFilters` ya llama `limpiarUsuarioBusqueda`, pero `isDirty` nunca lo
+    // sabía.
+    const isDirty = computed(() => activeChips.value.length > 0 || filters.sort !== FILTER_DEFAULTS.sort
+                                   || usuarioBusqueda.contactos.length > 0);
     const sinFiltrosNota = computed(() => {
       const off = (summary.kpis && summary.kpis.operadores_ocultos) || 0;
       return off
@@ -1544,7 +1657,7 @@ createApp({
     watch(() => filters.causa, c => { if (c !== "all") vistaMotivo.value = "sin_evaluar"; });
     function toggleCard(k) { openKeys.has(k) ? openKeys.delete(k) : openKeys.add(k); }
     function setPage(p) { tickets.page = Math.min(Math.max(1,p), tickets.pages); fetchTickets(); }
-    function resetFilters() { Object.assign(filters, FILTER_DEFAULTS); }
+    function resetFilters() { Object.assign(filters, FILTER_DEFAULTS); limpiarUsuarioBusqueda(); }
     // Actualiza en vivo (re-consulta + re-pinta reactivo, NO recarga la página).
     // Preserva filtros, orden, página y tarjetas abiertas.
     async function refresh() {
@@ -2161,14 +2274,14 @@ createApp({
       await switchAccount(accts[0].account);
     });
 
-    return { accounts, account, filters, options, summary, conversion, tickets, charts, chartsStatus,
+    return { accounts, account, filters, usuarioBusqueda, options, summary, conversion, tickets, charts, chartsStatus,
       loadingSummary, loadingTickets, loadingConversion, loadError, openKeys, updating, modal, drill,
       nvdCombo, depPctChart, loadChart, qualCanvases, qualMotivoCanvases, convMonth, convPasvCanvases,
       kpiTiles, distRows, depByChannel, operators, motivoStats, motivoCobertura, skipStats, skipTotal, situacionStats, jugadorSinRespuesta, opsMotivo, qualOps, qualMotivoOps, qualMotivoLegend, convPasvOps, accentColor, snapText,
       OPS_CAP, expand, qualShown, convPasvShown, qualMotivoShown, hasPoints,
       convOps, convMaxPct, convByOp, convGlobal,
       SKIP_LABEL, ATENCION_LABEL, MOTIVO_LABEL, SEGMENT_LABEL, DESENLACE_CHIP, DESENLACE_TIP,
-      activeChips, isDirty, clearFilter, sinFiltrosNota,
+      activeChips, isDirty, clearFilter, sinFiltrosNota, limpiarUsuarioBusqueda,
       switchAccount, toggleRating, toggleMotivo, toggleCausa, vistaMotivo,
       toggleCard, setPage, resetFilters, refresh, toggleTheme, openModal, closeModal,
       nivelesId, copiarId, idCopiado,

@@ -6,6 +6,7 @@ seleccionado. El transcript se pide aparte (on-demand) porque es pesado.
 """
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 
 from src.context import fetch_messages, fetch_session_messages
@@ -207,7 +208,7 @@ _SIN_APAGADOS = f"""NOT EXISTS (
 def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
                     op="all", date_from=None, date_to=None, rating="all",
                     search="", motivo="all", inactivos="ocultar",
-                    ambiente="todos", causa="all") -> tuple[str, dict]:
+                    ambiente="todos", causa="all", contactos=None) -> tuple[str, dict]:
     """(where_sql, params) para conversation_scores, replicando matchBase del front.
     Los valores van SIEMPRE como parámetros (%(...)s); el SQL solo arma columnas.
 
@@ -255,7 +256,167 @@ def _scores_filters(account: str, *, estado="all", segment="all", canal="all",
         where.append("(ct.name ILIKE %(q)s OR ct.number ILIKE %(q)s "
                      f"OR {_OPERADOR_RESUELTO} ILIKE %(q)s)")
         params["q"] = f"%{search}%"
+    # BUSCADOR POR USUARIO/AGENCIA (`resolver_usuario`, mas abajo). `search` arriba solo
+    # toca metadatos (nombre, numero, operador); un username de agencia vive en el TEXTO
+    # de `messages.body`, que no tiene ningun indice y donde un ILIKE es Parallel Seq Scan
+    # de ~886 MB. Por eso NO se agrega un predicado de texto aca: se resuelve una vez en
+    # `resolver_usuario` y se filtra por `ct.id`, que usa `idx_tickets_contact_id`. Los dos
+    # buscadores conviven: componen con AND, igual que cualquier otro filtro de esta funcion.
+    if contactos:
+        where.append("ct.id = ANY(%(contactos)s)"); params["contactos"] = list(contactos)
     return " AND ".join(where), params
+
+
+# --- BUSCADOR POR USUARIO/AGENCIA -------------------------------------------------
+#
+# EL PROBLEMA que `search` (arriba) no resuelve: un username de agencia/jugador (p. ej.
+# "GoGroSorti") no vive en los metadatos del contacto, vive ENTERRADO en el TEXTO de
+# `messages.body` (3.624.461 filas / 1.563 MB, sin NINGUN indice de texto -- ni GIN ni
+# trigram ni tsvector). Un ILIKE ahi es Parallel Seq Scan de ~886 MB, y meterlo dentro de
+# `_scores_filters` haria que CADA uno de los ~10 endpoints de agregados (summary,
+# distribution, operators_table...) pague ese seq scan en paralelo. Por eso se resuelve
+# UNA vez aca -- CTE, no un EXISTS correlacionado por fila -- y despues se filtra por
+# `ct.id` (indexado) via el parametro `contactos` de `_scores_filters`.
+#
+# ESTO ES EXPERIMENTAL Y PROVISORIO: no se agregan indices, extensiones (pg_trgm) ni
+# tablas nuevas. Cuando llegue la version nueva de whaticket con acceso a la base
+# `engine`, el match va a ser por celular contra `contacts.number` -- que `resolver_usuario`
+# (via `_scores_filters`) ya soporta con `search`.
+
+# LA BASURA DE FORMATO DEL CRM. `* g11-oleas` y `g11-oleas` son la MISMA agencia: sin
+# quitar `[*_~]` los 1.370 usernames "distintos" del corpus en realidad son 897 (el
+# asterisco solo, sin nada detras, aparecia 214 veces como una extraccion vacia).
+_BASURA_FORMATO_USUARIO = re.compile(r"[*_~]")
+
+# EL PISO DE 3 CARACTERES. Menos que eso, cualquier termino matchea demasiado (ver el
+# guard de ambiguedad) y ni vale la pena tocar la base.
+_MIN_LARGO_USUARIO = 3
+
+
+def _normalizar_usuario(q: str) -> str:
+    """`q` recortado, en minusculas y sin la basura de formato del CRM (`[*_~]`).
+
+    `* GoGroSorti ` y `gogrosorti` tienen que producir el MISMO patron: son la misma
+    agencia escrita distinto, no dos busquedas distintas."""
+    return _BASURA_FORMATO_USUARIO.sub("", q or "").strip().lower()
+
+
+# EL MATCH VA POR FRONTERA DE PALABRA (`\m...\M`, no `%...%`) y NUNCA por substring:
+# `body ILIKE '%star%'` trae 135.706 mensajes; `body ~* '\mstar\M'` trae 128. Ruido de
+# 1.060x. El termino pasa por `re.escape` ANTES de armar el patron -- un `q` con
+# metacaracteres de regex (`.*`, `(`, `[a-z]`) no puede alterar lo que el `~*` matchea --
+# y el patron entero SIEMPRE viaja como parametro de psycopg (`%(patron)s`), nunca
+# concatenado al SQL.
+#
+# LA COLUMNA SE LLAMA `conversaciones` Y NO `sesiones` A PROPOSITO. `conversation_scores`
+# es UNA FILA POR INTERACCION, no por sesion (`src/store.py:868`, `src/worker.py:420`,
+# `src/conversions.py:119`), y `count(cs.interaccion_id)` cuenta exactamente eso. Medido
+# contra la base real para "gogrosorti": Atencion al Cliente da 173 filas contra 1 sola
+# sesion (`count(DISTINCT ticket_id)`); Jorge Luis Rocha Cabezas da 20 contra 3. Total: 219
+# filas para 6 sesiones -- la columna quedaba inflada 36x si se leia como "sesiones".
+# EL NUMERO NO CAMBIA: el tablero LISTA una fila por interaccion (`_SCORES_SQL`,
+# `_TICKETS_CONVS_SQL`), asi que 219 es EXACTAMENTE lo que el supervisor va a ver al
+# aplicar este filtro -- es util tal cual esta. Lo unico que estaba mal era la ETIQUETA.
+# MISMO CRITERIO que `_TICKETS_CARDS_SQL` (`count(DISTINCT ticket_id) AS visitas`, mas
+# abajo): las dos unidades (interaccion/fila vs. sesion/ticket) ya conviven en este
+# archivo con nombres DISTINTOS; esta columna solo se alinea con ese precedente.
+_RESOLVER_USUARIO_SQL = """
+WITH hit AS (
+  SELECT DISTINCT t.contact_id
+    FROM messages m
+    JOIN tickets t ON t.id = m.ticket_id
+   WHERE m.account = %(account)s
+     AND m.body ~* %(patron)s
+     AND t.contact_id IS NOT NULL
+)
+SELECT ct.id, ct.name, ct.number,
+       count(cs.interaccion_id) AS conversaciones,
+       -- `count(*) OVER ()`: el TOTAL de contactos resueltos viaja en cada fila, sin una
+       -- segunda consulta que repita el seq scan de `hit`. El guard de ambiguedad se
+       -- decide en Python leyendo esta columna, no reconsultando.
+       count(*) OVER () AS total_contactos
+  FROM hit
+  JOIN contacts ct ON ct.id = hit.contact_id
+  LEFT JOIN tickets t2 ON t2.contact_id = ct.id
+  LEFT JOIN conversation_scores cs ON cs.ticket_id = t2.id AND cs.account = %(account)s
+ GROUP BY ct.id, ct.name, ct.number
+ ORDER BY conversaciones DESC
+ -- FIX (2026-09-08): sin LIMIT, un termino ambiguo como "sorti" trae 16.043 filas por
+ -- red que Python descarta leyendo solo `total_contactos` de la primera (el seq scan del
+ -- CTE se paga igual, 843ms medidos; esto es solo transferencia). `count(*) OVER ()` se
+ -- calcula sobre la ventana COMPLETA antes del LIMIT (verificado contra Postgres real:
+ -- `GROUP BY` + `count(*) OVER ()` + `LIMIT` deja el total intacto), asi que el guard de
+ -- ambiguedad sigue viendo el numero real aunque el LIMIT corte las filas que igual iba
+ -- a descartar.
+ LIMIT %(limit)s
+"""
+
+
+# EL LIMITE DE FILAS QUE `resolver_usuario` TRAE DE POSTGRES. Mismo numero que
+# `limite_ambiguo` (el guard de ambiguedad), MAS UNO: alcanza con saber que el total supera
+# el limite para declarar "ambiguo" y vaciar la lista, asi que nunca hace falta la fila
+# 202 para decidir nada. Tambien lo usa `_parse_contactos` en `src/app.py` como tope de
+# cuantos ids puede mandar un cliente en `?contactos=` -- mismo numero, mismo criterio: no
+# tiene sentido aceptar mas ids de los que este buscador puede devolver en un resultado NO
+# ambiguo.
+LIMITE_AMBIGUO_USUARIO = 200
+
+
+def resolver_usuario(cur, account: str, q: str, *,
+                     limite_ambiguo: int = LIMITE_AMBIGUO_USUARIO) -> dict:
+    """Resuelve un username de agencia/jugador (p. ej. "GoGroSorti") a sus contactos,
+    con el conteo de conversaciones scoreadas que cada uno alcanza.
+
+    El username identifica al CONTACTO, no al mensaje: resolver contacto->conversaciones
+    hace que "gogrosorti" pase de ~5 conversaciones (las que lo escriben) a 219
+    conversaciones scoreadas (5 contactos) -- incluidas las que nunca lo mencionaron. Ese
+    es el valor de este buscador sobre el de `search` (metadatos). Ver el comentario de
+    `_RESOLVER_USUARIO_SQL` para por que la columna se llama `conversaciones` y no
+    `sesiones`.
+
+    GUARD DE AMBIGUEDAD: si la cantidad de contactos resueltos supera `limite_ambiguo`,
+    se devuelve `{"ambiguo": True, "contactos": [], "total": <n>}`. El caso real es
+    "sorti": 19.965 contactos (46% de la base), porque es el nombre de la MARCA. Devolver
+    19.965 filas no es buscar, es mentir -- se declara el conteo y se vacia la lista.
+    El `LIMIT` de `_RESOLVER_USUARIO_SQL` (`limite_ambiguo + 1`) no afecta este conteo:
+    `count(*) OVER ()` se calcula sobre la ventana COMPLETA antes del LIMIT.
+
+    Rechaza terminos de menos de `_MIN_LARGO_USUARIO` caracteres (normalizados) SIN tocar
+    la base: un termino tan corto no puede resolver nada util.
+    """
+    normalizado = _normalizar_usuario(q)
+    if len(normalizado) < _MIN_LARGO_USUARIO:
+        return {"contactos": [], "total": 0, "ambiguo": False, "motivo": "termino_corto"}
+
+    patron = r"\m" + re.escape(normalizado) + r"\M"
+    cur.execute(_RESOLVER_USUARIO_SQL,
+               {"account": account, "patron": patron, "limit": limite_ambiguo + 1})
+    cols = [d.name for d in cur.description]
+    filas = cur.fetchall()
+    if not filas:
+        return {"contactos": [], "total": 0, "ambiguo": False, "motivo": "sin_resultados"}
+
+    total = dict(zip(cols, filas[0]))["total_contactos"]
+    if total > limite_ambiguo:
+        return {"contactos": [], "total": total, "ambiguo": True, "motivo": None}
+
+    from src.censura import censurar_texto
+    contactos = []
+    for fila in filas:
+        d = dict(zip(cols, fila))
+        contactos.append({
+            "id": str(d["id"]),
+            "nombre": d["name"],
+            # El telefono es dato sensible y sale enmascarado, igual que en
+            # `_rows_as_dicts`. El nombre NO se tapa aca a proposito -- pero el criterio
+            # NO es `_COLUMNAS_CON_TELEFONO` (esa tupla deja afuera al OPERADOR, un eje
+            # distinto del tablero). El que aplica es el de `src/censura.py`
+            # ("`contacts.name` NO SE USA..."): el negocio senalo que ahi casi nunca hay
+            # un nombre de persona real, porque son usuarios de Facebook/Instagram.
+            "numero": censurar_texto(d["number"]) if d["number"] else d["number"],
+            "conversaciones": int(d["conversaciones"]),
+        })
+    return {"contactos": contactos, "total": total, "ambiguo": False, "motivo": None}
 
 
 _SCORES_JOINS = """

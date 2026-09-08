@@ -82,6 +82,77 @@ def test_causa_llega_con_su_valor(monkeypatch):
     assert calls["kwargs"]["causa"] == "no_agent_reply"
 
 
+# --- BUSCADOR POR USUARIO/AGENCIA: `contactos` en `_filters` --------------------------
+
+def test_contactos_esta_en_la_clave_explicita_de__filters(monkeypatch):
+    """El dict de `_filters` es EXPLICITO, no `locals()`: agregar el parametro sin agregar
+    la clave hace que FastAPI lo acepte, devuelva 200 y el filtro NO FILTRE NADA. Paso
+    exactamente eso con `causa` el 2026-08-14; este test fija que `contactos` no lo repita."""
+    calls = _stub(monkeypatch, "summary")
+    r = client.get("/api/summary", params={"account": "datos"})
+    assert r.status_code == 200
+    assert "contactos" in calls["kwargs"], (
+        "'contactos' esta en la firma de _filters pero no llega al query layer: "
+        "revisar el dict de retorno explicito")
+
+
+def test_contactos_por_default_es_lista_vacia(monkeypatch):
+    calls = _stub(monkeypatch, "summary")
+    client.get("/api/summary", params={"account": "datos"})
+    assert calls["kwargs"]["contactos"] == []
+
+
+def test_contactos_llega_como_lista_de_uuids(monkeypatch):
+    calls = _stub(monkeypatch, "summary")
+    id1 = "11111111-1111-1111-1111-111111111111"
+    id2 = "22222222-2222-2222-2222-222222222222"
+    client.get("/api/summary", params={"account": "datos", "contactos": f"{id1},{id2}"})
+    assert calls["kwargs"]["contactos"] == [id1, id2]
+
+
+def test_contactos_descarta_lo_que_no_es_un_uuid_bien_formado(monkeypatch):
+    """No hay que mandar basura al parametro del `ANY(...)`: un elemento que no es UUID
+    se descarta en vez de viajar crudo a Postgres."""
+    calls = _stub(monkeypatch, "summary")
+    id1 = "11111111-1111-1111-1111-111111111111"
+    client.get("/api/summary", params={"account": "datos", "contactos": f"{id1},basura,,"})
+    assert calls["kwargs"]["contactos"] == [id1]
+
+
+def test_parse_contactos_topa_en_el_limite_ambiguo():
+    """`_parse_contactos` valida FORMATO pero no limitaba CANTIDAD, y alimenta
+    `ct.id = ANY(%(contactos)s)` en cada uno de los ~10 endpoints de agregados
+    (summary, tickets, charts...). No esta demostrado que degrade -- `ANY(array)` contra
+    columna indexada suele ser barato -- asi que esto es ENDURECIMIENTO, no un arreglo de
+    un bug medido: un cliente podria pegarle directo con miles de UUID sinteticamente
+    validos. El tope usa el MISMO numero que `queries.LIMITE_AMBIGUO_USUARIO`: no tiene
+    sentido aceptar mas ids de los que `resolver_usuario` puede devolver en un resultado
+    que no sea ambiguo."""
+    import uuid
+
+    from src import queries
+
+    ids = ",".join(str(uuid.uuid4()) for _ in range(queries.LIMITE_AMBIGUO_USUARIO + 50))
+    out = appmod._parse_contactos(ids)
+    assert len(out) == queries.LIMITE_AMBIGUO_USUARIO
+
+
+# --- BUSCADOR POR USUARIO/AGENCIA: /api/resolver-usuario ------------------------------
+
+def test_resolver_usuario_endpoint_llama_al_query_layer(monkeypatch):
+    calls = _stub(monkeypatch, "resolver_usuario")
+    r = client.get("/api/resolver-usuario", params={"account": "datos", "q": "gogrosorti"})
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert calls["account"] == "datos"
+    assert calls["kwargs"]["q"] == "gogrosorti"
+
+
+def test_resolver_usuario_endpoint_exige_account_y_q(monkeypatch):
+    _stub(monkeypatch, "resolver_usuario")
+    assert client.get("/api/resolver-usuario", params={"q": "gogrosorti"}).status_code == 422
+    assert client.get("/api/resolver-usuario", params={"account": "datos"}).status_code == 422
+
+
 def test_tickets_endpoint_mapea_page_sort_y_filtros(monkeypatch):
     calls = _stub(monkeypatch, "tickets_page")
     r = client.get("/api/tickets", params={

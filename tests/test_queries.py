@@ -1,5 +1,6 @@
 """Tests de la capa de queries: lo importante es que TODA lectura de scores
 esta scopeada por cuenta (datos vs sistemas conviven en la misma BD)."""
+import re
 from decimal import Decimal
 
 from src.router import ANOMALOUS_MESSAGE_MAX
@@ -22,6 +23,8 @@ from src.queries import (
     _DEP_PCT_SQL,
     _DETAIL_SQL,
     _LOAD_SQL,
+    _normalizar_usuario,
+    _RESOLVER_USUARIO_SQL,
     _SIN_APAGADOS_CHARTS,
     SIN_COLA_LABEL,
     ambiente_composition,
@@ -43,6 +46,7 @@ from src.queries import (
     new_vs_deposit_by_month,
     operators_table,
     pending_sessions_count,
+    resolver_usuario,
     scored_rows,
     summary,
     summary_kpis,
@@ -248,6 +252,190 @@ def test_scores_filters_rating_mapea_label_a_estrella():
     where, params = _scores_filters("datos", rating="buena")
     assert "cs.stars = %(rstars)s" in where
     assert params["rstars"] == 4
+
+
+# --- BUSCADOR POR USUARIO/AGENCIA -------------------------------------------------
+#
+# `search` (arriba) solo toca metadatos de `contacts`/operador. Un username de agencia
+# (p. ej. "GoGroSorti") vive en el TEXTO de `messages.body`, que no tiene ningun indice
+# de texto: un ILIKE ahi es Parallel Seq Scan de ~886 MB. `resolver_usuario` resuelve el
+# contacto UNA vez (por frontera de palabra, nunca por substring) y `_scores_filters`
+# despues filtra por `ct.id`, que si tiene indice.
+
+def test_normalizar_usuario_quita_basura_de_formato_del_crm():
+    """`* GoGroSorti ` y `gogrosorti` tienen que colapsar al MISMO patron: el CRM antepone
+    `*`/`_`/`~` de formato y sin normalizar los 1.370 usernames "distintos" en realidad
+    son 897 agencias."""
+    assert _normalizar_usuario("* GoGroSorti ") == "gogrosorti"
+    assert _normalizar_usuario("gogrosorti") == "gogrosorti"
+    assert _normalizar_usuario("* GoGroSorti ") == _normalizar_usuario("gogrosorti")
+    assert _normalizar_usuario("*_~") == ""  # extraccion vacia: puro ruido de formato
+
+
+def test_resolver_usuario_sql_no_llama_sesiones_a_una_columna_que_es_interaccion():
+    """`conversation_scores` es UNA FILA POR INTERACCION, no por sesion (ver
+    `src/store.py:868`, `src/worker.py:420`, `src/conversions.py:119`). Medido contra la
+    base real para "gogrosorti":
+
+        contacto                          count(interaccion_id)  count(DISTINCT ticket_id)
+        Atencion al Cliente                  173                   1
+        Jorge Luis Rocha                      22                   1
+        Jorge Luis Rocha Cabezas               20                   3
+        Jhoselin Lissette Barba Pardo           4                   1
+        TOTAL                                219                   6
+
+    El count NO SE CAMBIA a `count(DISTINCT ticket_id)`: el tablero LISTA una fila por
+    interaccion (`_SCORES_SQL`, `_TICKETS_CONVS_SQL`), asi que 219 es exactamente la
+    cantidad de filas que el supervisor va a ver al aplicar el filtro -- el numero es
+    util. La ETIQUETA es la que mentia: `sesiones` prometia una unidad (sesion) que la
+    columna nunca conto. Mismo criterio que `_TICKETS_CARDS_SQL`
+    (`count(DISTINCT ticket_id) AS visitas`, linea ~1062): ahi tambien se distinguen las
+    dos unidades por su NOMBRE, en vez de confundirlas bajo uno solo.
+    """
+    assert "AS sesiones" not in _RESOLVER_USUARIO_SQL
+    assert "count(cs.interaccion_id) AS conversaciones" in _RESOLVER_USUARIO_SQL
+
+
+def test_resolver_usuario_arma_el_patron_con_frontera_de_palabra():
+    """`body ILIKE '%star%'` trae 135.706 mensajes; `body ~* '\\mstar\\M'` trae 128. El
+    match SIEMPRE va por frontera de palabra, nunca por substring."""
+    cur = _FakeCursor([], description=["id", "name", "number", "conversaciones", "total_contactos"])
+    resolver_usuario(cur, "datos", "gogrosorti")
+    query, params = cur.executed[0]
+    assert params["patron"] == r"\mgogrosorti\M"
+    assert "~*" in query
+    assert "%(patron)s" in query
+
+
+def test_resolver_usuario_escapa_metacaracteres_del_termino():
+    """El termino va SIEMPRE como parametro, pero ademas tiene que pasar por `re.escape`
+    antes de armar el patron: sin eso, un `q` con metacaracteres de regex podria alterar
+    lo que el `~*` matchea."""
+    termino = "a.b(c[d]"
+    cur = _FakeCursor([], description=["id", "name", "number", "conversaciones", "total_contactos"])
+    resolver_usuario(cur, "datos", termino)
+    _, params = cur.executed[0]
+    assert params["patron"] == r"\m" + re.escape(termino) + r"\M"
+
+
+def test_resolver_usuario_pasa_el_limit_de_filas_alineado_con_limite_ambiguo():
+    """Sin `LIMIT`, un termino ambiguo como "sorti" trae 16.043 filas por red que Python
+    descarta leyendo solo `total_contactos` de la primera (medido: el seq scan del CTE se
+    paga igual, 843ms, esto es solo transferencia). El `LIMIT` es `limite_ambiguo + 1`:
+    alcanza saber que el total SUPERA el limite para declarar ambiguo, nunca hace falta
+    la fila extra. Verificado contra Postgres real que el `count(*) OVER ()` no cambia con
+    el LIMIT (ver el comentario de `_RESOLVER_USUARIO_SQL`)."""
+    cur = _FakeCursor([], description=["id", "name", "number", "conversaciones", "total_contactos"])
+    resolver_usuario(cur, "datos", "gogrosorti", limite_ambiguo=200)
+    query, params = cur.executed[0]
+    assert "LIMIT %(limit)s" in query
+    assert params["limit"] == 201
+
+
+def test_resolver_usuario_no_deja_pasar_escapes_ARE_de_postgres_sin_duplicar():
+    """`\\m`, `\\M`, `\\d` y `\\w` son metacaracteres de ARE (regex de Postgres), no de
+    regex de Python: si un termino los trae LITERALES, no pueden reconstituir un escape de
+    frontera de palabra ni una clase de caracter dentro del patron que arma esta funcion.
+    Verificado a mano: HOY ya es seguro porque `re.escape` DUPLICA cada backslash del
+    termino antes de armar el patron, asi que Postgres los lee como un backslash literal
+    seguido de la letra. Este test existe para que un cambio futuro (p. ej. sacar el
+    `re.escape`) no lo rompa en silencio."""
+    termino = r"\m\M\d\w"
+    cur = _FakeCursor([], description=["id", "name", "number", "conversaciones", "total_contactos"])
+    resolver_usuario(cur, "datos", termino)
+    _, params = cur.executed[0]
+    interior = params["patron"][2:-2]  # sin el \m...\M que agrega la funcion
+    # cada uno de los 4 backslashes del termino original tiene que llegar DUPLICADO
+    assert interior.count("\\\\") == 4
+
+
+def test_resolver_usuario_rechaza_terminos_cortos_sin_tocar_la_base():
+    cur = _FakeCursor([], description=[])
+    out = resolver_usuario(cur, "datos", "ab")
+    assert out == {"contactos": [], "total": 0, "ambiguo": False, "motivo": "termino_corto"}
+    assert cur.executed == []  # ni una consulta: se rechaza ANTES de tocar la base
+
+
+def test_resolver_usuario_guarda_contra_terminos_ambiguos():
+    """El caso real es `sorti`: 19.965 contactos (46% de la base) porque es el nombre de
+    la MARCA. Devolver esa lista no es buscar, es mentir: se declara el conteo y se
+    vacia la lista."""
+    cur = _FakeCursor(
+        [("id1", "Nombre", "0991234567", 1, 19965)],
+        description=["id", "name", "number", "conversaciones", "total_contactos"])
+    out = resolver_usuario(cur, "datos", "sorti", limite_ambiguo=200)
+    assert out["ambiguo"] is True
+    assert out["contactos"] == []
+    assert out["total"] == 19965
+
+
+def test_resolver_usuario_en_el_limite_exacto_NO_es_ambiguo():
+    """El guard es `total > limite_ambiguo` (estrictamente mayor): en el limite exacto
+    todavia hay que LISTAR, no bloquear. Sin este test el borde nunca se ejercito."""
+    filas = [(f"id{i}", f"Nombre {i}", "0991234567", 1, 200) for i in range(200)]
+    cur = _FakeCursor(
+        filas, description=["id", "name", "number", "conversaciones", "total_contactos"])
+    out = resolver_usuario(cur, "datos", "sorti", limite_ambiguo=200)
+    assert out["ambiguo"] is False
+    assert out["total"] == 200
+    assert len(out["contactos"]) == 200
+
+
+def test_resolver_usuario_un_contacto_mas_del_limite_SI_es_ambiguo():
+    """El primer caso que bloquea: `limite_ambiguo + 1`."""
+    cur = _FakeCursor(
+        [("id1", "Nombre", "0991234567", 1, 201)],
+        description=["id", "name", "number", "conversaciones", "total_contactos"])
+    out = resolver_usuario(cur, "datos", "sorti", limite_ambiguo=200)
+    assert out["ambiguo"] is True
+    assert out["contactos"] == []
+    assert out["total"] == 201
+
+
+def test_resolver_usuario_devuelve_contactos_bajo_el_limite():
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 1)],
+        description=["id", "name", "number", "conversaciones", "total_contactos"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    assert out["ambiguo"] is False and out["total"] == 1
+    assert out["contactos"][0]["id"] == "id1"
+    assert out["contactos"][0]["conversaciones"] == 3
+
+
+def test_resolver_usuario_censura_el_telefono_de_salida():
+    """El telefono es dato sensible: sale enmascarado, igual que en `_rows_as_dicts`."""
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 1)],
+        description=["id", "name", "number", "conversaciones", "total_contactos"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    numero = out["contactos"][0]["numero"]
+    assert numero != "0991234567"
+    assert numero[0] == "0" and numero[-1] == "7"  # mismo largo, extremos visibles
+
+
+def test_scores_filters_con_contactos_filtra_por_id():
+    """`ct.id = ANY(...)` usa `idx_tickets_contact_id`: el filtro barato que reemplaza al
+    seq scan en los agregados, una vez que `resolver_usuario` ya resolvio los ids."""
+    where, params = _scores_filters("datos", contactos=["11111111-1111-1111-1111-111111111111"])
+    assert "ct.id = ANY(%(contactos)s)" in where
+    assert params["contactos"] == ["11111111-1111-1111-1111-111111111111"]
+
+
+def test_scores_filters_sin_contactos_no_agrega_predicado():
+    where, params = _scores_filters("datos")
+    assert "contactos" not in where
+    assert "contactos" not in params
+
+
+def test_scores_filters_search_y_contactos_componen_con_AND():
+    """Los DOS buscadores conviven: `search` (metadatos) y `contactos` (resuelto por
+    usuario/agencia) se aplican juntos, con AND."""
+    where, params = _scores_filters(
+        "datos", search="juan", contactos=["11111111-1111-1111-1111-111111111111"])
+    assert "ILIKE %(q)s" in where
+    assert "ct.id = ANY(%(contactos)s)" in where
+    assert params["q"] == "%juan%"
+    assert params["contactos"] == ["11111111-1111-1111-1111-111111111111"]
 
 
 def test_summary_kpis_agrega_server_side_scopeado_por_cuenta():

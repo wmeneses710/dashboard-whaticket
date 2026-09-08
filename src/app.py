@@ -224,6 +224,36 @@ def accounts() -> list[dict]:
         return queries.list_accounts(cur)
 
 
+def _parse_contactos(contactos: str) -> list[str]:
+    """`"id1,id2,basura"` -> `["id1", "id2"]`. Descarta lo que no es un UUID bien
+    formado: son ids que `resolver_usuario` ya resolvio, pero no hay que mandar basura
+    al parametro del `ct.id = ANY(...)` (ver `_scores_filters`).
+
+    TOPADO en `queries.LIMITE_AMBIGUO_USUARIO`. Este endpoint recibe ids YA resueltos, y
+    en el camino normal `resolverUsuarioBusqueda` (front) nunca manda mas que eso -- el
+    guard de ambiguedad de `resolver_usuario` corta antes. Pero `_filters` alimenta
+    ~10 endpoints de agregados (summary, tickets, charts...) que un cliente puede
+    llamar directo, sin pasar por el front, con miles de UUID sinteticamente validos en
+    `?contactos=`. No esta demostrado que eso degrade -- `ANY(array)` contra
+    `idx_tickets_contact_id` suele ser barato -- asi que esto es ENDURECIMIENTO
+    preventivo, no el arreglo de un bug medido. El tope es el MISMO numero que el guard
+    de ambiguedad: no tiene sentido aceptar mas ids de los que ese buscador puede
+    devolver en un resultado que no sea ambiguo."""
+    out = []
+    for token in contactos.split(","):
+        if len(out) >= queries.LIMITE_AMBIGUO_USUARIO:
+            break
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            uuid.UUID(token)
+        except (ValueError, AttributeError, TypeError):
+            continue
+        out.append(token)
+    return out
+
+
 def _filters(
     estado: str = "all",
     segment: str = "all",
@@ -239,6 +269,10 @@ def _filters(
     causa: str = "all",
     inactivos: str = "ocultar",
     ambiente: str = Query("todos", pattern="^(todos|jugador|agente|sin_clasificar)$"),
+    # Ids de contacto ya resueltos por `/api/resolver-usuario` (buscador por
+    # usuario/agencia), separados por coma. Compone con `search` via AND en
+    # `_scores_filters`; ver el comentario de ese parametro ahi.
+    contactos: str = "",
 ) -> dict:
     """Filtros del dashboard (matchBase del front) como dependencia común. `from`/`to`
     llegan como alias porque `from` es palabra reservada en Python.
@@ -261,7 +295,8 @@ def _filters(
     return {"estado": estado, "segment": segment, "canal": canal, "op": op,
             "date_from": date_from, "date_to": date_to, "rating": rating,
             "search": search, "motivo": motivo, "causa": causa,
-            "inactivos": inactivos, "ambiente": ambiente}
+            "inactivos": inactivos, "ambiente": ambiente,
+            "contactos": _parse_contactos(contactos)}
 
 
 @app.get("/api/scores")
@@ -287,6 +322,21 @@ def options(account: str = Query(..., description="datos | sistemas"),
     qué. Estable por cuenta+ambiente -> el front lo pide una vez por combinación."""
     with _conn() as c, c.cursor() as cur:
         return queries.filter_options(cur, account, ambiente=ambiente)
+
+
+@app.get("/api/resolver-usuario")
+def resolver_usuario(account: str = Query(..., description="datos | sistemas"),
+                     q: str = Query(..., min_length=1)) -> dict:
+    """Buscador por USUARIO/AGENCIA (p. ej. "GoGroSorti"): resuelve `q` a sus contactos y
+    al conteo de conversaciones scoreadas que cada uno alcanza.
+
+    Distinto del buscador de `search` en `_filters`: ese toca metadatos del contacto
+    (nombre, numero, operador); este busca en el TEXTO de `messages.body`, donde vive el
+    username de agencia. Devuelve `{ambiguo, contactos, total, motivo}` -- ver el
+    docstring de `queries.resolver_usuario` para el guard de ambiguedad y el piso de
+    largo minimo."""
+    with _conn() as c, c.cursor() as cur:
+        return queries.resolver_usuario(cur, account, q=q)
 
 
 @app.get("/api/summary")

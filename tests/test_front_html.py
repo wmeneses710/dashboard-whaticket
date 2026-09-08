@@ -791,3 +791,171 @@ def test_lo_que_el_modal_de_ids_usa_esta_EXPUESTO_en_el_setup():
     ret = _TXT[i:_TXT.index("};", i)]
     for nombre in ("nivelesId", "copiarId", "idCopiado"):
         assert nombre in ret, f"{nombre} se usa en el template pero no se expone"
+
+
+# --- BUSCADOR POR USUARIO/AGENCIA -------------------------------------------------
+#
+# El buscador de `filters.search` (metadatos: nombre, numero, operador) NO encuentra un
+# username de agencia (p. ej. "GoGroSorti"): ese vive en el texto del mensaje. El segundo
+# input resuelve contra `/api/resolver-usuario` y compone via `contactos` en el query
+# string, sin tocar el buscador existente.
+
+def test_hay_un_segundo_input_para_usuario_o_agencia():
+    html = _html()
+    assert 'v-model="usuarioBusqueda.q"' in html
+    assert 'placeholder="usuario o agencia…"' in html
+
+
+def test_el_segundo_input_reusa_la_clase_search_existente():
+    """Mismo estilo que el buscador de metadatos: reusa `input[type=search]` y `.search`
+    del grid de filtros, sin CSS nuevo."""
+    html = _html()
+    i = html.index('v-model="usuarioBusqueda.q"')
+    bloque = html[max(0, i - 200):i]
+    assert 'type="search"' in bloque
+    assert 'class="search"' in bloque
+
+
+def test_usuario_busqueda_esta_expuesta_en_el_setup():
+    """Mismo criterio que `nivelesId`/`copiarId`/`idCopiado`: si el template usa un nombre
+    que el setup no expone, rompe en el navegador y ningun test de balance lo ve."""
+    html = _html()
+    i = html.rindex("    return {")
+    ret = html[i:html.index("};", i)]
+    assert "usuarioBusqueda" in ret
+
+
+def test_resolver_usuario_pide_al_endpoint_correcto():
+    html = _html()
+    assert "/api/resolver-usuario" in html
+
+
+def test_resolver_usuario_esta_debounced():
+    """Sin debounce, cada tecla dispara el seq scan de ~886 MB sobre `messages`."""
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    tramo = html[i:i + 2600]
+    assert "debounce(resolverUsuarioBusqueda" in tramo
+
+
+def test_contactos_resueltos_viajan_en_el_query_string():
+    """`qs()` es la fuente unica del query string: si `contactos` no entra ahi, el
+    segundo buscador resuelve y no filtra nada -- el mismo bug que `causa` en `_filters`,
+    del lado del front."""
+    html = _html()
+    i = html.index("const qs = (extra={}) => {")
+    bloque = html[i:html.index("return p.toString();", i)]
+    assert 'p.set("contactos"' in bloque
+    assert "usuarioBusqueda.contactos" in bloque
+
+
+def test_el_guard_de_ambiguedad_se_muestra_y_no_aplica_el_filtro():
+    """`ambiguo: true` tiene que avisar el conteo y NO setear `contactos` -- devolver
+    19.965 filas no es buscar, es mentir (ver `queries.resolver_usuario`)."""
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    cuerpo = html[i:i + 1800]
+    assert "d.ambiguo" in cuerpo
+    assert "Término demasiado general" in cuerpo or "demasiado general" in cuerpo
+
+
+def test_sin_resultados_se_avisa_explicito():
+    """Sin este aviso el tablero queda en cero sin explicar por que: el negocio no puede
+    distinguir "no hay nadie con ese usuario" de "se rompio algo"."""
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    cuerpo = html[i:i + 1800]
+    assert "No se encontr" in cuerpo
+
+
+def test_cambiar_de_cuenta_limpia_la_busqueda_de_usuario():
+    """Un contact_id resuelto en `datos` no significa nada en `sistemas`: arrastrarlo
+    entre cuentas filtraria por ids de otra base."""
+    html = _html()
+    i = html.index("async function switchAccount")
+    cuerpo = html[i:html.index("\n    }", i)]
+    assert "limpiarUsuarioBusqueda" in cuerpo
+
+
+def test_el_mensaje_de_resultado_no_llama_sesiones_a_lo_que_es_conversaciones():
+    """`resolver_usuario` cuenta `interaccion_id` (una fila por interaccion, no por
+    sesion) y desde el 2026-09-08 la clave del backend se llama `conversaciones` (ver
+    `queries._RESOLVER_USUARIO_SQL`). El copy del front tiene que usar el mismo
+    vocabulario: si dice `sesiones` sobre una clave que ya no existe, el numero
+    directamente deja de calcularse (queda en 0 por el `|| 0` del reduce)."""
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    cuerpo = html[i:i + 1900]
+    assert "c.conversaciones" in cuerpo
+    assert "c.sesiones" not in cuerpo
+
+
+# --- FIX 2: "Limpiar filtros" ciego al buscador de usuario/agencia -------------------
+#
+# `activeChips`/`isDirty` iteraban solo `FILTER_META`, y `usuarioBusqueda` vive AFUERA de
+# ese objeto a proposito (no es un filtro de matchBase, es un id ya resuelto). Con una
+# busqueda de usuario aplicada, el boton quedaba deshabilitado y `sinFiltrosNota` mentia
+# "se esta viendo la cuenta completa" con el tablero recortado.
+
+def _fuente_de_isDirty() -> str:
+    html = _html()
+    i = html.index("const isDirty = computed(")
+    return html[i:html.index(";", i) + 1]
+
+
+def test_isDirty_considera_la_busqueda_de_usuario_activa():
+    cuerpo = _fuente_de_isDirty()
+    assert "usuarioBusqueda.contactos.length" in cuerpo
+
+
+def test_hay_un_chip_visible_para_la_busqueda_de_usuario_activa():
+    """Preferido sobre tocar `sinFiltrosNota`: el chip muestra el termino buscado y una
+    cruz para quitarlo, coherente con como se ven los demas filtros activos."""
+    html = _html()
+    bloque = html[html.index('class="active-filters"'):html.index("</div>\n\n  <div v-if=\"loadError\"")]
+    assert "usuarioBusqueda" in bloque
+    assert "limpiarUsuarioBusqueda" in bloque
+
+
+def test_sin_filtros_no_se_declara_ninguno_si_hay_busqueda_de_usuario_activa():
+    """Sin este guard, `af-none` ("ninguno — se esta viendo la cuenta completa") se
+    dibujaba IGUAL al lado del chip de usuario/agencia: dos afirmaciones contradictorias
+    en la misma fila."""
+    html = _html()
+    bloque = html[html.index('class="active-filters"'):html.index("</div>\n\n  <div v-if=\"loadError\"")]
+    i = bloque.index('class="af-none"')
+    condicion = bloque[max(0, i - 200):i]
+    assert "usuarioBusqueda.contactos.length" in condicion
+
+
+# --- FIX 3: race entre switchAccount y una resolucion en vuelo ------------------------
+#
+# `limpiarUsuarioBusqueda` solo seteaba `.q = ""`, y el `++usuarioSeq` que descarta
+# respuestas viejas ocurria RECIEN 400ms despues (dentro de `resolverUsuarioBusqueda`,
+# disparado por el debounce). Si una respuesta de la cuenta ANTERIOR llegaba en esa
+# ventana, pisaba `usuarioBusqueda.contactos` con ids de otra base y el tablero quedaba en
+# cero en silencio.
+
+def test_limpiar_busqueda_invalida_usuarioSeq_de_forma_sincronica():
+    html = _html()
+    i = html.index("function limpiarUsuarioBusqueda")
+    cuerpo = html[i:html.index("\n    }", i)]
+    assert "usuarioSeq" in cuerpo, (
+        "limpiarUsuarioBusqueda no invalida usuarioSeq: una respuesta en vuelo de la "
+        "cuenta anterior puede pisar el estado despues del cambio de cuenta"
+    )
+
+
+def test_la_respuesta_de_resolver_usuario_se_valida_contra_la_cuenta():
+    """Guard por CUENTA ademas del de secuencia: es mas robusto porque no depende de que
+    el debounce dispare a tiempo (el mismo patron que `acc !== account.value` en
+    `fetchSummary`/`fetchTickets`/`fetchConversion`). Sin esto, `if (!account.value)
+    return;` (que ya existia) solo protege el pedido INICIAL, no la respuesta."""
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    cuerpo = html[i:html.index("\n    }", i)]
+    assert re.search(r"(seq !== usuarioSeq \|\| acc !== account\.value)"
+                     r"|(acc !== account\.value \|\| seq !== usuarioSeq)", cuerpo), (
+        "resolverUsuarioBusqueda no descarta la respuesta si la cuenta cambio mientras "
+        "esperaba: una respuesta vieja de OTRA cuenta puede pisar usuarioBusqueda.contactos"
+    )
