@@ -332,9 +332,11 @@ def resolver_usuario(account: str = Query(..., description="datos | sistemas"),
 
     Distinto del buscador de `search` en `_filters`: ese toca metadatos del contacto
     (nombre, numero, operador); este busca en el TEXTO de `messages.body`, donde vive el
-    username de agencia. Devuelve `{ambiguo, contactos, total, motivo}` -- ver el
-    docstring de `queries.resolver_usuario` para el guard de ambiguedad y el piso de
-    largo minimo."""
+    username de agencia. Devuelve `{ambiguo, contactos, total, motivo, interacciones_mencion,
+    interacciones_mencion_truncada}` -- ver el docstring de `queries.resolver_usuario` para
+    el guard de ambiguedad, el piso de largo minimo, y por que `interacciones_mencion` (las
+    conversaciones que SI tienen el termino dentro de la ventana que el modal muestra) es
+    un subconjunto mucho mas chico que `contactos[].conversaciones`."""
     with _conn() as c, c.cursor() as cur:
         return queries.resolver_usuario(cur, account, q=q)
 

@@ -270,6 +270,9 @@
   .cust-sub { font-size:11.5px; color:var(--faint); margin-top:2px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .cust-sub .mono { color:var(--muted); }
   .badge { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; padding:2px 8px; border-radius:6px; background:var(--surface-2); color:var(--muted); }
+  /* Cuantas conversaciones DE ESTA TARJETA mencionan el termino buscado. Mismas
+     variables que `.conv.mencion`/`mark.hit`, para que se lea como la MISMA marca. */
+  .mencion-tag { font-size:10px; font-weight:680; padding:2px 8px; border-radius:6px; background:var(--accent-soft); color:var(--accent); }
   .tk-right { display:flex; align-items:center; gap:16px; }
   .tk-avg { text-align:right; } .tk-avg .big { font-size:19px; font-weight:720; letter-spacing:-.02em; } .tk-avg .cap { font-size:9.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--faint); margin-top:1px; }
   .chev { color:var(--faint); transition:transform .16s; font-size:11px; } .tk.open .chev { transform:rotate(90deg); }
@@ -279,6 +282,10 @@
   .conv .when { font-size:11px; color:var(--faint); white-space:nowrap; }
   .conv .snip { font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .conv .op { font-size:11px; color:var(--faint); white-space:nowrap; }
+  /* LA MARCA EN EL LISTADO. Mismo criterio que `mark.hit` del transcript del modal
+     (misma combinacion `--accent`/`--accent-soft`, ver el comentario de esa regla):
+     un borde, no un fondo entero, para no competir con el chip "🔎 menciona" de al lado. */
+  .conv.mencion { border-left:3px solid var(--accent); }
 
   /* Pager */
   .pager { display:flex; align-items:center; justify-content:center; gap:16px; margin-top:18px; }
@@ -851,7 +858,10 @@
             <div class="cust-sub"><span class="mono">{{ phone(t.num) }}</span>
               <span v-if="t.ch" class="badge">{{ t.ch }}</span>
               <span>{{ t.n }} conversación{{ t.n>1?'es':'' }}</span>
-              <span v-if="t.visitas>1">{{ t.visitas }} visitas</span></div>
+              <span v-if="t.visitas>1">{{ t.visitas }} visitas</span>
+              <!-- Cuantas de LAS DE ESTA PERSONA mencionan el termino buscado; solo
+                   tiene sentido con la busqueda de usuario/agencia activa. -->
+              <span v-if="mencionesEnTarjeta(t)>0" class="mencion-tag">{{ mencionesEnTarjeta(t) }} mencionan</span></div>
           </div>
           <div class="tk-right">
             <div class="tk-avg">
@@ -862,12 +872,19 @@
           </div>
         </div>
         <div class="tk-body">
-          <div class="conv" v-for="cv in t.convs" :key="cv.interaccion_id || cv.conversation_id" role="button" tabindex="0"
+          <div class="conv" :class="{mencion: mencionaTermino(cv)}" v-for="cv in t.convs" :key="cv.interaccion_id || cv.conversation_id" role="button" tabindex="0"
                @click="openModal(cv.interaccion_id)" @keydown.enter.prevent="openModal(cv.interaccion_id)" @keydown.space.prevent="openModal(cv.interaccion_id)">
             <span class="when num">{{ fmtDate(cv.conversation_created_at) }}</span>
             <span class="snip">{{ cv.eval_status==='evaluated' ? (cv.rating_rationale||'') : (SKIP_LABEL[cv.skip_reason]||cv.skip_reason) }}</span>
             <span class="op" :title="opTip(cv)">{{ cv.eval_status==='evaluated' ? opName(cv) : '' }}</span>
             <span class="chips">
+              <!-- LA MARCA EN EL LISTADO: `resolver_usuario` ya dice CUALES conversaciones
+                   tienen la mencion DENTRO de su propia ventana (muchas menos que las que
+                   trae por el contacto). Mismo tono que `mark.hit` en el transcript del
+                   modal, para que se lean como la MISMA cosa. -->
+              <span class="chip" v-if="mencionaTermino(cv)"
+                    title="Esta conversación contiene el término buscado"
+                    style="background:var(--accent-soft);color:var(--accent);font-weight:750">🔎 menciona</span>
               <!-- El reloj es el eje de casi todas las rubricas: va en la lista para
                    poder barrer las lentas sin abrir una por una. -->
               <span class="chip t-chip" v-if="cv.first_response_seconds!=null"
@@ -1430,7 +1447,12 @@ createApp({
     // `/api/resolver-usuario`. `contactos` es la lista de `contact_id` que compone con
     // `filters.search` (AND) en el query string; `mensaje`/`kind` son el aviso legible
     // (ambiguo, sin resultados o resuelto) que reusa el estilo de `.charts-status`.
-    const usuarioBusqueda = reactive({ q: "", contactos: [], mensaje: "", kind: "" });
+    // `interaccionesMencion`: los `interaccion_id` que `resolver_usuario` marca con la
+    // mencion DENTRO de su propia ventana (no solo por el contacto) -- son MUCHOS menos
+    // que `contactos`: para "gogrosorti", 8 de 219. El listado los usa para marcar la
+    // fila ANTES de que alguien haga clic (ver `mencionaTermino`/`mencionesEnTarjeta`).
+    const usuarioBusqueda = reactive({ q: "", contactos: [], mensaje: "", kind: "",
+                                      interaccionesMencion: [] });
     const options = reactive({ segments:[], channels:[], operators:[] });
     const ambientes = reactive({});
     const summary = reactive({ kpis:{}, distribution:{}, operators:[], deposit_by_channel:[], quality_evolution:{months:[],operators:[]}, motivo_stats:[], ops_motivo:{motivos:[],operators:[]}, quality_motivo:{months:[],motivos:[]} });
@@ -1598,12 +1620,14 @@ createApp({
       debouncedResolverUsuario.cancel();
       usuarioBusqueda.q = ""; usuarioBusqueda.contactos = [];
       usuarioBusqueda.mensaje = ""; usuarioBusqueda.kind = "";
+      usuarioBusqueda.interaccionesMencion = [];
     }
     async function resolverUsuarioBusqueda() {
       const termino = usuarioBusqueda.q.trim();
       const seq = ++usuarioSeq, acc = account.value;
       if (!termino) {
         usuarioBusqueda.contactos = []; usuarioBusqueda.mensaje = ""; usuarioBusqueda.kind = "";
+        usuarioBusqueda.interaccionesMencion = [];
         debouncedFilter();
         return;
       }
@@ -1617,22 +1641,36 @@ createApp({
           // de la MARCA. Devolver esa lista no es buscar, es mentir -- se avisa el
           // conteo y NO se aplica ningun filtro.
           usuarioBusqueda.contactos = [];
+          usuarioBusqueda.interaccionesMencion = [];
           usuarioBusqueda.mensaje = `Término demasiado general: ${fmtN(d.total)} contactos. Use un término más específico.`;
           usuarioBusqueda.kind = "error";
         } else if (d.motivo === "termino_corto") {
           usuarioBusqueda.contactos = [];
+          usuarioBusqueda.interaccionesMencion = [];
           usuarioBusqueda.mensaje = "Se requieren al menos 3 caracteres.";
           usuarioBusqueda.kind = "error";
         } else if (!d.contactos.length) {
           // Sin este aviso el tablero queda en cero sin explicar por qué.
           usuarioBusqueda.contactos = [];
+          usuarioBusqueda.interaccionesMencion = [];
           usuarioBusqueda.mensaje = "No se encontró ningún usuario con ese término.";
           usuarioBusqueda.kind = "error";
         } else {
           usuarioBusqueda.contactos = d.contactos.map(c => c.id);
-          // `conversaciones` y no `sesiones` (mismo vocabulario que `resolver_usuario`).
+          // Menos que `conversaciones`: esto es por texto DENTRO de la interaccion.
+          usuarioBusqueda.interaccionesMencion = d.interacciones_mencion || [];
           const conversaciones = d.contactos.reduce((a, c) => a + (c.conversaciones || 0), 0);
-          usuarioBusqueda.mensaje = `${d.contactos.length} contacto(s) · ${fmtN(conversaciones)} conversaciones`;
+          // DICE "EVALUADAS" A PROPOSITO, y no es un matiz. El universo que se puede contar
+          // es el que el tablero muestra: interacciones con fila en `conversation_scores`.
+          // Medido para «gogrosorti» en `sistemas`: 62 mensajes contienen el termino y solo
+          // 8 caen dentro de una interaccion evaluada -- los otros 54 estan en tramos que
+          // nunca se scorearon, asi que no tienen fila que marcar ni que contar. Sin la
+          // palabra "evaluadas", "8 de 219 conversaciones mencionan X" se lee como "la
+          // agencia se menciono 8 veces" cuando se menciono 62: prometeria una cobertura
+          // del 100% sobre un 13% real.
+          usuarioBusqueda.mensaje = `${d.contactos.length} contacto(s) · «${termino}» aparece `
+            + `en ${fmtN(usuarioBusqueda.interaccionesMencion.length)} de `
+            + `${fmtN(conversaciones)} conversaciones evaluadas`;
           usuarioBusqueda.kind = "loading";
         }
         debouncedFilter();
@@ -2010,6 +2048,20 @@ createApp({
     }
     function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
     function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":m.role==="SISTEMA"?"":(author||(m.role==="BOT"?"Bot":"Operador")); }
+    // MARCAR EN EL LISTADO, no solo en el modal. `resolver_usuario` ya resuelve QUE
+    // interacciones tienen la mencion DENTRO de su propia ventana (`interaccionesMencion`,
+    // muchas menos que `usuarioBusqueda.contactos[].conversaciones`); esta funcion es el
+    // chequeo por fila que evita que el supervisor tenga que abrir una al azar (3,7% de
+    // chance) para saber si el resaltado del modal va a mostrar algo.
+    function mencionaTermino(cv) {
+      return !!(cv.interaccion_id && usuarioBusqueda.interaccionesMencion.includes(cv.interaccion_id));
+    }
+    // Cuantas de LAS CONVERSACIONES DE ESTA TARJETA mencionan el termino. Barato: `t.convs`
+    // ya trae TODAS las conversaciones de esa persona (`_TICKETS_CONVS_SQL` no las pagina
+    // por tarjeta, solo las tarjetas se paginan), asi que no hace falta un pedido aparte.
+    function mencionesEnTarjeta(t) {
+      return usuarioBusqueda.contactos.length ? t.convs.filter(mencionaTermino).length : 0;
+    }
     // Los DOS buscadores pueden traer la fila que el supervisor abre: `usuarioBusqueda.q`
     // (resuelto contra /api/resolver-usuario -- solo cuenta si YA resolvio contactos;
     // mientras se tipea sin resultado, o si la resolucion fallo/es ambigua, no hay nada
@@ -2359,6 +2411,7 @@ createApp({
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
       bubClass, bubText, bubAuthor, bubHtml, conteoMenciones, etiquetaMenciones,
+      mencionaTermino, mencionesEnTarjeta,
       dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
       dimPractica, dimSituacion,
       fmtDur, dimTiempos, dimConteos, dimHechos,

@@ -831,10 +831,15 @@ def test_resolver_usuario_pide_al_endpoint_correcto():
 
 
 def test_resolver_usuario_esta_debounced():
-    """Sin debounce, cada tecla dispara el seq scan de ~886 MB sobre `messages`."""
+    """Sin debounce, cada tecla dispara el seq scan de ~886 MB sobre `messages`.
+
+    LA VENTANA SE ANCLA A UN DELIMITADOR REAL, no a un offset. Con `i + N` cada linea
+    que se agrega adentro de la funcion empuja el final afuera de la ventana y el test
+    se cae sin que nada este roto: ya paso dos veces (2500->2600->3000). El `watch` es
+    el limite estable del tramo, y no se mueve porque se comente el cuerpo."""
     html = _html()
     i = html.index("async function resolverUsuarioBusqueda")
-    tramo = html[i:i + 2600]
+    tramo = html[i:html.index("watch(() => usuarioBusqueda.q", i)]
     assert "debounce(resolverUsuarioBusqueda" in tramo
 
 
@@ -882,10 +887,12 @@ def test_el_mensaje_de_resultado_no_llama_sesiones_a_lo_que_es_conversaciones():
     sesion) y desde el 2026-09-08 la clave del backend se llama `conversaciones` (ver
     `queries._RESOLVER_USUARIO_SQL`). El copy del front tiene que usar el mismo
     vocabulario: si dice `sesiones` sobre una clave que ya no existe, el numero
-    directamente deja de calcularse (queda en 0 por el `|| 0` del reduce)."""
+    directamente deja de calcularse (queda en 0 por el `|| 0` del reduce).
+
+    Ventana ampliada a 2300 (era 1900): mismo motivo que en `test_resolver_usuario_esta_debounced`."""
     html = _html()
     i = html.index("async function resolverUsuarioBusqueda")
-    cuerpo = html[i:i + 1900]
+    cuerpo = html[i:i + 2300]
     assert "c.conversaciones" in cuerpo
     assert "c.sesiones" not in cuerpo
 
@@ -1236,3 +1243,90 @@ def test_el_modal_muestra_cuantas_menciones_tiene_la_conversacion_abierta():
     bloque = html[i:html.index("</h3>", i)]
     assert "conteoMenciones" in bloque
     assert "etiquetaMenciones" in bloque
+
+
+# --- MARCAR EN EL LISTADO CUALES CONVERSACIONES MENCIONAN EL TERMINO -----------------
+#
+# EL PEDIDO REAL (mal interpretado en la corrida anterior): el resaltado del transcript
+# del modal (arriba) solo se ve si el supervisor abre, al azar, una de las 8 conversaciones
+# de 219 que realmente tienen la mencion DENTRO de su ventana -- 3,7% de chance. Lo que
+# faltaba es la marca EN EL LISTADO, antes de hacer clic, usando la clave nueva que
+# `resolver_usuario` ahora expone (`interacciones_mencion`).
+
+def test_usuarioBusqueda_expone_las_interacciones_con_mencion():
+    html = _html()
+    i = html.index("const usuarioBusqueda = reactive({")
+    linea = html[i:html.index(");", i)]
+    assert "interaccionesMencion" in linea
+
+
+def test_resolver_usuario_guarda_las_interacciones_con_mencion_al_resolver():
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    cuerpo = html[i:html.index("\n    }", i)]
+    assert "d.interacciones_mencion" in cuerpo
+
+
+def test_el_mensaje_de_resultado_avisa_cuantas_conversaciones_mencionan_el_termino():
+    """El numero que faltaba, visible ANTES de que el supervisor haga clic en ninguna fila.
+
+    Dice "conversaciones EVALUADAS" a proposito: 62 mensajes mencionan «gogrosorti» y
+    solo 8 caen dentro de una interaccion evaluada, asi que contar sobre el total sin
+    aclarar el universo prometeria una cobertura del 100% sobre un 13% real.
+
+    Ventana anclada al `watch`, no a un offset (ver el test del debounce)."""
+    html = _html()
+    i = html.index("async function resolverUsuarioBusqueda")
+    cuerpo = html[i:html.index("watch(() => usuarioBusqueda.q", i)]
+    assert "mencion" in cuerpo.lower()
+    assert "interaccionesMencion.length" in cuerpo
+    assert "evaluadas" in cuerpo
+
+
+def test_limpiar_busqueda_tambien_limpia_las_interacciones_con_mencion():
+    html = _html()
+    i = html.index("function limpiarUsuarioBusqueda")
+    cuerpo = html[i:html.index("\n    }", i)]
+    assert "interaccionesMencion" in cuerpo
+
+
+def test_hay_una_funcion_para_saber_si_una_conversacion_menciona_el_termino():
+    """El listado necesita chequear, fila por fila, si `cv.interaccion_id` esta en la
+    lista que devolvio `resolver_usuario` -- sin recorrer el array entero por fila."""
+    html = _html()
+    assert "function mencionaTermino(" in html
+    assert "usuarioBusqueda.interaccionesMencion" in html
+
+
+def test_la_fila_de_conversacion_muestra_el_indicador_de_mencion():
+    """Reusa el chip/clase existente, no colores nuevos: mismo criterio que `mark.hit`."""
+    html = _html()
+    i = html.index('<div class="conv"')
+    bloque = html[i:html.index("</div>\n        </div>", i)]
+    assert "mencionaTermino(cv)" in bloque
+
+
+def test_el_indicador_de_mencion_reusa_las_variables_de_acento_no_colores_nuevos():
+    html = _html()
+    i = html.index(".conv.mencion")
+    bloque = html[i:html.index("}", i) + 1]
+    assert "var(--accent" in bloque
+    assert not re.search(r"#[0-9a-fA-F]{3,6}", bloque), (
+        "el indicador de mencion no debe inventar colores hex nuevos"
+    )
+
+
+def test_la_tarjeta_de_persona_muestra_cuantas_de_sus_conversaciones_mencionan():
+    html = _html()
+    assert "function mencionesEnTarjeta(" in html
+    i = html.index('class="cust-sub"')
+    bloque = html[i:html.index("</div>", i)]
+    assert "mencionesEnTarjeta(t)" in bloque
+
+
+def test_mencionaTermino_y_mencionesEnTarjeta_estan_expuestas_en_el_setup():
+    html = _html()
+    i = html.rindex("    return {")
+    ret = html[i:html.index("};", i)]
+    for nombre in ("mencionaTermino", "mencionesEnTarjeta"):
+        assert nombre in ret, f"{nombre} no esta expuesta en el return del setup"

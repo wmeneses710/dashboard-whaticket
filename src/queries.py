@@ -320,25 +320,75 @@ def _normalizar_usuario(q: str) -> str:
 # MISMO CRITERIO que `_TICKETS_CARDS_SQL` (`count(DISTINCT ticket_id) AS visitas`, mas
 # abajo): las dos unidades (interaccion/fila vs. sesion/ticket) ya conviven en este
 # archivo con nombres DISTINTOS; esta columna solo se alinea con ese precedente.
+#
+# PERO 219 CONVERSACIONES NO SON 219 MENCIONES. El username identifica al CONTACTO, asi
+# que la mayoria de esas filas sale por QUIEN escribio, no porque el termino aparezca en
+# el tramo que el modal muestra (`recortar_a_la_interaccion` recorta a la interaccion
+# calificada). Medido: de las 219, solo 8 tienen el termino DENTRO de su propia ventana.
+# `interacciones_hit`, mas abajo, es la diferencia entre esos dos numeros: dice CUALES de
+# las 219 son esas 8, para que el listado las marque en vez de obligar a abrir filas al
+# azar (3,7% de chance de acertar con el resaltado del modal).
 _RESOLVER_USUARIO_SQL = """
-WITH hit AS (
-  SELECT DISTINCT t.contact_id
+WITH hit AS MATERIALIZED (
+  -- `ticket_id`/`created_at` viajan ademas de `contact_id` para que `interacciones_hit`
+  -- (mas abajo) derive de ESTE mismo scan de `messages` -- un segundo `SELECT ... FROM
+  -- messages` duplicaria el costo dominante (el seq scan de ~886 MB, ver el comentario de
+  -- arriba). MATERIALIZED aca tambien es a proposito y no cosmetico: hoy el planner elige
+  -- bien (843 ms medidos, ver el FIX de mas abajo) pero es fragil -- sin la palabra clave
+  -- un termino distinto podria degradar exactamente como el de `interacciones_hit`.
+  SELECT t.contact_id, m.ticket_id, m.created_at
     FROM messages m
     JOIN tickets t ON t.id = m.ticket_id
    WHERE m.account = %(account)s
      AND m.body ~* %(patron)s
      AND t.contact_id IS NOT NULL
+),
+-- INTERACCIONES QUE REALMENTE CONTIENEN LA MENCION, no solo el contacto que la resuelve.
+-- El modal muestra SOLO la interaccion calificada (`recortar_a_la_interaccion`,
+-- `interaccion_ini`/`interaccion_fin`, ambos inclusive); un mensaje-hit pertenece a esa
+-- ventana con el MISMO criterio que esa funcion: `interaccion_ini IS NULL` (filas viejas
+-- del path por conversacion, sin ventana declarada -> el mensaje pertenece igual, tal
+-- como `recortar_a_la_interaccion` devuelve TODO cuando no hay ventana) o el
+-- `created_at` del hit cae DENTRO de la ventana.
+--
+-- MATERIALIZED ES OBLIGATORIO EN ESTE CTE, no cosmetico. Medido contra Postgres real
+-- (cuenta `sistemas`, termino "gogrosorti", 11.065 tickets):
+--
+--   |         | sin MATERIALIZED | con MATERIALIZED |
+--   |---------|-------------------|-------------------|
+--   | Tiempo  | 13.129 ms         | 826 ms            |
+--   | Buffers | 18.348.891        | 125.512           |
+--
+-- 16x mas lento, 146x mas I/O, MISMOS 8 resultados. Sin la palabra clave el planner
+-- empuja el filtro `~*` DENTRO de un Nested Loop y lo re-ejecuta una vez POR CADA UNO de
+-- los 11.065 tickets. El `statement_timeout` es 20.000 ms: la version lenta "pasa" hoy,
+-- pero es una bomba de tiempo para el proximo termino que traiga mas tickets. No sacar
+-- este MATERIALIZED porque "parece redundante".
+interacciones_hit AS MATERIALIZED (
+  SELECT DISTINCT cs.interaccion_id
+    FROM hit
+    JOIN conversation_scores cs ON cs.ticket_id = hit.ticket_id AND cs.account = %(account)s
+   WHERE cs.interaccion_ini IS NULL
+      OR hit.created_at BETWEEN cs.interaccion_ini AND cs.interaccion_fin
 )
 SELECT ct.id, ct.name, ct.number,
        count(cs.interaccion_id) AS conversaciones,
        -- `count(*) OVER ()`: el TOTAL de contactos resueltos viaja en cada fila, sin una
        -- segunda consulta que repita el seq scan de `hit`. El guard de ambiguedad se
        -- decide en Python leyendo esta columna, no reconsultando.
-       count(*) OVER () AS total_contactos
-  FROM hit
-  JOIN contacts ct ON ct.id = hit.contact_id
+       count(*) OVER () AS total_contactos,
+       -- Las interacciones de ESTE contacto que estan en `interacciones_hit`.
+       -- `interacciones_hit` YA es una fila por interaccion (el `DISTINCT` de arriba), asi
+       -- que este JOIN no puede multiplicar `count(cs.interaccion_id)`: si se uniera `hit`
+       -- directo aca (varios mensajes-hit por ticket) SI lo inflaria, por eso la
+       -- deduplicacion vive en su propio CTE y no en un JOIN directo con `hit`.
+       array_agg(ih.interaccion_id) FILTER (WHERE ih.interaccion_id IS NOT NULL)
+         AS interacciones_con_mencion
+  FROM (SELECT DISTINCT contact_id FROM hit) h
+  JOIN contacts ct ON ct.id = h.contact_id
   LEFT JOIN tickets t2 ON t2.contact_id = ct.id
   LEFT JOIN conversation_scores cs ON cs.ticket_id = t2.id AND cs.account = %(account)s
+  LEFT JOIN interacciones_hit ih ON ih.interaccion_id = cs.interaccion_id
  GROUP BY ct.id, ct.name, ct.number
  ORDER BY conversaciones DESC
  -- FIX (2026-09-08): sin LIMIT, un termino ambiguo como "sorti" trae 16.043 filas por
@@ -361,6 +411,17 @@ SELECT ct.id, ct.name, ct.number,
 # ambiguo.
 LIMITE_AMBIGUO_USUARIO = 200
 
+# EL TOPE DE LA LISTA DE MENCIONES (`interacciones_mencion`). El guard de arriba ya acota
+# CONTACTOS, pero un contacto muy activo puede sumar cientos de interacciones que
+# mencionan el termino -- medido: "Atencion al Cliente" sola aporta 173 de las 219
+# conversaciones de "gogrosorti". Sin tope, un termino que pase el guard de contactos
+# igual podria mandar miles de uuid al front solo para pintar un chip. El numero es un
+# orden de magnitud por encima del maximo medido (173): deja margen para casos reales sin
+# dejar de proteger el payload de uno patologico. Si se excede, `resolver_usuario` NO
+# manda una lista parcial (mentiria por omision, igual que el guard de ambiguedad):
+# vacia la lista y prende `interacciones_mencion_truncada`.
+LIMITE_MENCIONES_USUARIO = 500
+
 
 def resolver_usuario(cur, account: str, q: str, *,
                      limite_ambiguo: int = LIMITE_AMBIGUO_USUARIO) -> dict:
@@ -374,6 +435,15 @@ def resolver_usuario(cur, account: str, q: str, *,
     `_RESOLVER_USUARIO_SQL` para por que la columna se llama `conversaciones` y no
     `sesiones`.
 
+    `interacciones_mencion`: de esas conversaciones, los `interaccion_id` cuya PROPIA
+    ventana (la que el modal muestra, `recortar_a_la_interaccion`) contiene la mencion --
+    medido, solo 8 de las 219 de "gogrosorti". Es lo que el listado necesita para marcar
+    las filas ANTES de que alguien haga clic, en vez de que abrir una al azar tenga 3,7%
+    de chance de mostrar algo resaltado. Topada en `LIMITE_MENCIONES_USUARIO`: si se
+    excede, viaja vacia con `interacciones_mencion_truncada = True` en vez de una lista
+    parcial. Vacia tambien cuando `ambiguo` corto o cuando no hubo query (termino corto /
+    sin resultados).
+
     GUARD DE AMBIGUEDAD: si la cantidad de contactos resueltos supera `limite_ambiguo`,
     se devuelve `{"ambiguo": True, "contactos": [], "total": <n>}`. El caso real es
     "sorti": 19.965 contactos (46% de la base), porque es el nombre de la MARCA. Devolver
@@ -386,7 +456,8 @@ def resolver_usuario(cur, account: str, q: str, *,
     """
     normalizado = _normalizar_usuario(q)
     if len(normalizado) < _MIN_LARGO_USUARIO:
-        return {"contactos": [], "total": 0, "ambiguo": False, "motivo": "termino_corto"}
+        return {"contactos": [], "total": 0, "ambiguo": False, "motivo": "termino_corto",
+                "interacciones_mencion": [], "interacciones_mencion_truncada": False}
 
     patron = r"\m" + re.escape(normalizado) + r"\M"
     cur.execute(_RESOLVER_USUARIO_SQL,
@@ -394,14 +465,17 @@ def resolver_usuario(cur, account: str, q: str, *,
     cols = [d.name for d in cur.description]
     filas = cur.fetchall()
     if not filas:
-        return {"contactos": [], "total": 0, "ambiguo": False, "motivo": "sin_resultados"}
+        return {"contactos": [], "total": 0, "ambiguo": False, "motivo": "sin_resultados",
+                "interacciones_mencion": [], "interacciones_mencion_truncada": False}
 
     total = dict(zip(cols, filas[0]))["total_contactos"]
     if total > limite_ambiguo:
-        return {"contactos": [], "total": total, "ambiguo": True, "motivo": None}
+        return {"contactos": [], "total": total, "ambiguo": True, "motivo": None,
+                "interacciones_mencion": [], "interacciones_mencion_truncada": False}
 
     from src.censura import censurar_texto
     contactos = []
+    interacciones_mencion: list[str] = []
     for fila in filas:
         d = dict(zip(cols, fila))
         contactos.append({
@@ -416,7 +490,14 @@ def resolver_usuario(cur, account: str, q: str, *,
             "numero": censurar_texto(d["number"]) if d["number"] else d["number"],
             "conversaciones": int(d["conversaciones"]),
         })
-    return {"contactos": contactos, "total": total, "ambiguo": False, "motivo": None}
+        # `array_agg(...) FILTER (...)` sin coincidencias da SQL NULL -> Python None, no
+        # una lista vacia; se normaliza aca para que el front nunca reciba `null`.
+        interacciones_mencion.extend(str(i) for i in (d.get("interacciones_con_mencion") or []))
+
+    truncada = len(interacciones_mencion) > LIMITE_MENCIONES_USUARIO
+    return {"contactos": contactos, "total": total, "ambiguo": False, "motivo": None,
+            "interacciones_mencion": [] if truncada else interacciones_mencion,
+            "interacciones_mencion_truncada": truncada}
 
 
 _SCORES_JOINS = """

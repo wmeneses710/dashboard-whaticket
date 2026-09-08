@@ -352,7 +352,8 @@ def test_resolver_usuario_no_deja_pasar_escapes_ARE_de_postgres_sin_duplicar():
 def test_resolver_usuario_rechaza_terminos_cortos_sin_tocar_la_base():
     cur = _FakeCursor([], description=[])
     out = resolver_usuario(cur, "datos", "ab")
-    assert out == {"contactos": [], "total": 0, "ambiguo": False, "motivo": "termino_corto"}
+    assert out == {"contactos": [], "total": 0, "ambiguo": False, "motivo": "termino_corto",
+                   "interacciones_mencion": [], "interacciones_mencion_truncada": False}
     assert cur.executed == []  # ni una consulta: se rechaza ANTES de tocar la base
 
 
@@ -411,6 +412,115 @@ def test_resolver_usuario_censura_el_telefono_de_salida():
     numero = out["contactos"][0]["numero"]
     assert numero != "0991234567"
     assert numero[0] == "0" and numero[-1] == "7"  # mismo largo, extremos visibles
+
+
+# --- MARCAR EN EL LISTADO CUALES CONVERSACIONES MENCIONAN EL TERMINO ------------------
+#
+# El modal recorta el transcript a la interaccion calificada (`recortar_a_la_interaccion`),
+# y solo 8 de las 219 conversaciones que `resolver_usuario` resuelve para "gogrosorti"
+# tienen la mencion DENTRO de esa ventana -- el resto sale por el CONTACTO, no por el
+# texto de esa interaccion puntual. El supervisor que abre una fila al azar tenia 3,7% de
+# chance de ver el resaltado del modal. Estos tests fijan la clave nueva que le dice al
+# front CUALES de esas 219 filas son las 8 que sí lo tienen, para marcarlas en el listado
+# ANTES de hacer clic.
+
+def test_resolver_usuario_sql_materializa_el_cte_de_hit_y_el_de_interacciones():
+    """Sin `MATERIALIZED` el planner empuja el filtro `~*` dentro de un Nested Loop y lo
+    re-ejecuta por cada uno de los 11.065 tickets: medido, 13.129 ms / 18.348.891 buffers
+    contra 826 ms / 125.512 buffers con la palabra clave -- 16x mas lento, 146x mas I/O,
+    MISMOS 8 resultados. El `statement_timeout` (20.000 ms) deja pasar la version lenta:
+    es una bomba de tiempo, no un error visible."""
+    assert "hit AS MATERIALIZED" in _RESOLVER_USUARIO_SQL
+    assert _RESOLVER_USUARIO_SQL.count("MATERIALIZED") >= 2
+
+
+def test_resolver_usuario_sql_saca_ticket_id_y_created_at_del_mismo_hit():
+    """FUSIONADO en un solo pase por `messages`: `hit` ya no es solo `contact_id` (un
+    segundo scan duplicaria el costo dominante, el seq scan de `messages`)."""
+    assert "t.contact_id, m.ticket_id, m.created_at" in _RESOLVER_USUARIO_SQL
+
+
+def test_resolver_usuario_sql_usa_el_mismo_criterio_de_ventana_que_el_modal():
+    """Mismo criterio que `recortar_a_la_interaccion`: sin ventana declarada
+    (`interaccion_ini IS NULL`) el mensaje pertenece igual; con ventana, el `created_at`
+    del hit tiene que caer DENTRO de ella."""
+    assert "cs.interaccion_ini IS NULL" in _RESOLVER_USUARIO_SQL
+    assert "hit.created_at BETWEEN cs.interaccion_ini AND cs.interaccion_fin" in _RESOLVER_USUARIO_SQL
+
+
+def test_resolver_usuario_agrega_las_interacciones_con_mencion_de_un_contacto():
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 1, ["i1", "i2"])],
+        description=["id", "name", "number", "conversaciones", "total_contactos",
+                     "interacciones_con_mencion"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    assert sorted(out["interacciones_mencion"]) == ["i1", "i2"]
+    assert out["interacciones_mencion_truncada"] is False
+
+
+def test_resolver_usuario_junta_interacciones_mencion_de_varios_contactos():
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 2, ["i1"]),
+         ("id2", "Ana Diaz", "0991234568", 5, 2, ["i2", "i3"])],
+        description=["id", "name", "number", "conversaciones", "total_contactos",
+                     "interacciones_con_mencion"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    assert sorted(out["interacciones_mencion"]) == ["i1", "i2", "i3"]
+
+
+def test_resolver_usuario_sin_menciones_devuelve_lista_vacia_no_none():
+    """`array_agg(...) FILTER (...)` sin coincidencias da SQL `NULL`, no `[]` -- Python
+    tiene que normalizarlo, o el front recibe `null` donde espera una lista."""
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 1, None)],
+        description=["id", "name", "number", "conversaciones", "total_contactos",
+                     "interacciones_con_mencion"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    assert out["interacciones_mencion"] == []
+
+
+def test_resolver_usuario_topa_la_lista_de_menciones_y_la_marca_incompleta():
+    """Mejor una lista vacia con una marca de 'no se pudo determinar' que mandar miles
+    de ids al front. Ver `LIMITE_MENCIONES_USUARIO` para el numero elegido."""
+    from src.queries import LIMITE_MENCIONES_USUARIO
+    muchas = [f"i{i}" for i in range(LIMITE_MENCIONES_USUARIO + 1)]
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 1, muchas)],
+        description=["id", "name", "number", "conversaciones", "total_contactos",
+                     "interacciones_con_mencion"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    assert out["interacciones_mencion"] == []
+    assert out["interacciones_mencion_truncada"] is True
+
+
+def test_resolver_usuario_en_el_tope_exacto_no_se_marca_incompleta():
+    from src.queries import LIMITE_MENCIONES_USUARIO
+    justo = [f"i{i}" for i in range(LIMITE_MENCIONES_USUARIO)]
+    cur = _FakeCursor(
+        [("id1", "Juan Perez", "0991234567", 3, 1, justo)],
+        description=["id", "name", "number", "conversaciones", "total_contactos",
+                     "interacciones_con_mencion"])
+    out = resolver_usuario(cur, "datos", "gogrosorti")
+    assert len(out["interacciones_mencion"]) == LIMITE_MENCIONES_USUARIO
+    assert out["interacciones_mencion_truncada"] is False
+
+
+def test_resolver_usuario_ambiguo_no_devuelve_menciones():
+    """Cuando el guard de ambiguedad ya corto, la lista va vacia: 19.965 ids de mencion
+    serian tan mentirosos como los 19.965 contactos que el guard ya rechaza."""
+    cur = _FakeCursor(
+        [("id1", "Nombre", "0991234567", 1, 19965, ["i1"])],
+        description=["id", "name", "number", "conversaciones", "total_contactos",
+                     "interacciones_con_mencion"])
+    out = resolver_usuario(cur, "datos", "sorti", limite_ambiguo=200)
+    assert out["ambiguo"] is True
+    assert out["interacciones_mencion"] == []
+
+
+def test_resolver_usuario_sin_resultados_devuelve_menciones_vacias():
+    cur = _FakeCursor([], description=[])
+    out = resolver_usuario(cur, "datos", "algoquenoexiste")
+    assert out["interacciones_mencion"] == []
 
 
 def test_scores_filters_con_contactos_filtra_por_id():
