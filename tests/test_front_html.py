@@ -959,3 +959,280 @@ def test_la_respuesta_de_resolver_usuario_se_valida_contra_la_cuenta():
         "resolverUsuarioBusqueda no descarta la respuesta si la cuenta cambio mientras "
         "esperaba: una respuesta vieja de OTRA cuenta puede pisar usuarioBusqueda.contactos"
     )
+
+
+# --- RESALTADO DEL TERMINO BUSCADO EN EL TRANSCRIPT DEL MODAL ------------------------
+#
+# El pedido real: abrir una conversacion del resultado de `usuarioBusqueda` (o de
+# `filters.search`) y ver DE UN GOLPE donde aparece la mencion, sin leer todo el chat. El
+# caso que lo disparo: entender por que un contacto aparecia en los resultados de
+# "gogrosorti" (resulto ser una postulante a agente que nombro a su referente).
+#
+# `bubText(m)` es texto CRUDO escrito por CLIENTES de WhatsApp. Envolver coincidencias en
+# `<mark>` exige `v-html`, y sin escapar el HTML PRIMERO un cliente que mande
+# `<img src=x onerror=alert(1)>` en un mensaje quedaria como etiqueta VIVA en el navegador
+# del supervisor que abra ese chat -- un XSS almacenado, con el atacante siendo cualquiera
+# que le escriba al WhatsApp de la empresa. Estos tests corren las funciones REALES con
+# node (no solo pinean texto): `esc`/`escapeRegExp`/`resaltar` estan aisladas de Vue/DOM a
+# proposito para poder extraerlas y ejecutarlas asi.
+
+def _codigo_resaltado() -> str:
+    html = _html()
+    i = html.index("const esc = ")
+    j = html.index("const fetchJSON")
+    return html[i:j]
+
+
+def _codigo_bubText() -> str:
+    html = _html()
+    i = html.index("function bubText(m)")
+    return html[i:html.index("\n", i)]
+
+
+def _codigo_resaltado_wired() -> str:
+    """El bloque reactivo (`terminosResaltado`, `bubHtml`, `conteoMenciones`,
+    `etiquetaMenciones`): depende de `usuarioBusqueda`/`filters`/`modal`, que el test
+    arma a mano (mas abajo) en vez de reusar los defaults del archivo."""
+    html = _html()
+    i = html.index("const terminosResaltado = computed")
+    j = html.index("// LAS NOTAS EN PROSA")
+    return html[i:j]
+
+
+def _correr_resaltado(funcion: str, *args):
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("node"):                      # pragma: no cover
+        import pytest
+        pytest.skip("node no esta disponible en este entorno")
+    argumentos = ", ".join(json.dumps(a) for a in args)
+    script = _codigo_resaltado() + f"\nconsole.log(JSON.stringify({funcion}({argumentos})));\n"
+    with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8",
+                                     delete=False) as f:
+        f.write(script)
+        ruta = f.name
+    r = subprocess.run(["node", ruta], capture_output=True, text=True)
+    assert r.returncode == 0, f"el resaltado no corre en node:\n{r.stderr}\n---\n{script}"
+    return json.loads(r.stdout)
+
+
+def _correr_wired(setup_js: str, expr: str):
+    import json
+    import shutil
+    import subprocess
+    import tempfile
+    if not shutil.which("node"):                      # pragma: no cover
+        import pytest
+        pytest.skip("node no esta disponible en este entorno")
+    # `computed`/`reactive` de Vue no estan disponibles fuera del navegador: un shim
+    # minimo alcanza porque lo que se prueba es la logica, no la reactividad.
+    shim = ("function computed(fn) { return { get value() { return fn(); } }; }\n"
+            "function reactive(o) { return o; }\n")
+    script = (shim + _codigo_resaltado() + "\n" + _codigo_bubText() + "\n"
+              + setup_js + "\n" + _codigo_resaltado_wired()
+              + f"\nconsole.log(JSON.stringify({expr}));\n")
+    with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8",
+                                     delete=False) as f:
+        f.write(script)
+        ruta = f.name
+    r = subprocess.run(["node", ruta], capture_output=True, text=True)
+    assert r.returncode == 0, f"el bloque conectado no corre en node:\n{r.stderr}\n---\n{script}"
+    return json.loads(r.stdout)
+
+
+def test_esc_tambien_escapa_comillas_simples():
+    """`esc` ya cubria `& < > "`; el resaltado necesita tambien `'` para cerrar el orden
+    de escape que pide la tarea."""
+    out = _correr_resaltado("esc", "d'Artagnan")
+    assert out == "d&#39;Artagnan"
+
+
+def test_sin_termino_activo_el_texto_sale_escapado_y_sin_marcas():
+    out = _correr_resaltado("resaltar", "hola <b>mundo</b>", [])
+    assert out == "hola &lt;b&gt;mundo&lt;/b&gt;"
+    assert "<mark" not in out
+
+
+def test_un_script_en_el_mensaje_del_cliente_NO_queda_como_etiqueta_viva():
+    """El test mas importante de la tarea: sin este escape, un mensaje de WhatsApp con
+    `<script>` ejecutaria en el navegador del supervisor que abra el chat."""
+    out = _correr_resaltado("resaltar", "hola <script>alert(1)</script> mundo", ["mundo"])
+    assert "<script>" not in out
+    assert "</script>" not in out
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in out
+    assert '<mark class="hit">mundo</mark>' in out
+
+
+def test_un_img_onerror_en_el_mensaje_del_cliente_NO_queda_como_etiqueta_viva():
+    out = _correr_resaltado("resaltar", "mira <img src=x onerror=alert(1)>", [])
+    assert "<img" not in out
+    assert "&lt;img src=x onerror=alert(1)&gt;" in out
+
+
+def test_el_termino_se_escapa_para_regex_antes_de_usarlo():
+    """Mismo cuidado que `re.escape` en `src/queries.py` antes de armar `\\m...\\M`: un
+    `.` en el termino no puede matchear cualquier caracter."""
+    out = _correr_resaltado("resaltar", "abc y a.c", ["a.c"])
+    assert out == 'abc y <mark class="hit">a.c</mark>'
+
+
+def test_el_termino_con_metacaracteres_de_regex_no_rompe_ni_explota():
+    termino = ".*+?^${}()|[]"
+    out = _correr_resaltado("resaltar", f"raro pero real: {termino} aparece", [termino])
+    assert f'<mark class="hit">{termino}</mark>' in out
+
+
+def test_no_resalta_dentro_de_una_palabra_mas_larga():
+    """Coherente con el backend (`~* '\\m<term>\\M'` en `src/queries.py`): si resaltara por
+    substring, marcaria "sorti" dentro de "gogrosortiado", una fila que el backend nunca
+    matcheo -- el supervisor veria una marca que no explica por que la fila salio en los
+    resultados."""
+    out = _correr_resaltado("resaltar", "gogrosortiado y tambien sorti solo", ["sorti"])
+    assert "gogros<mark" not in out
+    assert '<mark class="hit">sorti</mark> solo' in out
+
+
+def test_resalta_todas_las_apariciones_no_solo_la_primera():
+    out = _correr_resaltado("resaltar", "sorti y sorti otra vez", ["sorti"])
+    assert out.count('<mark class="hit">sorti</mark>') == 2
+
+
+def test_el_resaltado_es_insensible_a_mayusculas():
+    out = _correr_resaltado("resaltar", "GoGroSorti escribio esto", ["gogrosorti"])
+    assert '<mark class="hit">GoGroSorti</mark>' in out
+
+
+def test_la_frontera_de_palabra_funciona_con_un_termino_que_EMPIEZA_en_acento():
+    """`\\b` de JS falla aca: `/\\bñandú\\b/.test("hola ñandú")` da `false` porque `\\w`
+    no reconoce la ñ como caracter de palabra, asi que la frontera nunca se dispara al
+    principio del termino. Comprobado con node antes de escribir esto."""
+    out = _correr_resaltado("resaltar", "vino Ñandú a jugar", ["ñandú"])
+    assert '<mark class="hit">Ñandú</mark>' in out
+
+
+def test_la_frontera_de_palabra_funciona_con_un_termino_que_TERMINA_en_acento():
+    """Mismo problema del otro lado: `/\\bcafé\\b/.test("tomamos café")` tambien da
+    `false`."""
+    out = _correr_resaltado("resaltar", "tomamos café juntos", ["café"])
+    assert '<mark class="hit">café</mark>' in out
+
+
+def test_resalta_los_dos_terminos_activos_a_la_vez():
+    out = _correr_resaltado("resaltar", "gogrosorti y ana", ["gogrosorti", "ana"])
+    assert '<mark class="hit">gogrosorti</mark>' in out
+    assert '<mark class="hit">ana</mark>' in out
+
+
+def test_terminosResaltado_no_incluye_usuarioBusqueda_sin_contactos_resueltos():
+    """Mientras el usuario tipea y todavia no resolvio (o la resolucion fallo/es
+    ambigua), no hay nada que resaltar: resaltar un termino sin resultados confundiria
+    mas de lo que ayuda."""
+    setup = ('const usuarioBusqueda = reactive({ q: "gogrosorti", contactos: [] });\n'
+             'const filters = reactive({ search: "" });\n'
+             'const modal = reactive({ detail: null });\n')
+    out = _correr_wired(setup, "terminosResaltado.value")
+    assert out == []
+
+
+def test_terminosResaltado_incluye_usuarioBusqueda_una_vez_resuelto():
+    setup = ('const usuarioBusqueda = reactive({ q: "gogrosorti", contactos: [1, 2] });\n'
+             'const filters = reactive({ search: "" });\n'
+             'const modal = reactive({ detail: null });\n')
+    out = _correr_wired(setup, "terminosResaltado.value")
+    assert out == ["gogrosorti"]
+
+
+def test_terminosResaltado_suma_filters_search_sin_pisar_al_de_usuario():
+    """El supervisor no deberia tener que adivinar cual de los dos buscadores trajo la
+    fila: si los dos estan activos, se resaltan los dos."""
+    setup = ('const usuarioBusqueda = reactive({ q: "gogrosorti", contactos: [1] });\n'
+             'const filters = reactive({ search: "ana" });\n'
+             'const modal = reactive({ detail: null });\n')
+    out = _correr_wired(setup, "terminosResaltado.value")
+    assert set(out) == {"gogrosorti", "ana"}
+
+
+def test_bubHtml_resalta_usando_los_terminos_activos():
+    setup = ('const usuarioBusqueda = reactive({ q: "gogrosorti", contactos: [1] });\n'
+             'const filters = reactive({ search: "" });\n'
+             'const modal = reactive({ detail: null });\n')
+    out = _correr_wired(setup, 'bubHtml({ text: "hola gogrosorti" })')
+    assert '<mark class="hit">gogrosorti</mark>' in out
+
+
+def test_bubHtml_tambien_escapa_un_script_del_cliente():
+    setup = ('const usuarioBusqueda = reactive({ q: "", contactos: [] });\n'
+             'const filters = reactive({ search: "" });\n'
+             'const modal = reactive({ detail: null });\n')
+    out = _correr_wired(setup, 'bubHtml({ text: "<script>alert(1)</script>" })')
+    assert "<script>" not in out
+    assert "&lt;script&gt;" in out
+
+
+def test_conteoMenciones_cuenta_sobre_todo_el_transcript_no_solo_el_primer_mensaje():
+    setup = ('const usuarioBusqueda = reactive({ q: "gogrosorti", contactos: [1] });\n'
+             'const filters = reactive({ search: "" });\n'
+             'const modal = reactive({ detail: { transcript: ['
+             '{ role:"CLIENTE", text:"hola gogrosorti" },'
+             '{ role:"AGENTE", text:"gogrosorti gogrosorti" }'
+             '] } });\n')
+    out = _correr_wired(setup, "conteoMenciones.value")
+    assert out == 3
+
+
+def test_conteoMenciones_es_cero_sin_termino_activo():
+    setup = ('const usuarioBusqueda = reactive({ q: "", contactos: [] });\n'
+             'const filters = reactive({ search: "" });\n'
+             'const modal = reactive({ detail: { transcript: [{ role:"CLIENTE", text:"hola" }] } });\n')
+    out = _correr_wired(setup, "conteoMenciones.value")
+    assert out == 0
+
+
+def test_etiquetaMenciones_lista_los_terminos_activos():
+    setup = ('const usuarioBusqueda = reactive({ q: "gogrosorti", contactos: [1] });\n'
+             'const filters = reactive({ search: "ana" });\n'
+             'const modal = reactive({ detail: null });\n')
+    out = _correr_wired(setup, "etiquetaMenciones.value")
+    assert out == "«gogrosorti» y «ana»"
+
+
+def test_el_bubble_usa_v_html_con_bubHtml_para_el_texto_del_cliente():
+    html = _html()
+    i = html.index('<div class="bub"')
+    bloque = html[i:html.index("</template>", i)]
+    assert 'v-html="bubHtml(m)"' in bloque
+
+
+def test_mark_hit_reusa_variables_existentes_no_colores_nuevos():
+    html = _html()
+    i = html.index("mark.hit")
+    bloque = html[i:html.index("}", i) + 1]
+    assert "var(--accent" in bloque
+    assert not re.search(r"#[0-9a-fA-F]{3,6}", bloque), (
+        "el resaltado no debe inventar colores hex nuevos, reusar las variables del tema"
+    )
+
+
+def test_bub_age_invierte_el_resaltado_sobre_fondo_solido():
+    """`.bub.age` es la unica burbuja con fondo solido `--accent` y texto blanco: el
+    mismo fondo translucido de acento seria invisible ahi."""
+    html = _html()
+    assert ".bub.age mark.hit" in html
+
+
+def test_bubHtml_conteoMenciones_y_etiquetaMenciones_estan_expuestas_en_el_setup():
+    html = _html()
+    i = html.rindex("    return {")
+    ret = html[i:html.index("};", i)]
+    for nombre in ("bubHtml", "conteoMenciones", "etiquetaMenciones"):
+        assert nombre in ret, f"{nombre} no esta expuesta en el return del setup"
+
+
+def test_el_modal_muestra_cuantas_menciones_tiene_la_conversacion_abierta():
+    html = _html()
+    i = html.index("<h3>Conversación real")
+    bloque = html[i:html.index("</h3>", i)]
+    assert "conteoMenciones" in bloque
+    assert "etiquetaMenciones" in bloque

@@ -322,6 +322,14 @@
      dijo al cliente. */
   .bub.sis { max-width:100%; margin:4px auto 9px; padding:2px 10px; background:none;
              border:0; color:var(--faint); font-size:11px; text-align:center; font-style:italic; }
+  /* RESALTADO del termino buscado (usuarioBusqueda.q / filters.search) en el transcript.
+     Reusa la MISMA combinacion fondo/texto del chip de "motivo" (`--accent-soft` +
+     `--accent`, ver el chip de linea ~928): ya probada legible sobre las burbujas claras
+     (cliente/bot/sistema), en modo claro y oscuro. `.bub.age` es la UNICA burbuja con
+     fondo SOLIDO `--accent` y texto blanco -- ahi el mismo tono quedaria invisible, asi
+     que se invierte a un fondo blanco translucido sin tocar ninguna variable nueva. */
+  mark.hit { background:var(--accent-soft); color:var(--accent); font-weight:750; border-radius:3px; padding:0 2px; }
+  .bub.age mark.hit { background:rgba(255,255,255,.85); }
   .why { font-size:13.5px; line-height:1.55; border-left:3px solid var(--accent); padding:4px 0 4px 14px; margin:4px 0 18px; }
   .dims { display:flex; flex-direction:column; gap:12px; } .dim .dh { font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); font-weight:600; margin-bottom:3px; } .dim p { margin:0; font-size:12.5px; }
   .errs { margin-top:16px; } .err { font-size:12px; color:var(--r-mala); background:color-mix(in srgb, var(--r-mala) 12%, transparent); padding:7px 11px; border-radius:8px; margin-top:6px; }
@@ -896,7 +904,7 @@
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head"><div class="who" v-html="modal.title"></div><button class="x" type="button" aria-label="Cerrar" @click="closeModal">✕</button></div>
       <div class="modal-body">
-        <div class="pane chat"><h3>Conversación real</h3>
+        <div class="pane chat"><h3>Conversación real<small v-if="conteoMenciones>0"> · {{ conteoMenciones }} mención{{ conteoMenciones===1?'':'es' }} de {{ etiquetaMenciones }}</small></h3>
           <div v-if="modal.loading" class="loading">Cargando conversación…</div>
           <div v-else-if="!modal.detail" class="loading">No se pudo cargar.</div>
           <div v-else>
@@ -916,7 +924,7 @@
               <div class="gap" v-if="bubGap(modal.detail.transcript, i)">
                 ⏳ {{ bubGap(modal.detail.transcript, i) }} sin respuesta</div>
               <div class="bub" :class="[bubClass(m.role), {ajena: m.interacciones>1 && !m.juzgada}]">
-                <div class="au">{{ bubAuthor(m) }}<span class="hora" v-if="m.at">{{ horaEc(m.at) }}</span></div>{{ bubText(m) || '' }}<i v-if="!bubText(m)">[multimedia]</i>
+                <div class="au">{{ bubAuthor(m) }}<span class="hora" v-if="m.at">{{ horaEc(m.at) }}</span></div><span v-html="bubHtml(m)"></span><i v-if="!bubText(m)">[multimedia]</i>
               </div>
             </template>
             <div v-if="!(modal.detail.transcript||[]).length" style="color:var(--faint)">Sin mensajes.</div>
@@ -1234,7 +1242,38 @@ const OP_TIP = {
 const opTip = r => OP_TIP[r.user_name] || "";
 const initials = n => (n||"?").split(/\s+/).slice(0,2).map(w=>w[0]||"").join("").toUpperCase();
 const phone = n => n? String(n).replace(/^(\d{3})(\d+)/,"+$1 $2"):"";
-const esc = s => (s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const esc = s => (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// RESALTADO del termino buscado (usuarioBusqueda.q / filters.search) dentro del
+// transcript del modal. El pedido: abrir una conversacion del resultado de una busqueda
+// y ver DE UN GOLPE donde aparece la mencion, sin leer todo el chat.
+//
+// ORDEN OBLIGATORIO, sin excepcion: `bubText(m)` es texto CRUDO escrito por CLIENTES de
+// WhatsApp. Primero se escapa con `esc()` (arriba), y RECIEN sobre el texto YA escapado
+// se envuelven las coincidencias en `<mark>`. Al reves -- envolver primero, escapar
+// despues -- un cliente que mande `<img src=x onerror=alert(1)>` en un mensaje quedaria
+// como etiqueta VIVA en el navegador del supervisor que abra ese chat: un XSS
+// almacenado, con el atacante siendo cualquiera que le escriba al WhatsApp de la empresa.
+const escapeRegExp = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// FRONTERA DE PALABRA: a proposito NO se usa `\b` de JS. `\b` se basa en `\w`
+// (`[A-Za-z0-9_]`), que no reconoce vocales acentuadas ni la ñ como "caracter de
+// palabra". Comprobado con node antes de escribir esto:
+//   /\bñandú\b/.test("hola ñandú")   -> false (el termino EMPIEZA en un caracter que
+//                                       \w no reconoce, la frontera nunca se dispara)
+//   /\bcafé\b/.test("tomamos café")  -> false (mismo problema, termina en acento)
+// El backend (`src/queries.py`, `resolver_usuario`) resuelve por `~* '\m<term>\M'`, y
+// Postgres SI reconoce los acentos como parte de la palabra -- con `\b` el front y el
+// backend discreparian justo en los terminos con tilde. Se usa un lookaround con el
+// rango Latin-1 Supplement + Latin Extended-A (`À-ɏ`) en su lugar, que cubre ambos casos.
+const RESALTAR_FRONTERA = "[\\wÀ-ɏ]";
+function resaltar(texto, terminos) {
+  const escapado = esc(texto);
+  const lista = (Array.isArray(terminos) ? terminos : [terminos])
+    .map(t => (t||"").trim()).filter(Boolean);
+  if (!lista.length) return escapado;
+  const alterna = lista.map(escapeRegExp).join("|");
+  const patron = new RegExp(`(?<!${RESALTAR_FRONTERA})(${alterna})(?!${RESALTAR_FRONTERA})`, "gi");
+  return escapado.replace(patron, '<mark class="hit">$1</mark>');
+}
 const fetchJSON = async u => { const r=await fetch(u); if(!r.ok) throw new Error(r.status); return r.json(); };
 
 // ---- AYUDA DE LOS TAGS ------------------------------------------------------
@@ -1971,6 +2010,37 @@ createApp({
     }
     function bubText(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); if(mm && m.role!=="CLIENTE") text=text.slice(mm[0].length); return text; }
     function bubAuthor(m) { let text=m.text||""; const mm=text.match(/^\*([^:*]{2,40}):\*\s*\n?/); const author=(mm && m.role!=="CLIENTE")?mm[1]:""; return m.role==="CLIENTE"?"Cliente":m.role==="SISTEMA"?"":(author||(m.role==="BOT"?"Bot":"Operador")); }
+    // Los DOS buscadores pueden traer la fila que el supervisor abre: `usuarioBusqueda.q`
+    // (resuelto contra /api/resolver-usuario -- solo cuenta si YA resolvio contactos;
+    // mientras se tipea sin resultado, o si la resolucion fallo/es ambigua, no hay nada
+    // que resaltar) y `filters.search` (metadatos, aplica apenas tiene texto). Mismo
+    // estilo de <mark> para los dos a proposito: lo que importa es DONDE aparece el
+    // termino dentro de ESTA conversacion, no CUAL de los dos buscadores la trajo -- un
+    // segundo tono hubiera exigido leer una referencia para distinguirlos, y en los casos
+    // reales que motivaron el pedido nunca estaban los dos buscadores activos a la vez.
+    const terminosResaltado = computed(() => {
+      const out = [];
+      if (usuarioBusqueda.q.trim() && usuarioBusqueda.contactos.length) out.push(usuarioBusqueda.q.trim());
+      if (filters.search.trim()) out.push(filters.search.trim());
+      return out;
+    });
+    // Sin termino activo se comporta EXACTAMENTE igual que antes: texto escapado, sin
+    // marcas (ver el comentario de `resaltar`, mas arriba, para el motivo de seguridad).
+    function bubHtml(m) { return resaltar(bubText(m), terminosResaltado.value); }
+    // CONTADOR DE MENCIONES del modal ("3 menciones de «gogrosorti»"). Cuenta sobre el
+    // MISMO patron que pinta las marcas -- no un regex aparte que pueda desalinearse del
+    // resaltado visual -- recorriendo el transcript una vez por cambio de `modal.detail`
+    // o de termino: `computed` lo cachea, no se recalcula en cada tick de render.
+    const conteoMenciones = computed(() => {
+      const lista = terminosResaltado.value;
+      if (!lista.length || !modal.detail) return 0;
+      const patron = new RegExp(`(?<!${RESALTAR_FRONTERA})(${lista.map(escapeRegExp).join("|")})(?!${RESALTAR_FRONTERA})`, "gi");
+      return (modal.detail.transcript||[]).reduce((total, m) => {
+        const coincidencias = esc(bubText(m)).match(patron);
+        return total + (coincidencias ? coincidencias.length : 0);
+      }, 0);
+    });
+    const etiquetaMenciones = computed(() => terminosResaltado.value.map(t => `«${t}»`).join(" y "));
     // LAS NOTAS EN PROSA que el modal muestra, y NADA MAS. Son exactamente las tres que
     // declara el esquema del prompt (src/prompts.py): el piso, el uplift y el trato.
     // Era una DENY-LIST y pintaba cualquier dimension de tipo string con la clave CRUDA como
@@ -2288,7 +2358,8 @@ createApp({
       openDrill, closeDrill, openFromDrill, drillCol, fastClose,
       ops, opsActivos, openOps, closeOps, suggestOps, saveOps,
       miniSegs, chipStyle, cap, short, initials, phone, fmtDate, fmtN, opName, opTip, starColor,
-      bubClass, bubText, bubAuthor, dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
+      bubClass, bubText, bubAuthor, bubHtml, conteoMenciones, etiquetaMenciones,
+      dimsOnly, dimErrors, dimAciertos, dimRecom, catalogo,
       dimPractica, dimSituacion,
       fmtDur, dimTiempos, dimConteos, dimHechos,
       dimClaridad, dimAbandono, dimOperadores, dimVariosOperadores,
