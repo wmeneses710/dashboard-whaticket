@@ -60,6 +60,14 @@ services:
       # /docs, /redoc y /openapi.json. Apagados por defecto: el tablero se sirve en un
       # dominio publico y sus lecturas son anonimas.
       API_DOCS: ${API_DOCS:-false}
+      # Interruptor del tablero. `false` deja de servir `/` y `/api/*` SIN apagar el
+      # worker de scoring ni las alertas, porque las tres cosas corren en este mismo
+      # proceso (ver el lifespan de src/app.py). Default `true`: es una perilla
+      # operativa, no una credencial.
+      # NO REEMPLAZA a sacarle el dominio publico al servicio en EasyPanel; eso es lo que
+      # corta la exposicion. Esto es la segunda capa. Va declarada aca porque el compose
+      # pasa SOLO lo que nombra.
+      UI_ENABLED: ${UI_ENABLED:-true}
       API_PORT: ${API_PORT:-8080}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Worker de scoring en el mismo contenedor (ver src/worker.py).

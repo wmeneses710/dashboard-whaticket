@@ -15,7 +15,7 @@ from pathlib import Path
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
@@ -146,6 +146,11 @@ async def lifespan(_app: FastAPI):
     # bloquear el arranque ni el event loop. Mientras tanto el API responde (más
     # lento, con statement_timeout como red de seguridad).
     threading.Thread(target=_bootstrap, daemon=True, name="bootstrap").start()
+    # Se LOGUEA el estado del tablero por la misma razon que el worker loguea
+    # `alertas VIP: on|off`: un 404 en todas las rutas es indistinguible de un servicio
+    # caido, y sin esta linea el diagnostico arranca buscando el problema donde no esta.
+    logging.getLogger("uvicorn.error").info(
+        "tablero (UI + /api): %s", "on" if cfg.ui_enabled else "OFF (UI_ENABLED=false)")
     stop = threading.Event()
     if cfg.scoring_enabled:
         thread = threading.Thread(
@@ -168,6 +173,41 @@ app = FastAPI(title="dashboard-whaticket", version="1.0", lifespan=lifespan,
               redoc_url="/redoc" if _DOCS else None,
               openapi_url="/openapi.json" if _DOCS else None)
 app.mount("/vendor", StaticFiles(directory=str(_VENDOR)), name="vendor")
+
+
+# =============================================================================
+# UI_ENABLED=false -> APAGAR EL TABLERO DEJANDO EL WORKER VIVO
+# =============================================================================
+# El tablero y el worker son EL MISMO PROCESO (ver `lifespan`): bajar el contenedor para
+# dejar de exponer el front apaga tambien el scoring y las alertas VIP. Este interruptor
+# separa las dos cosas.
+#
+# LO QUE SIGUE VIVO es lo que la infra necesita para no matar al contenedor: el
+# health-check. Nada mas.
+_UI_OFF_ALLOWLIST = frozenset({"/health"})
+
+# EL 404 ES EL MISMO QUE DA UNA RUTA INEXISTENTE, a proposito. Un cuerpo tipo "dashboard
+# deshabilitado" le confirma a quien escanea que aca hay algo que volver a probar mas
+# tarde. Ya sabemos que nos escanean: el 2026-08-24 los logs de produccion mostraron
+# busquedas automaticas de /.env, /.git/config y /wp-login.php.
+_NOT_FOUND = {"detail": "Not Found"}
+
+
+@app.middleware("http")
+async def ui_kill_switch(request, call_next):
+    """LISTA BLANCA, no lista negra, y esa es la decision de diseño que importa.
+
+    Enumerar lo que hay que tapar obliga a acordarse de actualizar la lista con cada
+    endpoint nuevo; el que se olvide queda SERVIDO con la UI apagada y nadie lo nota
+    hasta que lo encuentra un escaneo. Al revés, lo que se olvide queda tapado.
+
+    Va como middleware y no como gate en cada ruta por lo mismo: un punto único que no
+    se puede aplicar a medias. `cfg` se lee del modulo en cada request (no se captura en
+    el closure) para que el flag sea testeable con monkeypatch, igual que `admin_token`.
+    """
+    if not cfg.ui_enabled and request.url.path not in _UI_OFF_ALLOWLIST:
+        return JSONResponse(_NOT_FOUND, status_code=404)
+    return await call_next(request)
 
 
 def _conn():

@@ -2,6 +2,7 @@
 los query params (incl. alias from/to) a los filtros y llaman al query layer (ya
 probado en test_queries). Se mockea la conexión y el query layer para no tocar BD."""
 import dataclasses
+import time
 
 import src.app as appmod
 from fastapi.testclient import TestClient
@@ -498,3 +499,99 @@ def test_el_modal_con_un_id_vacio_o_basura_tampoco_revienta():
     for basura in ("null", "NaN", "0", "abc-def"):
         r = client.get(f"/api/conversation/{basura}")
         assert r.status_code == 404, f"{basura!r} devolvio {r.status_code}"
+
+
+# --- UI_ENABLED: APAGAR EL TABLERO DEJANDO EL WORKER VIVO --------------------
+# El tablero y el worker de scoring son EL MISMO PROCESO (ver el lifespan de src/app.py):
+# bajar el contenedor apaga tambien el scoring y las alertas VIP. Este interruptor separa
+# las dos cosas: `UI_ENABLED=false` deja de servir el front y la API, y el worker sigue
+# calificando y alertando.
+#
+# NO reemplaza a sacar el dominio publico en EasyPanel; es la segunda capa. Si el puerto
+# queda publicado en algun lado, esto es lo unico que responde.
+
+def _ui_off(monkeypatch):
+    monkeypatch.setattr(appmod, "cfg", dataclasses.replace(appmod.cfg, ui_enabled=False))
+
+
+def test_ui_apagada_no_sirve_el_tablero(monkeypatch):
+    _ui_off(monkeypatch)
+    assert client.get("/").status_code == 404
+
+
+def test_ui_apagada_tapa_las_lecturas_de_la_api(monkeypatch):
+    """Apagar solo `/` no serviria de nada: las lecturas anonimas de `/api/*` son las que
+    devuelven nombres, telefonos y transcripts."""
+    _stub(monkeypatch, "summary")
+    _ui_off(monkeypatch)
+    r = client.get("/api/summary", params={"account": "datos"})
+    assert r.status_code == 404, f"devolvio {r.status_code}: la API sigue expuesta"
+
+
+def test_ui_apagada_deja_vivo_el_health(monkeypatch):
+    """El health-check de EasyPanel es lo unico que tiene que seguir contestando: si le
+    devolvemos 404, el orquestador reinicia el contenedor en loop y el worker no avanza."""
+    _ui_off(monkeypatch)
+    r = client.get("/health")
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+
+
+def test_ui_apagada_niega_por_default_cualquier_ruta(monkeypatch):
+    """El interruptor es una LISTA BLANCA, no una lista negra, y este test es la razon.
+
+    Una lista negra hay que acordarse de actualizar: el proximo endpoint que se agregue
+    quedaria servido con la UI apagada y nadie lo notaria hasta que lo encuentre un
+    escaneo. Este test recorre la tabla de rutas REAL, asi que cubre las rutas que
+    todavia no existen.
+    """
+    _ui_off(monkeypatch)
+    for route in appmod.app.routes:
+        path = getattr(route, "path", None)
+        if not path or "{" in path or path in appmod._UI_OFF_ALLOWLIST:
+            continue
+        assert client.get(path).status_code == 404, (
+            f"'{path}' sigue respondiendo con la UI apagada"
+        )
+
+
+def test_ui_apagada_no_delata_que_el_tablero_existe(monkeypatch):
+    """El cuerpo del 404 es el mismo que da una ruta inexistente. Un "dashboard
+    deshabilitado" le confirmaria a quien escanea que aca hay algo que volver a probar."""
+    _ui_off(monkeypatch)
+    apagado = client.get("/")
+    inexistente = client.get("/no-existe-esta-ruta")
+    assert apagado.status_code == inexistente.status_code == 404
+    assert apagado.json() == inexistente.json()
+
+
+def test_ui_prendida_por_default_sirve_el_tablero():
+    """El default es PRENDIDO y es deliberado: es una perilla operativa, no una credencial.
+    Con default apagado, cualquier despliegue existente al que no le pongan la variable se
+    queda sin tablero de un dia para el otro."""
+    assert appmod.cfg.ui_enabled is True
+    assert client.get("/").status_code == 200
+
+
+def test_ui_apagada_NO_apaga_el_worker_de_scoring(monkeypatch):
+    """LA PROMESA CENTRAL del interruptor, y la única que no se puede ver con un curl.
+
+    El worker y el tablero comparten proceso, así que es fácil acoplarlos sin querer (por
+    ejemplo, colgando el arranque del worker de la misma condición). Si eso pasara, apagar
+    la UI por seguridad dejaría de calificar y de alertar EN SILENCIO: el síntoma es que la
+    cola no baja, y se ve días después.
+    """
+    arrancado = []
+    monkeypatch.setattr(appmod, "_bootstrap", lambda: None)  # sin BD: hermético y rápido
+    monkeypatch.setattr(appmod, "run_worker_loop",
+                        lambda cfg, **kw: arrancado.append(cfg))
+    monkeypatch.setattr(appmod, "cfg", dataclasses.replace(
+        appmod.cfg, ui_enabled=False, scoring_enabled=True))
+
+    with TestClient(appmod.app) as c:          # el `with` es lo que corre el lifespan
+        assert c.get("/").status_code == 404   # la UI, apagada
+        for _ in range(50):                    # el hilo del worker es asíncrono
+            if arrancado:
+                break
+            time.sleep(0.01)
+
+    assert arrancado, "la UI apagada se llevó puesto al worker de scoring"

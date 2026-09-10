@@ -33,6 +33,18 @@ class Config:
     # pedir para leer nombres, telefonos y transcripts. En local se prende con API_DOCS=true;
     # el default tiene que ser el seguro, no el comodo.
     api_docs: bool
+    # EL TABLERO Y LAS LECTURAS DE LA API, CON INTERRUPTOR. El worker de scoring y las
+    # alertas VIP corren en HILOS DE ESTE MISMO PROCESO (ver el lifespan de src/app.py):
+    # bajar el contenedor para dejar de exponer el front apaga tambien la calificacion y
+    # las alertas. Con UI_ENABLED=false el proceso sigue vivo y trabajando, pero no sirve
+    # ni `/` ni `/api/*` (ver el interruptor en src/app.py).
+    # DEFAULT PRENDIDO, al revés que `api_docs`: esto es una perilla OPERATIVA, no una
+    # credencial. Con default apagado, el primer despliegue al que se le olvide la variable
+    # se queda sin tablero y el síntoma —404 en todo— se lee como servicio caído.
+    # NO REEMPLAZA a sacarle el dominio público al servicio en EasyPanel: eso es lo que
+    # corta la exposición de verdad. Esto es la segunda capa, para cuando el puerto queda
+    # publicado en algún lado.
+    ui_enabled: bool
     # --- Worker de scoring (mismo contenedor, configurable en EasyPanel) ---
     scoring_enabled: bool
     scoring_accounts: tuple[str, ...]
@@ -48,8 +60,15 @@ class Config:
     admin_token: str
 
 
-def _bool(value: str | None) -> bool:
-    return (value or "").strip().lower() in ("1", "true", "yes", "on")
+def _bool(value: str | None, *, default: bool = False) -> bool:
+    """`default` existe para las perillas que arrancan PRENDIDAS (hoy: `ui_enabled`).
+
+    Sin él, una variable AUSENTE y una puesta en "false" son indistinguibles, y eso obliga
+    a que todo flag nuevo tenga que ser opt-in aunque su modo normal sea el prendido."""
+    v = (value or "").strip().lower()
+    if not v:
+        return default
+    return v in ("1", "true", "yes", "on")
 
 
 def _csv(value: str | None, default: tuple[str, ...]) -> tuple[str, ...]:
@@ -74,6 +93,7 @@ def load_config() -> Config:
         api_port=int(os.environ.get("API_PORT", "8080")),
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         api_docs=_bool(os.environ.get("API_DOCS")),
+        ui_enabled=_bool(os.environ.get("UI_ENABLED"), default=True),
         scoring_enabled=_bool(os.environ.get("SCORING_ENABLED")),
         scoring_accounts=_csv(os.environ.get("SCORING_ACCOUNTS"), ("sistemas", "datos")),
         scoring_batch_size=int(os.environ.get("SCORING_BATCH_SIZE", "20")),

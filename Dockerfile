@@ -14,6 +14,12 @@ EXPOSE 8080
 # Config por entorno (EasyPanel): DATABASE_URL, OLLAMA_URL, OLLAMA_MODEL,
 # SCORING_ENABLED, SCORING_ACCOUNTS, SCORING_BATCH_SIZE, SCORING_POLL_SECONDS.
 #
+# UI_ENABLED=false apaga el tablero y las lecturas de `/api/*` SIN tocar el
+# worker: el contenedor sigue calificando y mandando alertas. Es para cuando hay
+# que dejar de exponer el front pero el trabajo tiene que seguir. Solo queda
+# vivo `/health`, que es lo que el health-check necesita para no reiniciar en
+# loop. No reemplaza a sacarle el dominio publico al servicio en EasyPanel.
+#
 # El `exec` NO es opcional: sin el, PID 1 queda siendo el `sh` (necesario solo
 # para expandir ${API_PORT}). El kernel descarta las senales con accion por
 # defecto dirigidas a PID 1, y dash no las reenvia a sus hijos -> el SIGTERM del
