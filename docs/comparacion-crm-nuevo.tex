@@ -645,10 +645,10 @@ ofrece: filtrar por agente, buscar por usuario o nombre, mostrar etiquetas, y un
 \textbf{No existe ningún filtro por estado de la conversación.} Es el mecanismo central
 con el que ATC organiza su día y hoy no tiene equivalente.
 
-\subsection{El historial de asignación se está perdiendo}
+\subsection{El historial de asignación se descarta entero}
 
 \begin{alerta}
-El payload de \cod{/tickets/:id} incluye, dentro de \cod{currentConversation}, un array
+Cada registro de \cod{/conversations/report} incluye un array
 \textbf{\cod{participations}} con un objeto por tramo de atención: \cod{userId},
 \cod{startedAt}, \cod{endedAt} y \cod{firstSentMessageAt}. \textbf{Es el historial
 completo de quién tuvo la conversación y entre qué momentos.}
@@ -656,30 +656,45 @@ completo de quién tuvo la conversación y entre qué momentos.}
 \vspace{0.4em}
 Una búsqueda de \cod{participations} en todo el código del ETL --- \cod{monitor/},
 \cod{src/} y \cod{db/schema.sql} --- devuelve \textbf{cero resultados}. No está entre las
-26 claves que lee el proyector, no hay columna y no hay tabla. Se descarta entero.
-
-\vspace{0.4em}
-Y no es solo que se ignore: \textbf{\cod{currentConversation} solo viaja mientras el
-ticket está abierto}. Medido, hay 13 conversaciones con historial en \cod{raw\_tickets},
-que son exactamente los 13 tickets en estado \cod{open}. Al cerrarse el ticket el array
-desaparece del payload. \textbf{Lo que no se capture en vivo se destruye.}
+26 claves que lee el proyector, no hay columna y no hay tabla. Lo mismo ocurre con
+\cod{ticket}, el objeto del ticket embebido en cada registro. \textbf{Los dos se
+descartan enteros.}
 \end{alerta}
 
-Sobre esas 13 conversaciones: 18 tramos de asignación en total, un máximo de 4 operadores
-en una sola conversación, promedio de 1,38, y \textbf{3 de 13 (23,1\,\%) pasaron por más
-de un operador}.
+Medido contra la API sobre una ventana de 24 horas:
+
+\begin{center}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+& \textbf{Registros} & \textbf{Proporción} \\
+\midrule
+Registros del report en 24 h            & 430 & \\
+Con \cod{participations}                & \textbf{430} & \textbf{100\,\%} \\
+Con \cod{ticket}                        & \textbf{430} & \textbf{100\,\%} \\
+\midrule
+Con 0 tramos de asignación              & 17  & 4,0\,\% \\
+Con 1 tramo                             & 324 & 75,3\,\% \\
+\textbf{Con 2 o más operadores}         & \textbf{89} & \textbf{20,7\,\%} \\
+\midrule
+Máximo de tramos en una conversación    & \multicolumn{2}{r}{\textbf{150}} \\
+\bottomrule
+\end{tabular}
+\end{center}
 
 \begin{nota}
-\textbf{Por qué esto importa más allá del inventario.} Ese 23,1\,\% es el mismo fenómeno
-que ya se midió por otro camino: \textbf{25.338 calificaciones (24,7\,\% del total)
-pertenecen a sesiones con más de un episodio}, donde el departamento, el canal y el
+\textbf{Por qué esto importa más allá del inventario.} Ese 20,7\,\% es el mismo fenómeno
+que se midió por otro camino independiente: \textbf{25.338 calificaciones (24,7\,\% del
+total) pertenecen a sesiones con más de un episodio}, donde el departamento, el canal y el
 operador se heredan de la conversación de \emph{entrada} en lugar de la que realmente
 atendió la interacción calificada. Los rankings por operador atribuyen a la persona
 equivocada en una de cada cuatro filas.
 
 \vspace{0.4em}
-\cod{participations} contiene exactamente el dato que falta para corregirlo, y está
-pasando por el ETL cada 20 segundos.
+\cod{participations} contiene exactamente el dato que falta para corregirlo. Y como viene
+en el \textbf{100\,\%} de los registros del report --- no solo en los tickets abiertos ---
+y el report acepta rango de fechas, \textbf{el historial se puede reconstruir hacia atrás
+con un relleno, no solo capturar de aquí en adelante}. La atribución histórica es
+recuperable.
 \end{nota}
 
 % =====================================================================
