@@ -395,7 +395,7 @@ El CRM nuevo tiene un departamento cargado y un editor con tres pestañas:
 \midrule
 Buscar departamento              & \si & \si \\
 Filtrar por conexión             & \si & \no \\
-Horario de atención              & \si & \no \\
+Horario de atención \emph{por departamento} & \si & \no \\
 Color y mensaje de bienvenida    & \si & \si \\
 Asignación automática de chats   & --- & \si \\
 Resolución automática por tiempo & --- & \si \\
@@ -508,6 +508,269 @@ plantearla como requisito del CRM nuevo mientras está en construcción, en luga
 esperar que aparezca sola al alcanzar la paridad.
 
 % =====================================================================
+\section{Estados de conversación y asignación}
+\label{sec:estados}
+
+ATC trabaja con los estados de la conversación y con el filtro de responsable: cada
+operador ve por defecto solo lo suyo, para que el trabajo de los demás no se le
+amontone en la lista. Esta sección documenta ese mecanismo, qué guarda el ETL de él y
+qué tiene el CRM nuevo.
+
+\subsection{Los cinco estados del CRM actual}
+
+La lista de chats ofrece cinco filtros. Dos están ocultos tras un botón \cod{+2}:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}llrL@{}}
+\toprule
+\textbf{Filtro} & \textbf{Columna del ETL} & \textbf{Filas} & \textbf{Observación} \\
+\midrule
+En atención & \cod{tickets.status='open'}    & 13     & \\
+En espera   & \cod{tickets.status='pending'} & 1      & \\
+Resueltos   & \cod{tickets.status='closed'}  & 25.539 & \\
+Aplazados   & \cod{tickets.snoozed\_until}   & \textbf{0} & \textbf{Nunca se capturó uno} \\
+Todos       & ---                            & ---    & No es un estado \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{alerta}
+\textbf{El 51,2\,\% de \cod{tickets.status} está en NULL, y no es un estado: es un hueco
+de captura.} Son 26.818 filas, y \textbf{todas cortan el 30 de junio de 2026} --- la
+fecha en que arrancó el monitor. Los tickets anteriores nunca tuvieron su detalle
+\cod{/tickets/:id} traído. El corte es idéntico en las dos cuentas: \cod{sistemas} con
+24.279 filas y \cod{datos} con 2.539.
+\end{alerta}
+
+\subsection{El filtro de responsable}
+
+El desplegable de la cabecera tiene dos niveles:
+
+\begin{enumerate}
+  \item \textbf{Míos} --- seleccionado por defecto --- o \textbf{Equipo}.
+  \item Dentro de Equipo, una sección \textbf{Responsable} con \emph{Sin usuario} y cada
+        operador por nombre.
+\end{enumerate}
+
+Esto se corresponde con el permiso \textbf{Ver todos} dentro del módulo Chats: el perfil
+``Usuario'' tiene 11 de los 16 permisos de Chats, y quien no tenga ese permiso no puede
+salir de ``Míos''. La hipótesis de que la visibilidad se condiciona por rol es correcta.
+
+\subsection{El CRM nuevo no tiene estados}
+
+Verificado sobre el árbol de accesibilidad, no solo sobre una captura. Su lista de chats
+ofrece: filtrar por agente, buscar por usuario o nombre, mostrar etiquetas, y un panel
+\emph{Filtros} que contiene únicamente \textbf{Etiquetas} y \textbf{Periodo}.
+
+\textbf{No existe ningún filtro por estado de la conversación.} Es el mecanismo central
+con el que ATC organiza su día y hoy no tiene equivalente.
+
+\subsection{El historial de asignación se está perdiendo}
+
+\begin{alerta}
+El payload de \cod{/tickets/:id} incluye, dentro de \cod{currentConversation}, un array
+\textbf{\cod{participations}} con un objeto por tramo de atención: \cod{userId},
+\cod{startedAt}, \cod{endedAt} y \cod{firstSentMessageAt}. \textbf{Es el historial
+completo de quién tuvo la conversación y entre qué momentos.}
+
+\vspace{0.4em}
+Una búsqueda de \cod{participations} en todo el código del ETL --- \cod{monitor/},
+\cod{src/} y \cod{db/schema.sql} --- devuelve \textbf{cero resultados}. No está entre las
+26 claves que lee el proyector, no hay columna y no hay tabla. Se descarta entero.
+
+\vspace{0.4em}
+Y no es solo que se ignore: \textbf{\cod{currentConversation} solo viaja mientras el
+ticket está abierto}. Medido, hay 13 conversaciones con historial en \cod{raw\_tickets},
+que son exactamente los 13 tickets en estado \cod{open}. Al cerrarse el ticket el array
+desaparece del payload. \textbf{Lo que no se capture en vivo se destruye.}
+\end{alerta}
+
+Sobre esas 13 conversaciones: 18 tramos de asignación en total, un máximo de 4 operadores
+en una sola conversación, promedio de 1,38, y \textbf{3 de 13 (23,1\,\%) pasaron por más
+de un operador}.
+
+\begin{nota}
+\textbf{Por qué esto importa más allá del inventario.} Ese 23,1\,\% es el mismo fenómeno
+que ya se midió por otro camino: \textbf{25.338 calificaciones (24,7\,\% del total)
+pertenecen a sesiones con más de un episodio}, donde el departamento, el canal y el
+operador se heredan de la conversación de \emph{entrada} en lugar de la que realmente
+atendió la interacción calificada. Los rankings por operador atribuyen a la persona
+equivocada en una de cada cuatro filas.
+
+\vspace{0.4em}
+\cod{participations} contiene exactamente el dato que falta para corregirlo, y está
+pasando por el ETL cada 20 segundos.
+\end{nota}
+
+% =====================================================================
+\section{La encuesta de satisfacción}
+\label{sec:csat}
+
+\subsection{Existe en los dos, y el nuevo la replica con los mismos campos}
+
+Conviene decirlo de entrada porque cambia la conclusión: \textbf{el CRM nuevo también
+tiene encuesta de satisfacción}, en Configuración \textrightarrow{} Atención. No es una
+funcionalidad exclusiva del actual.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}LLc@{}}
+\toprule
+\textbf{Campo en el CRM nuevo} & \textbf{Equivalente en el actual} & \textbf{Estado} \\
+\midrule
+Activar encuesta CSAT                    & \cod{enabled}            & \si \\
+Enviar también en resolución automática  & \cod{sendOnAutoResolve}  & \si \\
+Enviar como lista interactiva            & \cod{useInteractiveList} & Próximamente \\
+Solicitar comentario adicional           & \cod{requestComment}     & \si \\
+Mensaje de solicitud                     & \cod{requestMessage}     & \si \\
+Mensaje de agradecimiento                & \cod{thankYouMessage}    & \si \\
+Mensaje personalizado por calificación   & \cod{commentBuckets}     & \si \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Dos hechos que convierten esto en una oportunidad.} Primero, en el CRM nuevo la
+encuesta está \textbf{apagada}: todavía no se envió ninguna. Segundo, \emph{enviar como
+lista interactiva} figura como \textbf{Próximamente}, así que hoy el nuevo la enviaría
+como \textbf{texto plano} --- que es peor que el actual y agrava justamente el problema
+de reapertura documentado más abajo.
+
+\vspace{0.4em}
+Es decir: los defectos medidos del CRM actual se pueden corregir \textbf{antes} de
+encender la encuesta en el nuevo, en lugar de heredarlos.
+\end{nota}
+
+\subsection{Cómo funciona hoy}
+
+La encuesta se dispara \textbf{al cerrar el chat}, en milisegundos, y viaja
+\textbf{como un mensaje más} por el canal del cliente --- WhatsApp, Telegram, Facebook o
+Instagram. No es un formulario aparte: llega a la misma conversación de la persona, en
+su propia aplicación de mensajería.
+
+Si el cliente puntúa 5, la encuesta se cierra sola. Si puntúa de 1 a 4, el sistema le
+pide un comentario y queda esperando.
+
+\subsection{Problemas registrados, con la medición}
+
+\subsubsection*{1. Es repetitiva}
+
+\begin{center}
+\begin{tabular}{@{}lr@{}}
+\toprule
+Contactos encuestados          & 919 \\
+Encuestas enviadas             & 5.164 \\
+\textbf{Encuestas por contacto}& \textbf{5,62} \\
+\textbf{Máximo a una persona}  & \textbf{167} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+No hay período de espera entre encuestas: cada cierre dispara una nueva. Una sola persona
+recibió 167. En una medición anterior el promedio era 2,80 y el máximo 52, de modo que
+\textbf{el problema se duplicó}.
+
+\subsubsection*{2. No se puede focalizar: la reciben todos}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lrrr@{}}
+\toprule
+\textbf{Departamento} & \textbf{Enviadas} & \textbf{Respondidas} & \textbf{Tasa} \\
+\midrule
+Agente         & \textbf{4.219} & 70 & 1,7\,\% \\
+Jugadores      & 679            & 22 & 3,2\,\% \\
+AGENTES VIP    & 160            & \textbf{0} & 0,0\,\% \\
+Jugadores VIP  & 92             & 1  & 1,1\,\% \\
+Sin departamento & 14           & 0  & 0,0\,\% \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{El 81,7\,\% de las encuestas se envía al departamento de agentes}, no a
+jugadores. AGENTES VIP recibió 160 y no respondió ninguna. No existe forma de dirigir la
+encuesta a un grupo de contactos: se envía a todos por igual, incluidos agentes,
+jugadores VIP y jugadores nuevos.
+
+\subsubsection*{3. Responder la encuesta reabre la conversación}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lrrr@{}}
+\toprule
+& \textbf{Conversaciones} & \textbf{Con actividad posterior} & \textbf{Porcentaje} \\
+\midrule
+No respondió la encuesta & 5.071 & 243 & 4,8\,\% \\
+\textbf{Sí respondió}    & 93    & 24  & \textbf{25,8\,\%} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Se midió la actividad posterior como mensajes llegados más de diez minutos después de la
+resolución, para descartar el intercambio propio de la encuesta.
+
+\begin{alerta}
+\textbf{Responder la encuesta multiplica por 5,4 la probabilidad de que la conversación
+siga viva.} Es consecuencia directa de enviarla como mensaje dentro del canal del
+cliente: la respuesta llega como un mensaje entrante y el ticket vuelve a la cola.
+
+\vspace{0.4em}
+Una revisión anterior había concluido que la encuesta no reabre conversaciones. Esa
+conclusión era incorrecta y queda corregida aquí con la medición.
+\end{alerta}
+
+\subsubsection*{4. El promedio que se reporta está sesgado por construcción}
+
+\begin{center}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+\textbf{Nota} & \textbf{Notas} & \textbf{Cerradas} & \textbf{Trabadas esperando comentario} \\
+\midrule
+5 & 411 & \textbf{411 (100\,\%)} & 0 \\
+4 & 50  & 5  & 45 \\
+3 & 8   & 1  & 7 \\
+2 & 8   & 3  & 5 \\
+1 & 21  & 2  & \textbf{19} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Quien puntúa 5 cierra la encuesta de inmediato; quien puntúa bajo recibe una solicitud de
+comentario y, si no comenta, queda trabado para siempre. \textbf{68 de las 87 notas malas
+(78\,\%) quedan fuera del grupo de encuestas terminadas.}
+
+Promediar únicamente las terminadas da \textbf{4,94}. El promedio real sobre las 498
+notas es \textbf{4,65}.
+
+\subsubsection*{5. La tasa de respuesta se calcula mal con facilidad}
+
+La tasa real es del \textbf{9,1\,\%} (498 notas sobre 5.465 encuestas enviadas).
+Calcularla dividiendo por \cod{csat\_sent\_at} da entre 1,3\,\% y 2,5\,\%, porque esa
+columna estaba en NULL en el 97,4\,\% de las encuestas terminadas. El defecto de captura
+ya se corrigió, pero \textbf{solo hacia adelante}: lo perdido no se recupera.
+
+\subsubsection*{6. El comentario contiene datos personales}
+
+El campo de comentario libre es la única fuente de la voz literal del cliente, y trae
+números de cédula. Entra en el mismo alcance que el cuerpo de los mensajes para cualquier
+política futura de retención o enmascarado.
+
+\subsection{Qué habría que mejorar antes de encenderla en el CRM nuevo}
+
+\begin{enumerate}
+  \item \textbf{Poder dirigirla a un grupo de contactos.} Hoy se envía a todos; el
+        81,7\,\% termina en agentes, que no son el público de la medición.
+  \item \textbf{Un período de espera por contacto.} Sin él, 5,62 encuestas por persona y
+        un máximo de 167.
+  \item \textbf{Que responder no reabra la conversación.} Es el defecto más caro: afecta
+        la cola de trabajo real de ATC, no solo la métrica.
+  \item \textbf{Que la nota se registre aunque no haya comentario.} Mientras el
+        comentario sea obligatorio para cerrar, el 78\,\% de las notas malas seguirá sin
+        contabilizarse.
+  \item \textbf{Buscar una integración fuera del hilo de mensajería.} Enviarla como
+        mensaje dentro de WhatsApp, Telegram, Facebook o Instagram es la causa común de
+        la reapertura y de la sensación de acoso. Un enlace a un formulario externo, o la
+        lista interactiva nativa del canal, evitan ambas cosas.
+\end{enumerate}
+
+% =====================================================================
 \section{Qué falta para reemplazar al CRM actual}
 
 Ordenado por lo que bloquea, no por lo que cuesta.
@@ -575,8 +838,16 @@ Se declara explícitamente para que nadie tome por validado lo que no lo está.
         con departamento asignado, la lista aparece y si ofrece búsqueda y orden.
 
   \item \textbf{Las pantallas del CRM nuevo que no se recorrieron:} \cod{/dashboard},
-        Chats internos, Mensajes destacados, Tickets bloqueados, \cod{/settings} y las
-        cinco de Control de acceso. Su existencia está confirmada; su funcionamiento no.
+        Chats internos, Mensajes destacados, Tickets bloqueados y las cinco de Control de
+        acceso. Su existencia está confirmada; su funcionamiento no.
+
+  \item \textbf{Si el CSAT del CRM nuevo se comporta igual al encenderlo.} Se verificó
+        que la configuración existe y qué campos ofrece, pero está apagada: no se envió
+        ninguna encuesta. No se sabe si repite por contacto, si permite dirigirla a un
+        grupo ni si reabre la conversación al responderla.
+
+  \item \textbf{La sección \emph{Resolución automática}} de la configuración del CRM
+        nuevo, que aparece junto al CSAT y no se desplegó.
 
   \item \textbf{Las secciones del CRM actual no recorridas:} Campañas, Informes,
         Mensajes programados, Wäbot IA y Tokens. Solo se confirmó que existen en el
