@@ -58,6 +58,7 @@
 \newcommand{\si}{\textcolor{ok}{\textbf{Sí}}}
 \newcommand{\no}{\textcolor{warn}{\textbf{No}}}
 \newcommand{\parcial}{\textcolor{accent}{\textbf{Parcial}}}
+\newcommand{\pordef}{\textcolor{gray70}{\textbf{Por definir}}}
 \newcommand{\vars}[1]{\cod{\{\{#1\}\}}}
 
 \begin{document}
@@ -189,20 +190,26 @@ Configuración            & \cod{/settings}       & \cod{/settings} \\
 Siete secciones del CRM actual no tienen equivalente en el nuevo:
 
 \begin{center}
-\begin{tabularx}{\textwidth}{@{}llL@{}}
+\begin{tabularx}{\textwidth}{@{}llcL@{}}
 \toprule
-\textbf{Sección} & \textbf{Ruta actual} & \textbf{Comentario} \\
+\textbf{Sección} & \textbf{Ruta actual} & \textbf{¿Necesario?} & \textbf{Comentario} \\
 \midrule
-Wäbot IA            & \cod{/ai}                  & Asistente de inteligencia artificial \\
-Campañas            & \cod{/campaigns}           & Envíos masivos \\
-Informes            & \cod{/reports}             & Reportería operativa \\
-Mensajes programados& \cod{/scheduled-messages}  & Envíos diferidos \\
-Tokens              & \cod{/tokens}              & Credenciales de API \\
-Documentación       & \cod{/docs}                & Ayuda en producto \\
-Soporte             & ---                        & Canal de soporte del proveedor \\
+Wäbot IA            & \cod{/ai}                  & \no      & Asistente de inteligencia artificial \\
+Campañas            & \cod{/campaigns}           & \pordef  & Envíos masivos \\
+Informes            & \cod{/reports}             & \pordef  & Reportería operativa \\
+Mensajes programados& \cod{/scheduled-messages}  & \si      & Envíos diferidos \\
+Tokens              & \cod{/tokens}              & \pordef  & Credenciales de API \\
+Documentación       & \cod{/docs}                & \no      & Ayuda en producto \\
+Soporte             & ---                        & \no      & Canal de soporte del proveedor \\
 \bottomrule
 \end{tabularx}
 \end{center}
+
+\noindent\small\textcolor{gray70}{\textbf{Por definir} significa que todavía falta
+información para decidir si la sección debe existir en el CRM nuevo. No es un ``tal
+vez'': es una decisión pendiente con responsable, y conviene cerrarla antes de estimar
+el esfuerzo de la migración.}
+\normalsize
 
 \subsection{Lo que el nuevo tiene y el actual no}
 
@@ -519,18 +526,36 @@ Ordenado por lo que bloquea, no por lo que cuesta.
         variables que cambian de nombre, y decenas de etiquetas de negocio. Requiere un
         mapeo de variables, no una copia literal.
 
-  \item \textbf{Informes.} El CRM actual tiene una sección de reportería que el nuevo no
-        tiene. Debe definirse si se reemplaza con el \cod{/dashboard} propio del nuevo o
-        si hace falta construirla.
-
-  \item \textbf{Campañas y mensajes programados.} Funcionalidad de envío que hoy existe
-        y no tiene equivalente.
+  \item \textbf{Mensajes programados.} Confirmado como necesario. Hoy existe en el CRM
+        actual y no tiene equivalente en el nuevo.
 
   \item \textbf{Horario de atención por departamento} y \textbf{filtro por conexión}.
 
   \item \textbf{Autenticación en dos factores por usuario} y registro de
         \emph{última vez visto}.
 \end{enumerate}
+
+\subsection{Decisiones pendientes antes de estimar}
+
+Tres secciones del CRM actual no tienen todavía una definición de si deben existir en
+el nuevo. Mientras no se cierren, cualquier estimación de esfuerzo es incompleta:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+\textbf{Sección} & \textbf{Qué hay que definir} \\
+\midrule
+Campañas & Si el negocio sigue usando envíos masivos desde el CRM o los resuelve por
+           otra vía \\
+Informes & Si el \cod{/dashboard} del CRM nuevo reemplaza la reportería actual o hace
+           falta construirla aparte \\
+Tokens   & Qué integraciones externas dependen hoy de esas credenciales \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Quedan descartadas por innecesarias: \textbf{Wäbot IA}, \textbf{Documentación} y
+\textbf{Soporte}.
 
 % =====================================================================
 \section{Lo que no se pudo verificar}
