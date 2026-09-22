@@ -81,17 +81,56 @@
 Todo lo que afirma este documento se verificó \textbf{entrando a las dos
 aplicaciones} el 22 de septiembre de 2026, no leyendo documentación ni código. Cada
 afirmación se acompaña de lo que se vio en pantalla.
-
-\vspace{0.5em}
-La sección \ref{sec:limites} enumera lo que \textbf{no} se pudo verificar y por qué.
-Se prefiere decir ``no lo sé'' antes que dar por buena una suposición: un inventario
-con un dato inventado deja de servir para decidir.
 \end{minipage}
 \vspace{2cm}
 \end{titlepage}
 
 \tableofcontents
 \newpage
+
+% =====================================================================
+\section{Para qué se usa el sistema}
+\label{sec:antecedente}
+
+Antes de comparar pantallas conviene decir qué resuelve el CRM, porque de ahí sale el
+peso de cada diferencia.
+
+El sistema \textbf{centraliza en una sola cuenta las conexiones de varias aplicaciones de
+mensajería} --- WhatsApp, Telegram, Facebook, Instagram y chat web --- de modo que todo
+lo que escriben las personas llegue a un único lugar en vez de a cinco aplicaciones
+distintas.
+
+Sobre esas conexiones trabaja un equipo. Se crean usuarios que contestan: operadores de
+\textbf{Atención al Cliente} y \textbf{operadores externos}, que pueden trabajar tanto en
+la operación como en remoto. A cada uno se le asignan conversaciones.
+
+Y las conversaciones no son todas iguales. Del otro lado puede haber:
+
+\begin{itemize}
+  \item \textbf{jugadores} ya activos,
+  \item \textbf{gente nueva} que escribe por primera vez,
+  \item \textbf{agentes}, que son quienes traen más jugadores.
+\end{itemize}
+
+Cada uno necesita un trato distinto, y por eso el sistema tiene que permitir
+\textbf{seccionar en tres planos a la vez}: las conversaciones, las personas a atender y
+el equipo de operadores. Mientras eso ocurre, el sistema \textbf{produce estadística}
+para mejorar la atención y \textbf{envía encuestas de satisfacción}.
+
+\begin{nota}
+\textbf{De este uso salen los tres criterios con que se lee todo lo que sigue.}
+
+\begin{enumerate}
+  \item \textbf{Si un canal no entra, la operación de ese canal no existe.} Por eso la
+        sección \ref{sec:canales} pesa más que cualquier otra.
+  \item \textbf{Si no se puede seccionar, todo le llega a todos.} Es el origen de los
+        problemas de visibilidad (sección \ref{sec:visibilidad}) y de la encuesta que se
+        envía a los agentes (sección \ref{sec:csat}).
+  \item \textbf{Si la asignación no queda registrada, la estadística miente.} Es el
+        motivo por el que la sección \ref{sec:estados} termina en un hallazgo del ETL y
+        no solo en un inventario de pantallas.
+\end{enumerate}
+\end{nota}
 
 % =====================================================================
 \section{El veredicto, en una página}
@@ -122,18 +161,12 @@ Cobertura de pantallas  & \parcial  & Cubre 8 de 15 secciones del actual \\
 Chat y mensajería       & \parcial  & Falta el atajo \cod{/} de respuestas rápidas \\
 Permisos y roles        & \si       & Ambos lo tienen; el nuevo mejor estructurado \\
 Contactos y etiquetas   & \si       & El nuevo es más completo que el actual \\
-Departamentos           & \parcial  & Falta horario de atención y filtro por conexión \\
+Departamentos           & \parcial  & Tiene 3 de las 6 pestañas de configuración \\
+Estados de conversación & \no       & El nuevo no tiene ningún filtro por estado \\
+Encuesta de satisfacción& \parcial  & Existe, pero solo global: no por departamento \\
 \bottomrule
 \end{tabularx}
 \end{center}
-
-\begin{nota}
-\textbf{Una aclaración que evita una conclusión equivocada.} La regla de negocio
-``estos jugadores, dentro de esta clasificación, solo pueden ser atendidos por estos
-operadores'' \textbf{no existe en ninguno de los dos sistemas}. No es una deuda del
-CRM nuevo: es funcionalidad que habría que construir. Ver la sección
-\ref{sec:visibilidad}.
-\end{nota}
 
 % =====================================================================
 \section{Alcance y método}
