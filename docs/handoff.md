@@ -318,3 +318,70 @@ resto que queda pendiente.
 3. **el par roto**: la evidencia que cruza la frontera necesita una regla (¿se arrastra la
    acreditación al tramo del comprobante, como ya hace `GRACIA_CIERRE_SEG` con el cierre
    rebotado?), o se pega ese caso en vez de partirlo.
+
+---
+
+## 11. PENDIENTE — exponer el CSAT del cliente (medido 2026-09-22)
+
+**El tablero no muestra el CSAT en ningún lado.** El negocio activó las encuestas el
+2026-09-11 y el dato se captura bien, pero no llega a ninguna pantalla: `rg -li csat` sobre
+este repo devuelve dos menciones en documentación y cero en código. Mientras `UI_ENABLED`
+siga apagado no le duele a nadie; el día que se prenda el front, esto es lo que hay que
+construir, y estas son las trampas ya medidas para no reportar un número falso.
+
+### 11.1 Las dos formas obvias de calcularlo están sesgadas
+
+**No filtrar por `csat_status = 'finished'`.** La encuesta cierra sola al que puntúa 5 y
+pide comentario al que puntúa bajo; el que no comenta queda trabado para siempre:
+
+| nota | notas | `finished` | trabadas en `waitingComment` |
+|---|---|---|---|
+| 5 ★ | 411 | **411 (100%)** | 0 |
+| 4 ★ | 50 | 5 | 45 |
+| 3 ★ | 8 | 1 | 7 |
+| 2 ★ | 8 | 3 | 5 |
+| 1 ★ | 21 | 2 | **19** |
+
+68 de las 87 notas malas (78%) quedan fuera de `finished`. Promediar solo ese bucket da
+**4,94**; el promedio real sobre las 498 notas es **4,65**.
+
+**No calcular la tasa de respuesta dividiendo por `csat_sent_at`.** Esa columna está NULL en
+411 de las 422 terminadas (97,4%), porque la API deja de mandar `sentAt` al pasar a
+`finished` y el ETL lo pisaba con NULL. Arreglado en ETLWhaticket `92a1257`, pero **solo
+hacia adelante**: lo perdido no se recupera. Dividir por esa columna da 1,3%-2,5% cuando la
+tasa real es **9,1%** (498 con nota sobre 5.465 enviadas) — se equivoca por 5x.
+
+**La forma correcta**: numerador = todas las filas con `csat IS NOT NULL`, sin mirar
+`csat_status`; denominador = el universo enviado, contado aparte.
+
+### 11.2 De dónde leerlo
+
+La vista `conversation_csat` (ETLWhaticket, `db/schema.sql`) ya resuelve la atribución: por
+cada conversación devuelve la nota, el estado, el comentario y **qué versión de encuesta
+regía** cuando se la mandaron, además de `csat_fuera_de_escala`. El ancla es
+`COALESCE(csat_sent_at, resolved_at, updated_at, created_at)`, así que el bug de arriba no
+rompe la atribución, solo el conteo de envíos.
+
+Ojo con dos cosas al construir sobre ella:
+
+1. **`csat_comment` es texto literal de clientes** y trae datos personales (se vieron
+   cédulas). Entra en el mismo alcance que `messages.body` para cualquier política de
+   retención o enmascarado. No exponerlo crudo sin decidir eso primero.
+2. **Esas vistas se dropean y recrean en cada arranque del ETL, sin `CASCADE`.** Si este
+   repo construye algo encima —otra vista, una materializada—, el próximo arranque de
+   cualquiera de los dos monitores falla ruidoso. Está hecho a propósito así, pero significa
+   que agregar una dependencia sobre `conversation_csat` es un cambio que hay que coordinar
+   con el equipo del ETL, no resolver por acá.
+
+### 11.3 El grano no coincide con el del scoring
+
+`conversation_csat` es **por conversación**; `conversation_scores` es **por interacción**.
+Una conversación con varias interacciones tiene una sola nota del cliente y varias del LLM.
+Cualquier cuadro que ponga las dos notas lado a lado tiene que declarar cómo agrega — y la
+decisión de no partir las sesiones (sección 10) hace que esto no sea un caso raro.
+
+### 11.4 La cuenta `datos` no tiene encuestas
+
+Cero envíos y cero notas al 2026-09-22: nunca se las activaron. Un cuadro de CSAT tiene que
+mostrar "sin encuesta" para esa cuenta, no un 0 ni un promedio vacío. La dimensión ya lo
+declara con una fila `enabled = false`, así que el estado se lee del dato y no se hardcodea.
