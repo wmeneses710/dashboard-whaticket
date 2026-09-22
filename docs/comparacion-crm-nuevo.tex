@@ -263,11 +263,13 @@ Conviene registrarlo, porque una migración también puede ganar capacidades:
 \section{El bloqueante: canales de entrada}
 \label{sec:canales}
 
-Esta es la diferencia que decide si la migración es posible.
+Esta es la diferencia que decide si la migración es posible. No se trata de cuántas
+conexiones hay configuradas en cada lado --- eso depende de la operación y del momento ---
+sino de \textbf{qué tipos de canal admite cada sistema}.
 
-\subsection{Lo que admite el CRM nuevo}
-
-Su propio diálogo \emph{Agregar conexión} declara el estado de cada canal:
+El CRM actual opera hoy sobre \textbf{cuatro canales}: WhatsApp, Telegram, Facebook e
+Instagram, más chat web. El CRM nuevo declara su alcance en el propio diálogo
+\emph{Agregar conexión}:
 
 \begin{center}
 \begin{tabularx}{\textwidth}{@{}lcL@{}}
@@ -282,32 +284,6 @@ Instagram           & Próximamente   & Mensajes directos de cuenta profesional 
 Telegram            & \no            & \textbf{No figura ni como pendiente} \\
 \bottomrule
 \end{tabularx}
-\end{center}
-
-En staging hay dos conexiones configuradas: una de WhatsApp, \emph{desconectada}, y
-una de Web Chat, conectada.
-
-\subsection{Lo que tiene el CRM actual}
-
-Diez conexiones, todas conectadas, sobre cuatro canales distintos:
-
-\begin{center}
-\begin{tabular}{@{}lll@{}}
-\toprule
-\textbf{Conexión} & \textbf{Identificador} & \textbf{Canal} \\
-\midrule
-SortiOficial                  & 8794286558              & Telegram \\
-Sorti365                      & 681388465066532         & Facebook \\
-Sorti365 Oficial              & 17841463 / 78834867     & Instagram \\
-Prueba ZTicket                & \cod{77d0c521-370e-\ldots} & Web chat / API \\
-Plataforma anterior           & 593994038869            & WhatsApp \\
-Agentes nueva                 & 593999303548            & WhatsApp \\
-JUGADORES PLATAFORMA          & 593965195842            & WhatsApp \\
-AGENTES                       & 593984701184            & WhatsApp \\
-AGENTES VIP                   & 593988535399            & WhatsApp \\
-ALTERNA PLATAFORMA            & 593983902175            & WhatsApp \\
-\bottomrule
-\end{tabular}
 \end{center}
 
 \begin{alerta}
