@@ -370,39 +370,71 @@ Arrastrar y soltar imágenes    & \si & \textit{sin verificar} \\
 
 El CRM actual tiene \textbf{nueve departamentos} en uso (Agente, AGENTES OPERATIVOS,
 AGENTES VIP, Departamento de Marketing, JEFE ATC, Jugadores, Jugadores VIP y dos de
-prueba), con buscador, \textbf{filtro por conexión} y una columna de
-\textbf{configuraciones personalizadas} donde aparece, por ejemplo, el horario de
-atención.
+prueba), con buscador y \textbf{filtro por conexión}.
 
-El CRM nuevo tiene un departamento cargado y un editor con tres pestañas:
+\begin{nota}
+\textbf{El departamento del CRM actual es una unidad de configuración completa, no una
+etiqueta.} Su editor tiene \textbf{seis pestañas}, y el encabezado del modal declara el
+modelo: \emph{``Heredando todas las configuraciones globales''}. \textbf{Cada pestaña
+tiene su propio interruptor \emph{Sobrescribir configuración global}}, de modo que un
+departamento puede apartarse de la configuración general en cualquiera de estos ejes por
+separado.
+\end{nota}
 
-\begin{enumerate}
-  \item \textbf{Departamento}: nombre, color y mensaje de bienvenida con fichas de
-        variables.
-  \item \textbf{Usuarios y asignación}: interruptores de \emph{asignación automática},
-        \emph{asignar a usuarios fuera de línea} y \emph{redistribuir chats de usuarios
-        no disponibles}; y por cada usuario, \emph{asignar al departamento} y
-        \emph{asignar chats automáticamente}.
-  \item \textbf{Resolución del chat}: motivo del contacto al cerrar, sobrescritura de la
-        resolución automática global, resolver a los 5 minutos con aviso al minuto, y
-        mensaje de despedida.
-\end{enumerate}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+\textbf{Pestaña} & \textbf{Qué contiene} \\
+\midrule
+Chatbot & Nombre, color, \textbf{conexiones vinculadas} (el departamento se ata a canales
+          concretos), mensaje de saludo con editor enriquecido, pasos del chatbot y
+          \textbf{vista previa en vivo} del mensaje sobre la conexión elegida \\
+Equipo y asignación & Asignación automática, asignar a usuarios fuera de línea,
+          redistribuir chats de usuarios no disponibles, delegar al Wäbot tras la
+          asignación; y por agente, \emph{miembro} y \emph{asignación automática} \\
+Horario de atención & Activar horario, enviar al final del chatbot, responder con Wäbot
+          fuera de horario \\
+Resolución del chat & Motivo del contacto al cerrar, resolución automática, mensaje de
+          despedida de la conexión, resolver chats inactivos del Wäbot \\
+Encuesta de satisfacción & La encuesta completa, configurable \textbf{por departamento} \\
+Wäbot IA & Configuración del asistente para ese departamento \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+El CRM nuevo tiene un departamento cargado y un editor con \textbf{tres} pestañas:
+\emph{Departamento} (nombre, color, mensaje de bienvenida con fichas de variables),
+\emph{Usuarios y asignación} y \emph{Resolución del chat}.
 
 \begin{center}
 \begin{tabularx}{\textwidth}{@{}Lcc@{}}
 \toprule
 \textbf{Capacidad} & \textbf{Actual} & \textbf{Nuevo} \\
 \midrule
-Buscar departamento              & \si & \si \\
-Filtrar por conexión             & \si & \no \\
-Horario de atención \emph{por departamento} & \si & \no \\
-Color y mensaje de bienvenida    & \si & \si \\
-Asignación automática de chats   & --- & \si \\
-Resolución automática por tiempo & --- & \si \\
-Motivo del contacto al cerrar    & --- & \si \\
+Buscar departamento                          & \si & \si \\
+Color y mensaje de bienvenida                & \si & \si \\
+Asignación automática de chats               & \si & \si \\
+Asignar a usuarios fuera de línea            & \si & \si \\
+Redistribuir chats de no disponibles         & \si & \si \\
+Resolución automática por tiempo             & \si & \si \\
+Motivo del contacto al cerrar                & \si & \si \\
+Filtrar la lista por conexión                & \si & \no \\
+\textbf{Sobrescribir la configuración global} & \si & \parcial \\
+\textbf{Conexiones vinculadas al departamento} & \si & \no \\
+\textbf{Horario de atención por departamento} & \si & \no \\
+\textbf{Encuesta de satisfacción por departamento} & \si & \no \\
+\textbf{Pasos de chatbot}                    & \si & \no \\
+\textbf{Asistente de IA por departamento}    & \si & \no \\
 \bottomrule
 \end{tabularx}
 \end{center}
+
+\begin{nota}
+Los tres interruptores de asignación del CRM nuevo son \textbf{idénticos palabra por
+palabra} a los del actual. No son una capacidad nueva: son la misma, reimplementada. El
+CRM nuevo sí tiene \emph{Sobrescribir configuración global}, pero solo en la pestaña de
+resolución del chat; en el actual está en las cinco pestañas configurables.
+\end{nota}
 
 \subsection{Contactos}
 
@@ -624,9 +656,23 @@ Solicitar comentario adicional           & \cod{requestComment}     & \si \\
 Mensaje de solicitud                     & \cod{requestMessage}     & \si \\
 Mensaje de agradecimiento                & \cod{thankYouMessage}    & \si \\
 Mensaje personalizado por calificación   & \cod{commentBuckets}     & \si \\
+\midrule
+\textbf{Configuración por departamento}  & \textbf{Sí en el actual} & \no \\
 \bottomrule
 \end{tabularx}
 \end{center}
+
+\begin{alerta}
+\textbf{La única diferencia de fondo está en la última fila, y es importante.} En el CRM
+actual la encuesta se puede configurar \textbf{por departamento}, con su propio
+interruptor de \emph{sobrescribir configuración global}. En el CRM nuevo la encuesta vive
+únicamente en la configuración general: \textbf{o está encendida para todos, o para
+nadie}.
+
+\vspace{0.4em}
+Si se enciende tal como está, el CRM nuevo no podrá evitar encuestar a los agentes ---
+que hoy son el 81,7\,\% de los envíos.
+\end{alerta}
 
 \begin{nota}
 \textbf{Dos hechos que convierten esto en una oportunidad.} Primero, en el CRM nuevo la
@@ -669,7 +715,7 @@ No hay período de espera entre encuestas: cada cierre dispara una nueva. Una so
 recibió 167. En una medición anterior el promedio era 2,80 y el máximo 52, de modo que
 \textbf{el problema se duplicó}.
 
-\subsubsection*{2. No se puede focalizar: la reciben todos}
+\subsubsection*{2. Se puede focalizar, pero nadie la focalizó}
 
 \begin{center}
 \begin{tabularx}{\textwidth}{@{}Lrrr@{}}
@@ -686,9 +732,26 @@ Sin departamento & 14           & 0  & 0,0\,\% \\
 \end{center}
 
 \textbf{El 81,7\,\% de las encuestas se envía al departamento de agentes}, no a
-jugadores. AGENTES VIP recibió 160 y no respondió ninguna. No existe forma de dirigir la
-encuesta a un grupo de contactos: se envía a todos por igual, incluidos agentes,
-jugadores VIP y jugadores nuevos.
+jugadores. AGENTES VIP recibió 160 y no respondió ninguna.
+
+\begin{alerta}
+\textbf{Esto no es una limitación del producto: es una configuración que nadie hizo.} El
+editor de departamento del CRM actual tiene una pestaña \emph{Encuesta de satisfacción}
+con un interruptor \textbf{Sobrescribir configuración global} --- ``esta configuración se
+aplicará solo a este departamento''. La capacidad de dirigir la encuesta existe y está
+disponible hoy.
+
+\vspace{0.4em}
+Se inspeccionó el departamento \emph{Jugadores} y \textbf{todos sus interruptores de
+encuesta están apagados}, de modo que hereda la configuración global. Lo mismo ocurre en
+el resto: por eso la encuesta llega por igual a agentes, jugadores VIP y jugadores
+nuevos.
+
+\vspace{0.4em}
+\textbf{La corrección es de configuración, no de desarrollo}: activar \emph{sobrescribir
+configuración global} en los departamentos de agentes y apagar allí la encuesta. Es el
+arreglo más barato de todo este documento.
+\end{alerta}
 
 \subsubsection*{3. Responder la encuesta reabre la conversación}
 
@@ -755,8 +818,10 @@ política futura de retención o enmascarado.
 \subsection{Qué habría que mejorar antes de encenderla en el CRM nuevo}
 
 \begin{enumerate}
-  \item \textbf{Poder dirigirla a un grupo de contactos.} Hoy se envía a todos; el
-        81,7\,\% termina en agentes, que no son el público de la medición.
+  \item \textbf{Configurarla por departamento, que ya se puede.} En el CRM actual basta
+        con activar \emph{sobrescribir configuración global} y apagar la encuesta en los
+        departamentos de agentes. En el CRM nuevo la encuesta es \textbf{solo global}: si
+        se quiere esa focalización, hay que pedirla como requisito antes de encenderla.
   \item \textbf{Un período de espera por contacto.} Sin él, 5,62 encuestas por persona y
         un máximo de 167.
   \item \textbf{Que responder no reabra la conversación.} Es el defecto más caro: afecta
