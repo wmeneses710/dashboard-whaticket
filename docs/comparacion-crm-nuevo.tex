@@ -123,9 +123,9 @@ para mejorar la atención y \textbf{envía encuestas de satisfacción}.
 \begin{enumerate}
   \item \textbf{Si un canal no entra, la operación de ese canal no existe.} Por eso la
         sección \ref{sec:canales} pesa más que cualquier otra.
-  \item \textbf{Si no se puede seccionar, todo le llega a todos.} Es el origen de los
-        problemas de visibilidad (sección \ref{sec:visibilidad}) y de la encuesta que se
-        envía a los agentes (sección \ref{sec:csat}).
+  \item \textbf{Si no se puede seccionar, todo le llega a todos.} De ahí dependen tanto la
+        cadena que define quién atiende a quién (sección \ref{sec:visibilidad}) como la
+        encuesta que hoy se envía a los agentes (sección \ref{sec:csat}).
   \item \textbf{Si la asignación no queda registrada, la estadística miente.} Es el
         motivo por el que la sección \ref{sec:estados} termina en un hallazgo del ETL y
         no solo en un inventario de pantallas.
@@ -162,6 +162,7 @@ Chat y mensajería       & \parcial  & Falta el atajo \cod{/} de respuestas ráp
 Permisos y roles        & \si       & Ambos lo tienen; el nuevo mejor estructurado \\
 Contactos y etiquetas   & \si       & El nuevo es más completo que el actual \\
 Departamentos           & \parcial  & Tiene 3 de las 6 pestañas de configuración \\
+Segmentación de atención& \no       & Sus departamentos no se atan a conexiones \\
 Estados de conversación & \no       & El nuevo no tiene ningún filtro por estado \\
 Encuesta de satisfacción& \parcial  & Existe, pero solo global: no por departamento \\
 \bottomrule
@@ -520,33 +521,71 @@ Adulto Mayor, AFILIADO, AGENCIA BLOQUEADA, AGENCIA CERRADA POR EL AGENTE, entre 
 otras --- que representan vocabulario de negocio acumulado y deberán migrarse.
 
 % =====================================================================
-\section{La regla de visibilidad que no existe en ninguno}
+\section{Quién atiende a quién: la segmentación}
 \label{sec:visibilidad}
 
-Se buscó específicamente la capacidad de \textbf{clasificar jugadores en un grupo y
-restringir qué operadores pueden verlos o atenderlos}. Se revisaron, en ambos sistemas,
-las pantallas de Departamentos, Contactos, Etiquetas y Usuarios, y el detalle de un
-perfil de permisos del CRM actual.
+El antecedente (sección \ref{sec:antecedente}) fija que hay que poder seccionar en tres
+planos: las conversaciones, las personas a atender y el equipo. Esta sección documenta
+cómo se resuelve hoy.
+
+\subsection{El mecanismo real: conexión, departamento, operadores}
+
+La segmentación \textbf{no se hace clasificando contactos}. Se hace por el canal por el
+que la persona escribe, en una cadena de tres eslabones:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lL@{}}
+\toprule
+\textbf{Eslabón} & \textbf{Dónde se configura} \\
+\midrule
+Conexión $\rightarrow$ departamento & Pestaña \emph{Chatbot} del departamento, campo
+  \textbf{Conexiones vinculadas}. Un departamento se ata a las conexiones concretas cuyas
+  conversaciones va a recibir \\
+Departamento $\rightarrow$ operadores & Pestaña \emph{Equipo y asignación}, con el
+  interruptor \emph{miembro} por agente y el reparto automático \\
+Operador $\rightarrow$ lo que ve & Permiso \emph{Ver todos} dentro de Chats, más el
+  filtro \emph{Míos / Equipo} de la lista \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Esta regla ya está en uso.} No es teoría: existen conexiones dedicadas
+--- \emph{JUGADORES PLATAFORMA}, \emph{AGENTES}, \emph{AGENTES VIP} --- y departamentos
+que se corresponden con ellas --- \emph{Jugadores}, \emph{Jugadores VIP},
+\emph{AGENTES VIP}, \emph{AGENTES OPERATIVOS}. Poner a un grupo de personas en un número
+propio y atar ese número a un departamento con sus operadores \textbf{es} la forma en que
+el CRM actual resuelve ``a estas personas las atiende este equipo''.
+\end{nota}
+
+\subsection{Lo que esta forma no permite}
+
+Al estar anclada en el canal y no en la persona, la segmentación tiene un límite claro:
+\textbf{no se puede reclasificar a alguien sin cambiarlo de número}. Si un jugador pasa a
+VIP, o si se quiere que a un grupo concreto lo atienda solo cierto equipo, hay que moverlo
+a otra conexión --- es decir, que escriba a otro número.
+
+Las \textbf{etiquetas} de contacto, en los dos sistemas, clasifican pero \textbf{no
+restringen}: marcan al contacto sin cambiar quién lo ve. Y el permiso \emph{Ver todos} es
+binario: el operador ve todos los chats o solo los suyos, sin un punto intermedio por
+grupo.
+
+\subsection{El CRM nuevo no puede replicar esta cadena}
 
 \begin{alerta}
-\textbf{Esa regla no existe en ninguno de los dos sistemas.} Los mecanismos más
-cercanos son:
+\textbf{El primer eslabón no existe en el CRM nuevo.} Su editor de departamento tiene tres
+pestañas --- Departamento, Usuarios y asignación, Resolución del chat --- y
+\textbf{ninguna permite vincular conexiones}. Un departamento del CRM nuevo agrupa
+operadores, pero no declara de qué canales recibe conversaciones.
 
-\begin{itemize}
-  \item \textbf{CRM actual:} el permiso \emph{Ver todos} dentro de Chats, que es binario
-        --- el operador ve todos los chats o solo los suyos --- y la pertenencia a un
-        departamento. No hay forma de decir ``este grupo de contactos solo lo ve este
-        grupo de operadores''.
-  \item \textbf{CRM nuevo:} la asignación de usuarios a un departamento con reparto
-        automático de chats. Agrupa \emph{operadores}, no \emph{contactos}.
-\end{itemize}
+\vspace{0.4em}
+El segundo eslabón sí está, y es idéntico al del actual. El tercero no se pudo verificar,
+porque haría falta iniciar sesión con un operador sin permisos de administrador.
 
-Las etiquetas de contacto, en los dos sistemas, \textbf{clasifican pero no restringen}.
+\vspace{0.4em}
+Sin el primer eslabón, \textbf{la segmentación que hoy sostiene la operación no se puede
+reproducir}. Es un requisito a plantear ahora, mientras el producto está en construcción.
 \end{alerta}
-
-Conclusión: si el negocio necesita esta regla, es \textbf{desarrollo nuevo}, y conviene
-plantearla como requisito del CRM nuevo mientras está en construcción, en lugar de
-esperar que aparezca sola al alcanzar la paridad.
 
 % =====================================================================
 \section{Estados de conversación y asignación}
@@ -930,6 +969,12 @@ Se declara explícitamente para que nadie tome por validado lo que no lo está.
   \item \textbf{Si los 93 permisos del perfil Admin incluyen alguno relacionado con
         visibilidad de contactos.} Se revisaron las diez categorías y sus contadores,
         pero no se desplegó cada permiso individual.
+
+  \item \textbf{Qué ve exactamente un operador sin permisos de administrador.} El tercer
+        eslabón de la cadena de segmentación (sección \ref{sec:visibilidad}) --- si al
+        entrar ve solo sus chats, los de sus departamentos o todos --- requiere iniciar
+        sesión con una cuenta de operador. Todo el recorrido se hizo con perfil
+        Administrador en los dos sistemas.
 \end{itemize}
 
 \begin{nota}
