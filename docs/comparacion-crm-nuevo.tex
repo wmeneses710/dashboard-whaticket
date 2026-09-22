@@ -1,0 +1,572 @@
+% =====================================================================
+% Comparación CRM actual vs CRM nuevo
+% Compilar:  latexmk -pdf comparacion-crm-nuevo.tex
+%
+% Todo lo que afirma este documento se verificó EN PANTALLA el
+% 2026-09-22, entrando a las dos aplicaciones. Cuando algo no se pudo
+% verificar, se dice explícitamente en la sección de límites.
+% =====================================================================
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,es-nodecimaldot]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.3cm,headheight=14pt]{geometry}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{primary}{HTML}{1F3864}
+\definecolor{accent}{HTML}{2E75B6}
+\definecolor{soft}{HTML}{EEF3FA}
+\definecolor{warn}{HTML}{C0504D}
+\definecolor{ok}{HTML}{2E7D32}
+\definecolor{gray70}{HTML}{4D4D4D}
+
+\hypersetup{
+  pdftitle={Comparacion CRM actual vs CRM nuevo},
+  pdfsubject={Inventario funcional y brecha para reemplazar el CRM en produccion},
+  pdfkeywords={CRM, whaticket, migracion, canales, comparacion}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{gray70}Comparación CRM actual vs CRM nuevo}
+\fancyhead[R]{\small\color{gray70}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\titleformat{\section}{\normalfont\Large\bfseries\color{primary}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\large\bfseries\color{accent}}{\thesubsection}{0.6em}{}
+\setlist[itemize]{leftmargin=1.3em,itemsep=2pt,topsep=3pt}
+\setlist[enumerate]{leftmargin=1.5em,itemsep=2pt,topsep=3pt}
+
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcommand{\cod}[1]{\texttt{\small #1}}
+\newtcolorbox{nota}[1][]{colback=soft,colframe=accent,boxrule=0.6pt,
+  arc=2pt,left=6pt,right=6pt,top=5pt,bottom=5pt,#1}
+\newtcolorbox{alerta}[1][]{colback=white,colframe=warn,boxrule=0.8pt,
+  arc=2pt,left=6pt,right=6pt,top=5pt,bottom=5pt,#1}
+
+\newcommand{\si}{\textcolor{ok}{\textbf{Sí}}}
+\newcommand{\no}{\textcolor{warn}{\textbf{No}}}
+\newcommand{\parcial}{\textcolor{accent}{\textbf{Parcial}}}
+\newcommand{\vars}[1]{\cod{\{\{#1\}\}}}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries\color{primary} Comparación del CRM\par}
+\vspace{0.6cm}
+{\Large\color{gray70} Qué tiene el nuevo, qué le falta para reemplazar al actual\par}
+\vspace{2cm}
+{\large CRM actual: \cod{app.whaticket.com}\par}
+\vspace{0.3cm}
+{\large CRM nuevo: \cod{staging-crm.zgameslatam.com} --- producto \emph{Ticket} \cod{v0.1.0}\par}
+\vspace{0.4cm}
+{\large 22 de septiembre de 2026\par}
+\vfill
+\begin{minipage}{0.82\textwidth}
+\small\color{gray70}
+Todo lo que afirma este documento se verificó \textbf{entrando a las dos
+aplicaciones} el 22 de septiembre de 2026, no leyendo documentación ni código. Cada
+afirmación se acompaña de lo que se vio en pantalla.
+
+\vspace{0.5em}
+La sección \ref{sec:limites} enumera lo que \textbf{no} se pudo verificar y por qué.
+Se prefiere decir ``no lo sé'' antes que dar por buena una suposición: un inventario
+con un dato inventado deja de servir para decidir.
+\end{minipage}
+\vspace{2cm}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% =====================================================================
+\section{El veredicto, en una página}
+
+El CRM nuevo está más avanzado de lo que sugiere su número de versión: tiene
+pantallas que el actual no tiene y varias resueltas con mejor criterio. Pero
+\textbf{no puede reemplazar al actual hoy}, y el motivo no es una pantalla que falte.
+
+\begin{alerta}
+\textbf{El bloqueante es de canales, no de funcionalidad.} El CRM nuevo solo admite
+\emph{Web Chat} y \emph{WhatsApp QR}. Facebook, Instagram y WhatsApp Cloud API figuran
+como ``Próximamente'' en su propio diálogo de conexión, y \textbf{Telegram no figura
+en absoluto}. El CRM actual tiene los cuatro canales conectados y operando.
+
+\vspace{0.4em}
+Cruzado con la medición de tráfico ya existente, \textbf{Facebook representa el
+32,8\,\% de las conversaciones}. Mientras ese canal no entre, migrar significa perder
+un tercio de la operación.
+\end{alerta}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lcL@{}}
+\toprule
+\textbf{Dimensión} & \textbf{Estado} & \textbf{Qué significa} \\
+\midrule
+Canales de entrada      & \no       & Falta Facebook, Instagram y Telegram \\
+Cobertura de pantallas  & \parcial  & Cubre 8 de 15 secciones del actual \\
+Chat y mensajería       & \parcial  & Falta el atajo \cod{/} de respuestas rápidas \\
+Permisos y roles        & \si       & Ambos lo tienen; el nuevo mejor estructurado \\
+Contactos y etiquetas   & \si       & El nuevo es más completo que el actual \\
+Departamentos           & \parcial  & Falta horario de atención y filtro por conexión \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Una aclaración que evita una conclusión equivocada.} La regla de negocio
+``estos jugadores, dentro de esta clasificación, solo pueden ser atendidos por estos
+operadores'' \textbf{no existe en ninguno de los dos sistemas}. No es una deuda del
+CRM nuevo: es funcionalidad que habría que construir. Ver la sección
+\ref{sec:visibilidad}.
+\end{nota}
+
+% =====================================================================
+\section{Alcance y método}
+
+Se recorrieron las dos aplicaciones en el navegador, pantalla por pantalla, con estas
+restricciones acordadas:
+
+\begin{itemize}
+  \item \textbf{CRM actual (producción):} solo lectura. No se envió ningún mensaje, no
+        se guardó ningún formulario y \textbf{no se abrió ningún chat}, porque abrirlo
+        asigna el ticket al operador que lo abre y eso alteraría la operación real.
+  \item \textbf{CRM nuevo (staging):} se interactuó libremente, por tratarse de un
+        entorno de prueba.
+\end{itemize}
+
+Para el CRM actual se usó la cuenta \cod{Prueba\_datos} con perfil Administrador; para
+el nuevo, \cod{willian test} con perfil Administrador.
+
+\begin{nota}
+\textbf{El menú prueba que la ruta existe, no que la pantalla funcione.} Durante el
+recorrido, la ruta \cod{/departments} del CRM nuevo cargó en blanco en el primer
+intento y mostró contenido recién en el segundo. Por eso el inventario de rutas de la
+sección \ref{sec:rutas} se acompaña del recorrido pantalla por pantalla de la sección
+\ref{sec:funcional}: la primera dice qué existe, la segunda qué funciona.
+\end{nota}
+
+% =====================================================================
+\section{Inventario de rutas}
+\label{sec:rutas}
+
+\subsection{Lo que el CRM nuevo ya cubre}
+
+Ocho de las quince secciones del CRM actual tienen equivalente:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Sección} & \textbf{CRM actual} & \textbf{CRM nuevo} \\
+\midrule
+Chats                    & \cod{/tickets}        & \cod{/whaticket/chat} \\
+Conexiones               & \cod{/connections}    & \cod{/connections} \\
+Contactos                & \cod{/contacts}       & \cod{/contacts} \\
+Etiquetas                & \cod{/tags}           & \cod{/labels} \\
+Respuestas rápidas       & \cod{/fastresponses}  & \cod{/quick-responses} \\
+Equipo / Usuarios        & \cod{/users}          & \cod{/users} \\
+Departamentos y chatbots & \cod{/queues}         & \cod{/departments} \\
+Configuración            & \cod{/settings}       & \cod{/settings} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Lo que falta}
+
+Siete secciones del CRM actual no tienen equivalente en el nuevo:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}llL@{}}
+\toprule
+\textbf{Sección} & \textbf{Ruta actual} & \textbf{Comentario} \\
+\midrule
+Wäbot IA            & \cod{/ai}                  & Asistente de inteligencia artificial \\
+Campañas            & \cod{/campaigns}           & Envíos masivos \\
+Informes            & \cod{/reports}             & Reportería operativa \\
+Mensajes programados& \cod{/scheduled-messages}  & Envíos diferidos \\
+Tokens              & \cod{/tokens}              & Credenciales de API \\
+Documentación       & \cod{/docs}                & Ayuda en producto \\
+Soporte             & ---                        & Canal de soporte del proveedor \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Lo que el nuevo tiene y el actual no}
+
+Conviene registrarlo, porque una migración también puede ganar capacidades:
+
+\begin{itemize}
+  \item \textbf{Tablero propio} (\cod{/dashboard}).
+  \item \textbf{Control de acceso con cinco pantallas dedicadas}: Roles, Permisos,
+        Permisos por Rol, Módulos del Sistema y \emph{Constructor de Permisos}.
+  \item \textbf{Chats internos} entre miembros del equipo
+        (\cod{/internal-chat/conversations}).
+  \item \textbf{Mensajes destacados} (\cod{/profile/starred-messages}) y
+        \textbf{Tickets bloqueados} (\cod{/locked-tickets}).
+  \item Buscador de módulos y alternancia de tema claro/oscuro.
+\end{itemize}
+
+% =====================================================================
+\section{El bloqueante: canales de entrada}
+\label{sec:canales}
+
+Esta es la diferencia que decide si la migración es posible.
+
+\subsection{Lo que admite el CRM nuevo}
+
+Su propio diálogo \emph{Agregar conexión} declara el estado de cada canal:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lcL@{}}
+\toprule
+\textbf{Canal} & \textbf{Estado} & \textbf{Descripción en pantalla} \\
+\midrule
+Web Chat            & \si            & Widget de chat para el sitio \\
+WhatsApp QR         & \si            & Conexión vía código QR \\
+WhatsApp Cloud API  & Próximamente   & API oficial de Meta \\
+Facebook            & Próximamente   & Mensajes de la página de Facebook \\
+Instagram           & Próximamente   & Mensajes directos de cuenta profesional \\
+Telegram            & \no            & \textbf{No figura ni como pendiente} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+En staging hay dos conexiones configuradas: una de WhatsApp, \emph{desconectada}, y
+una de Web Chat, conectada.
+
+\subsection{Lo que tiene el CRM actual}
+
+Diez conexiones, todas conectadas, sobre cuatro canales distintos:
+
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Conexión} & \textbf{Identificador} & \textbf{Canal} \\
+\midrule
+SortiOficial                  & 8794286558              & Telegram \\
+Sorti365                      & 681388465066532         & Facebook \\
+Sorti365 Oficial              & 17841463 / 78834867     & Instagram \\
+Prueba ZTicket                & \cod{77d0c521-370e-\ldots} & Web chat / API \\
+Plataforma anterior           & 593994038869            & WhatsApp \\
+Agentes nueva                 & 593999303548            & WhatsApp \\
+JUGADORES PLATAFORMA          & 593965195842            & WhatsApp \\
+AGENTES                       & 593984701184            & WhatsApp \\
+AGENTES VIP                   & 593988535399            & WhatsApp \\
+ALTERNA PLATAFORMA            & 593983902175            & WhatsApp \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{alerta}
+\textbf{Por qué esto manda sobre todo lo demás.} Aunque el CRM nuevo alcanzara la
+paridad en las quince pantallas, seguiría sin poder recibir un solo mensaje de
+Facebook, Instagram o Telegram. Con Facebook en el 32,8\,\% del tráfico medido, la
+migración no es viable hasta que ese canal exista. Telegram, además, ni siquiera está
+en la hoja de ruta declarada del producto.
+\end{alerta}
+
+% =====================================================================
+\section{Comparación funcional, pantalla por pantalla}
+\label{sec:funcional}
+
+\subsection{Respuestas rápidas}
+
+El CRM actual describe el mecanismo en su propia pantalla, textualmente:
+
+\begin{nota}
+``Mensajes listos que el equipo inserta en el chat escribiendo \textbf{``/'' seguido
+del atajo}.''
+\end{nota}
+
+Y los atajos en uso lo confirman: \cod{///*}, \cod{/++}, \cod{//000},
+\cod{/1 CAMBIO DE CLAVE}, \cod{/20MINUTOS}, \cod{/\$300}, \cod{/3ERA EDAD},
+\cod{/A1.1JG}. Son decenas, en uso diario.
+
+\textbf{En el CRM nuevo el atajo no existe.} Se escribió \cod{/} y luego \cod{/sal} en
+el campo de mensaje y no se desplegó ningún menú. Las respuestas rápidas se invocan
+desde un icono de rayo en la barra de escritura, y al abrirlo con el chat de prueba
+respondió: ``No hay respuestas rápidas disponibles para el departamento de este chat''.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lcc@{}}
+\toprule
+\textbf{Capacidad} & \textbf{Actual} & \textbf{Nuevo} \\
+\midrule
+Invocar con \cod{/} desde el chat        & \si & \no \\
+Invocar desde un botón del compositor    & --- & \si \\
+Buscar por atajo                         & \si & \si \\
+Buscar por contenido del mensaje         & \si & \no \\
+Filtrar por departamento                 & \si & \no \\
+Filtrar por activo / inactivo            & --- & \si \\
+Asignar a varios departamentos           & \si & --- \\
+Variables de plantilla                   & \si & \si \\
+Vista de lista y de tarjetas             & \si & \no \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{nota}
+\textbf{Dos precisiones para no exagerar la brecha.}
+
+\emph{Primera:} el alcance por departamento \textbf{no es nuevo}. El CRM actual también
+tiene columna de departamentos en sus respuestas rápidas, y además admite varios por
+respuesta.
+
+\emph{Segunda:} las variables de plantilla \textbf{existen en ambos}, y en el nuevo con
+mejor experiencia --- se insertan con fichas: \emph{Saludos}, \emph{Apodo de contacto},
+\emph{Nombre de contacto}, \emph{Número de contacto}, \emph{Número de protocolo},
+\emph{Correo electrónico}. Lo que cambia son los nombres internos: el actual usa
+\vars{greeting}, \vars{contactName} y \vars{contactTreatment}; el nuevo, \vars{greetings}
+y \vars{username}. \textbf{Es un mapeo de migración, no una reescritura.}
+\end{nota}
+
+Queda un problema práctico: con atajos crípticos como \cod{///*} o \cod{//000}, poder
+buscar \emph{solo} por atajo obliga a saberse el código de memoria. En el CRM actual se
+puede buscar por el texto del mensaje.
+
+\subsection{Chat: acciones sobre el mensaje y adjuntos}
+
+El menú contextual de un mensaje en el CRM nuevo ofrece: \textbf{Reenviar},
+\textbf{Responder}, \textbf{Seleccionar}, \textbf{Destacar} y \textbf{Copiar mensaje}.
+La opción \emph{Destacar} conecta con la pantalla de Mensajes destacados.
+
+El botón de adjuntos ofrece \textbf{Imagen}, \textbf{Video} y \textbf{Documento}.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lcc@{}}
+\toprule
+\textbf{Capacidad} & \textbf{Actual} & \textbf{Nuevo} \\
+\midrule
+Copiar mensaje                 & \si & \si \\
+Reenviar, responder, destacar  & \si & \si \\
+Selección múltiple de mensajes & \si & \si \\
+Adjuntar imagen, video, documento & \si & \si \\
+Arrastrar y soltar imágenes    & \si & \textit{sin verificar} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Departamentos y chatbots}
+
+El CRM actual tiene \textbf{nueve departamentos} en uso (Agente, AGENTES OPERATIVOS,
+AGENTES VIP, Departamento de Marketing, JEFE ATC, Jugadores, Jugadores VIP y dos de
+prueba), con buscador, \textbf{filtro por conexión} y una columna de
+\textbf{configuraciones personalizadas} donde aparece, por ejemplo, el horario de
+atención.
+
+El CRM nuevo tiene un departamento cargado y un editor con tres pestañas:
+
+\begin{enumerate}
+  \item \textbf{Departamento}: nombre, color y mensaje de bienvenida con fichas de
+        variables.
+  \item \textbf{Usuarios y asignación}: interruptores de \emph{asignación automática},
+        \emph{asignar a usuarios fuera de línea} y \emph{redistribuir chats de usuarios
+        no disponibles}; y por cada usuario, \emph{asignar al departamento} y
+        \emph{asignar chats automáticamente}.
+  \item \textbf{Resolución del chat}: motivo del contacto al cerrar, sobrescritura de la
+        resolución automática global, resolver a los 5 minutos con aviso al minuto, y
+        mensaje de despedida.
+\end{enumerate}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lcc@{}}
+\toprule
+\textbf{Capacidad} & \textbf{Actual} & \textbf{Nuevo} \\
+\midrule
+Buscar departamento              & \si & \si \\
+Filtrar por conexión             & \si & \no \\
+Horario de atención              & \si & \no \\
+Color y mensaje de bienvenida    & \si & \si \\
+Asignación automática de chats   & --- & \si \\
+Resolución automática por tiempo & --- & \si \\
+Motivo del contacto al cerrar    & --- & \si \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Contactos}
+
+Aquí el CRM nuevo es claramente más completo.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lcc@{}}
+\toprule
+\textbf{Capacidad} & \textbf{Actual} & \textbf{Nuevo} \\
+\midrule
+Nombre y apellido desglosados (primero y segundo) & \no & \si \\
+Bloqueo de contacto                               & \no & \si \\
+Estado activo / inactivo                          & \no & \si \\
+Filtro por etiquetas                              & \si & \si \\
+Filtro por correo electrónico                     & --- & \si \\
+Fecha del último mensaje recibido                 & \si & \no \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Usuarios y permisos}
+
+\textbf{Ambos sistemas tienen control de acceso basado en roles.} El CRM actual lo
+resuelve en una pestaña \emph{Perfiles y permisos} dentro de Equipo, con cuatro
+perfiles en producción:
+
+\begin{center}
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+\textbf{Perfil} & \textbf{Permisos} & \textbf{Usuarios} & \textbf{Descripción} \\
+\midrule
+Admin      & 93 & 8  & Acceso total a la plataforma \\
+Usuario    & 28 & 14 & Acceso estándar de atención \\
+Supervisor & 36 & 5  & --- \\
+MKT        & 10 & 4  & --- \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los permisos se agrupan por módulo y acción: Chats (16), Llamadas (7), Conexiones (4),
+Contactos (8), Etiquetas (4), Departamentos y chatbots (8), Campañas (4), Informes (2),
+Configuración (14) y Tokens de API (3). Dentro de Chats aparecen acciones finas como
+\emph{Resolver sin enviar encuesta (CSAT)}, \emph{Pausar cierre automático} y
+\emph{Ver todos}.
+
+El CRM nuevo lo resuelve con cinco pantallas dedicadas, incluido un \emph{Constructor
+de Permisos}, y distingue dos tipos de usuario (Administrador y Operador) en la pantalla
+de Usuarios.
+
+\begin{nota}
+\textbf{El control de acceso no es un diferencial del CRM nuevo.} Su estructura es más
+explícita, pero el sistema actual ya tiene 93 permisos configurados y en uso. Lo que sí
+falta en el nuevo, y el actual tiene, es el registro de \textbf{última vez visto} por
+usuario y la \textbf{autenticación en dos factores} por usuario.
+\end{nota}
+
+\subsection{Etiquetas}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}Lcc@{}}
+\toprule
+\textbf{Capacidad} & \textbf{Actual} & \textbf{Nuevo} \\
+\midrule
+Nombre y color                & \si & \si \\
+Descripción de la etiqueta    & \no & \si \\
+Estado activo / inactivo      & \no & \si \\
+Volumen en uso                & decenas & 4 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+El CRM actual tiene decenas de etiquetas operativas reales --- ACTIVO, ACUMULA SALDO,
+Adulto Mayor, AFILIADO, AGENCIA BLOQUEADA, AGENCIA CERRADA POR EL AGENTE, entre muchas
+otras --- que representan vocabulario de negocio acumulado y deberán migrarse.
+
+% =====================================================================
+\section{La regla de visibilidad que no existe en ninguno}
+\label{sec:visibilidad}
+
+Se buscó específicamente la capacidad de \textbf{clasificar jugadores en un grupo y
+restringir qué operadores pueden verlos o atenderlos}. Se revisaron, en ambos sistemas,
+las pantallas de Departamentos, Contactos, Etiquetas y Usuarios, y el detalle de un
+perfil de permisos del CRM actual.
+
+\begin{alerta}
+\textbf{Esa regla no existe en ninguno de los dos sistemas.} Los mecanismos más
+cercanos son:
+
+\begin{itemize}
+  \item \textbf{CRM actual:} el permiso \emph{Ver todos} dentro de Chats, que es binario
+        --- el operador ve todos los chats o solo los suyos --- y la pertenencia a un
+        departamento. No hay forma de decir ``este grupo de contactos solo lo ve este
+        grupo de operadores''.
+  \item \textbf{CRM nuevo:} la asignación de usuarios a un departamento con reparto
+        automático de chats. Agrupa \emph{operadores}, no \emph{contactos}.
+\end{itemize}
+
+Las etiquetas de contacto, en los dos sistemas, \textbf{clasifican pero no restringen}.
+\end{alerta}
+
+Conclusión: si el negocio necesita esta regla, es \textbf{desarrollo nuevo}, y conviene
+plantearla como requisito del CRM nuevo mientras está en construcción, en lugar de
+esperar que aparezca sola al alcanzar la paridad.
+
+% =====================================================================
+\section{Qué falta para reemplazar al CRM actual}
+
+Ordenado por lo que bloquea, no por lo que cuesta.
+
+\begin{enumerate}
+  \item \textbf{Canales de entrada.} Facebook, Instagram y Telegram. Sin esto no hay
+        migración posible: Facebook solo ya es el 32,8\,\% del tráfico. Telegram ni
+        siquiera figura en la hoja de ruta del producto y hay que pedirlo
+        explícitamente.
+
+  \item \textbf{El atajo \cod{/} en el chat.} Es el mecanismo declarado del CRM actual
+        y lo usa el equipo todos los días, con decenas de atajos memorizados. Su
+        ausencia no impide operar, pero degrada cada conversación.
+
+  \item \textbf{Migración de contenido operativo.} Decenas de respuestas rápidas con
+        variables que cambian de nombre, y decenas de etiquetas de negocio. Requiere un
+        mapeo de variables, no una copia literal.
+
+  \item \textbf{Informes.} El CRM actual tiene una sección de reportería que el nuevo no
+        tiene. Debe definirse si se reemplaza con el \cod{/dashboard} propio del nuevo o
+        si hace falta construirla.
+
+  \item \textbf{Campañas y mensajes programados.} Funcionalidad de envío que hoy existe
+        y no tiene equivalente.
+
+  \item \textbf{Horario de atención por departamento} y \textbf{filtro por conexión}.
+
+  \item \textbf{Autenticación en dos factores por usuario} y registro de
+        \emph{última vez visto}.
+\end{enumerate}
+
+% =====================================================================
+\section{Lo que no se pudo verificar}
+\label{sec:limites}
+
+Se declara explícitamente para que nadie tome por validado lo que no lo está.
+
+\begin{itemize}
+  \item \textbf{Arrastrar y soltar imágenes en el chat.} Arrastrar un archivo desde el
+        escritorio es una acción del sistema operativo, fuera del alcance de la
+        automatización usada. Debe probarse manualmente en el CRM nuevo: abrir un chat
+        y arrastrar una imagen sobre la conversación.
+
+  \item \textbf{El comportamiento de las respuestas rápidas con un departamento
+        asignado.} El chat de prueba disponible en staging estaba ``Sin departamento'',
+        por lo que solo se pudo comprobar el mensaje de ausencia. Falta verificar si,
+        con departamento asignado, la lista aparece y si ofrece búsqueda y orden.
+
+  \item \textbf{Las pantallas del CRM nuevo que no se recorrieron:} \cod{/dashboard},
+        Chats internos, Mensajes destacados, Tickets bloqueados, \cod{/settings} y las
+        cinco de Control de acceso. Su existencia está confirmada; su funcionamiento no.
+
+  \item \textbf{Las secciones del CRM actual no recorridas:} Campañas, Informes,
+        Mensajes programados, Wäbot IA y Tokens. Solo se confirmó que existen en el
+        menú.
+
+  \item \textbf{Si los 93 permisos del perfil Admin incluyen alguno relacionado con
+        visibilidad de contactos.} Se revisaron las diez categorías y sus contadores,
+        pero no se desplegó cada permiso individual.
+\end{itemize}
+
+\begin{nota}
+\textbf{Observación operativa.} Durante todo el recorrido, el CRM actual mostró de forma
+recurrente un diálogo de \emph{autenticación en dos factores} que se superpone al
+contenido. El equipo lo identifica como un defecto de presentación; se cierra pulsando
+fuera del diálogo. No se interactuó con él en ningún momento.
+\end{nota}
+
+\end{document}
